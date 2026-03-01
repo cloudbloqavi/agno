@@ -1,0 +1,62 @@
+{
+    "skill_id": "integration",
+    "version": "1.0.0",
+    "name": "External Service Integration",
+    "category": "domain",
+    "description": "API interactions and data exchange with external AI services.",
+    "integrations": [
+        {
+            "service": "Anthropic API (Claude)",
+            "purpose": "Content generation, brand analysis, code generation",
+            "models": [
+                "claude-opus-4-6",
+                "claude-sonnet-4-20250514"
+            ],
+            "features": [
+                "pptx skill",
+                "streaming",
+                "context-1m beta",
+                "web_search tool",
+                "PythonTools"
+            ],
+            "file_api": "beta.files.download() with magic-byte type detection"
+        },
+        {
+            "service": "Google Gemini API",
+            "purpose": "Image planning, quality review",
+            "models": [
+                "gemini-3-flash-preview",
+                "gemini-2.5-flash (vision)"
+            ],
+            "features": [
+                "Structured output (output_schema)",
+                "Vision analysis from PNG"
+            ]
+        },
+        {
+            "service": "NanoBanana (Gemini Image Generation)",
+            "purpose": "AI image creation for slides",
+            "config": {
+                "aspect_ratio": "16:9"
+            },
+            "requires": "GOOGLE_API_KEY environment variable"
+        },
+        {
+            "service": "LibreOffice (headless)",
+            "purpose": "Render PPTX slides to PNG for visual QA",
+            "command": "libreoffice --headless --convert-to png",
+            "optional": true,
+            "install": "apt-get install libreoffice"
+        }
+    ],
+    "environment_variables": {
+        "ANTHROPIC_API_KEY": {
+            "required": true,
+            "purpose": "Claude agent and Anthropic Files API"
+        },
+        "GOOGLE_API_KEY": {
+            "required": "for images / Step 5",
+            "purpose": "Gemini image planner, NanoBanana, Step 5 vision"
+        }
+    }
+}

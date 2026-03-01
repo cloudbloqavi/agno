@@ -1,0 +1,79 @@
+{
+    "skill_id": "skill_registry",
+    "version": "1.0.0",
+    "name": "Skill Registry",
+    "category": "meta",
+    "description": "Central registry of all skills in the PowerPoint Workflow Suite.",
+    "skills": {
+        "core": [
+            {
+                "id": "communication",
+                "file": ".skills/core/communication.json",
+                "description": "Structured data exchange via session_state and Pydantic models"
+            },
+            {
+                "id": "decision_making",
+                "file": ".skills/core/decision_making.json",
+                "description": "Rule-based and ML-enhanced decision logic (layout selection, image planning, tier selection)"
+            },
+            {
+                "id": "error_handling",
+                "file": ".skills/core/error_handling.json",
+                "description": "3-tier fallback, non-blocking visual review, graceful degradation"
+            }
+        ],
+        "domain": [
+            {
+                "id": "data_processing",
+                "file": ".skills/domain/data_processing.json",
+                "description": "Content extraction, transformation, region mapping, and assembly knowledge file"
+            },
+            {
+                "id": "integration",
+                "file": ".skills/domain/integration.json",
+                "description": "Anthropic, Google Gemini, NanoBanana, LibreOffice service integrations"
+            },
+            {
+                "id": "validation",
+                "file": ".skills/domain/validation.json",
+                "description": "PPTX validation, WCAG contrast, placeholder cleanup, font sizing"
+            }
+        ],
+        "tools": [
+            {
+                "id": "api_clients",
+                "file": ".skills/tools/api_clients.json",
+                "description": "SDK clients for Anthropic, Gemini, NanoBanana"
+            },
+            {
+                "id": "database",
+                "file": ".skills/tools/database.json",
+                "description": "PPTX reading/writing and XML manipulation via python-pptx and lxml"
+            },
+            {
+                "id": "file_operations",
+                "file": ".skills/tools/file_operations.json",
+                "description": "File download, type detection, storyboard export, PNG rendering"
+            }
+        ],
+        "meta": [
+            {
+                "id": "agent_profiles",
+                "file": ".skills/meta/agent_profiles.json",
+                "description": "Configuration profiles for all 6 AI agents"
+            },
+            {
+                "id": "skill_registry",
+                "file": ".skills/meta/skill_registry.json",
+                "description": "This file — central index of all skills"
+            },
+            {
+                "id": "training_data",
+                "file": ".skills/meta/training_data.json",
+                "description": "Test cases, example prompts, and quality benchmarks"
+            }
+        ]
+    },
+    "total_skills": 12,
+    "versioning": "Semantic versioning (major.minor.patch)"
+}

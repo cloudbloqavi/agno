@@ -1,0 +1,69 @@
+{
+    "skill_id": "file_operations",
+    "version": "1.0.0",
+    "name": "File Operations",
+    "category": "tools",
+    "description": "File I/O, download, format detection, and directory management.",
+    "operations": [
+        {
+            "name": "Skill File Download",
+            "file": "file_download_helper.py",
+            "function": "download_skill_files()",
+            "purpose": "Download files produced by Claude's pptx skill via Anthropic Files API",
+            "features": [
+                "Magic byte detection",
+                "File type inference",
+                "Multiple extraction paths (provider_data, content blocks)"
+            ]
+        },
+        {
+            "name": "File Type Detection",
+            "file": "file_download_helper.py",
+            "function": "detect_file_extension()",
+            "magic_bytes": {
+                "PK\\x03\\x04 + word/": ".docx",
+                "PK\\x03\\x04 + xl/": ".xlsx",
+                "PK\\x03\\x04 + ppt/": ".pptx",
+                "PK\\x03\\x04 (other)": ".zip",
+                "%PDF": ".pdf",
+                "\\xd0\\xcf\\x11\\xe0": ".doc",
+                "fallback": ".bin"
+            }
+        },
+        {
+            "name": "Template Copy",
+            "function": "step_assemble_template()",
+            "method": "shutil.copy() template to output path before modification"
+        },
+        {
+            "name": "Storyboard File Export",
+            "function": "step_optimize_and_plan()",
+            "output_dir": "storyboard/",
+            "files": [
+                "global_context.md",
+                "slide_NNN.md (per slide)"
+            ]
+        },
+        {
+            "name": "Knowledge File Export",
+            "function": "_build_assembly_knowledge_file()",
+            "output": "JSON dict stored in session_state['assembly_knowledge']",
+            "serialization": "_knowledge_json_default() handles bytes and non-serializable types"
+        },
+        {
+            "name": "Slide PNG Rendering",
+            "function": "_render_pptx_to_images()",
+            "tool": "LibreOffice headless subprocess",
+            "naming_patterns": [
+                "<base>-slide-*.png",
+                "<base>*.png",
+                "all *.png fallback"
+            ]
+        }
+    ],
+    "directories": {
+        "output_chunked/chunked_workflow_work/": "Interim chunk PPTX files (preserved)",
+        "storyboard/": "Per-slide storyboard markdown files",
+        "output_dir": "Configurable output directory for final and interim files"
+    }
+}

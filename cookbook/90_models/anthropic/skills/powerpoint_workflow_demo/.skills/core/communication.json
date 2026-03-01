@@ -1,0 +1,53 @@
+{
+  "skill_id": "communication",
+  "version": "1.0.0",
+  "name": "Agent Communication",
+  "category": "core",
+  "description": "Structured data exchange between pipeline agents via session_state and Pydantic models.",
+  "protocols": {
+    "message_format": "Pydantic structured output (JSON-serializable BaseModel instances)",
+    "state_management": "Shared session_state dict passed through all Workflow Steps",
+    "event_system": "Sequential step execution — no real-time events; downstream steps read upstream outputs"
+  },
+  "models": [
+    {
+      "name": "BrandStyleIntent",
+      "file": "powerpoint_chunked_workflow.py",
+      "fields": ["has_branding", "brand_name", "style_keywords", "color_palette", "tone_override", "typography_hints", "content_query", "source", "source_detail"],
+      "producer": "brand_style_analyzer / extract_style_from_template()",
+      "consumers": ["query_optimizer prompt", "Tier 1 chunk prompt", "Tier 2 code-gen prompt"]
+    },
+    {
+      "name": "StoryboardPlan",
+      "file": "powerpoint_chunked_workflow.py",
+      "fields": ["total_slides", "target_audience", "narrative_arc", "global_context", "slides"],
+      "producer": "query_optimizer",
+      "consumers": ["step_generate_chunks()"]
+    },
+    {
+      "name": "ImagePlan",
+      "file": "powerpoint_template_workflow.py",
+      "fields": ["decisions (List[SlideImageDecision])"],
+      "producer": "image_planner",
+      "consumers": ["step_generate_images()"]
+    },
+    {
+      "name": "SlideQualityReport",
+      "file": "powerpoint_template_workflow.py",
+      "fields": ["slide_number", "overall_quality", "is_visually_bland", "issues"],
+      "producer": "slide_quality_reviewer",
+      "consumers": ["_apply_visual_corrections()"]
+    }
+  ],
+  "session_state_keys": {
+    "brand_style_intent": "BrandStyleIntent | None",
+    "storyboard": "StoryboardPlan",
+    "slides_data": "List[dict]",
+    "generated_images": "Dict[int, bytes]",
+    "assembly_knowledge": "dict",
+    "quality_report": "dict",
+    "chunk_files": "List[Optional[str]]",
+    "processed_chunks": "Dict[int, Optional[str]]",
+    "reviewed_chunks": "Dict[int, Optional[str]]"
+  }
+}

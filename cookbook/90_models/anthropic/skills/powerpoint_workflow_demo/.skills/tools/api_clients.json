@@ -1,0 +1,53 @@
+{
+    "skill_id": "api_clients",
+    "version": "1.0.0",
+    "name": "API Clients",
+    "category": "tools",
+    "description": "HTTP/SDK operations and authentication for external services.",
+    "clients": [
+        {
+            "name": "Anthropic Client",
+            "sdk": "anthropic",
+            "class": "Anthropic()",
+            "auth": "ANTHROPIC_API_KEY environment variable",
+            "operations": [
+                "Agent runs (streaming and non-streaming)",
+                "File downloads (beta.files.download with betas=['files-api-2025-04-14'])"
+            ],
+            "betas": [
+                "skills-2025-10-02",
+                "context-1m-2025-08-07",
+                "files-api-2025-04-14"
+            ]
+        },
+        {
+            "name": "Agno Claude Wrapper",
+            "package": "agno.models.anthropic",
+            "class": "Claude(id='claude-opus-4-6', ...)",
+            "skills_param": [
+                {
+                    "type": "anthropic",
+                    "skill_id": "pptx",
+                    "version": "latest"
+                }
+            ],
+            "streaming": "Configurable via --no-stream flag"
+        },
+        {
+            "name": "Agno Gemini Wrapper",
+            "package": "agno.models.google",
+            "class": "Gemini(id='gemini-3-flash-preview')",
+            "features": [
+                "Structured output (response_model)",
+                "Vision analysis (image input)"
+            ]
+        },
+        {
+            "name": "NanoBanana Image Client",
+            "package": "agno.tools.nano_banana",
+            "class": "NanoBananaTools()",
+            "method": "create_image(prompt, aspect_ratio='16:9')",
+            "auth": "GOOGLE_API_KEY environment variable"
+        }
+    ]
+}

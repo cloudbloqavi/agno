@@ -1,0 +1,91 @@
+{
+    "skill_id": "agent_profiles",
+    "version": "1.0.0",
+    "name": "Agent Profiles",
+    "category": "meta",
+    "description": "Configuration profiles for all AI agents in the PowerPoint Workflow Suite.",
+    "profiles": [
+        {
+            "agent_id": "brand_style_analyzer",
+            "model": "claude-sonnet-4-20250514",
+            "provider": "Anthropic",
+            "tools": [
+                "web_search (max 2)"
+            ],
+            "output_schema": "BrandStyleIntent",
+            "file": "powerpoint_chunked_workflow.py",
+            "description": "Detects brand/style directives in user query. Autonomously searches for brand guidelines.",
+            "cost_tier": "low",
+            "typical_latency": "2-5s"
+        },
+        {
+            "agent_id": "query_optimizer",
+            "model": "claude-opus-4-6",
+            "provider": "Anthropic",
+            "betas": [
+                "context-1m-2025-08-07"
+            ],
+            "tools": [
+                "web_search (max 5)"
+            ],
+            "output_schema": "StoryboardPlan",
+            "file": "powerpoint_chunked_workflow.py",
+            "description": "Creates researched, structured storyboard plan from user prompt + brand context.",
+            "cost_tier": "high",
+            "typical_latency": "10-30s"
+        },
+        {
+            "agent_id": "content_generator",
+            "model": "claude-opus-4-6",
+            "provider": "Anthropic",
+            "betas": [
+                "context-1m-2025-08-07"
+            ],
+            "skills": [
+                {
+                    "type": "anthropic",
+                    "skill_id": "pptx",
+                    "version": "latest"
+                }
+            ],
+            "file": "powerpoint_template_workflow.py",
+            "description": "Primary content generator. Writes slide content using native PPTX skill.",
+            "cost_tier": "high",
+            "typical_latency": "60-300s per chunk",
+            "timeout": 300
+        },
+        {
+            "agent_id": "fallback_code_agent",
+            "model": "claude-opus-4-6",
+            "provider": "Anthropic",
+            "tools": [
+                "PythonTools"
+            ],
+            "file": "powerpoint_chunked_workflow.py",
+            "description": "Tier 2 fallback. Generates and executes python-pptx + matplotlib code for slide creation.",
+            "cost_tier": "high",
+            "typical_latency": "30-90s"
+        },
+        {
+            "agent_id": "image_planner",
+            "model": "gemini-3-flash-preview",
+            "provider": "Google",
+            "output_schema": "ImagePlan",
+            "file": "powerpoint_template_workflow.py",
+            "description": "Reviews slides and decides which need AI-generated images. Returns per-slide yes/no + prompt.",
+            "cost_tier": "low",
+            "typical_latency": "2-5s"
+        },
+        {
+            "agent_id": "slide_quality_reviewer",
+            "model": "gemini-2.5-flash (vision)",
+            "provider": "Google",
+            "output_schema": "SlideQualityReport",
+            "file": "powerpoint_template_workflow.py",
+            "description": "Inspects rendered slide PNGs for visual defects. Reports severity and suggests fixes.",
+            "cost_tier": "low",
+            "typical_latency": "3-8s per slide",
+            "requires": "LibreOffice (headless PNG rendering)"
+        }
+    ]
+}
