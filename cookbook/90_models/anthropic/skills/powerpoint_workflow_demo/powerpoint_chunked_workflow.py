@@ -17,8 +17,8 @@ Architecture:
   a wildcard import, then adds the chunked orchestration logic on top.
 
   powerpoint_template_workflow.py  — Core pipeline: content gen, images, template assembly,
-                                     visual review, all helper functions (~7000 lines)
-  powerpoint_chunked_workflow.py   — Chunked orchestration layer (~1500 lines, this file)
+                                    visual review, all helper functions (~6500 lines)
+  powerpoint_chunked_workflow.py   — Chunked orchestration layer (~2600 lines, this file)
 
 Chunk generation uses a 3-tier fallback hierarchy per chunk:
   Tier 1  Claude PPTX Skill    - Primary; native charts, tables, rich visuals
@@ -124,8 +124,6 @@ from agno.run.agent import RunOutput
 # step_plan_images, step_generate_images, step_assemble_template, step_visual_quality_review,
 # and all _helper functions.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from powerpoint_template_workflow import *  # noqa: F401, F403, E402
-
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.python import PythonTools
@@ -134,11 +132,11 @@ from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from anthropic import Anthropic
 from file_download_helper import download_skill_files
+from powerpoint_template_workflow import *  # noqa: F401, F403, E402
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
-
 
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
 
@@ -148,16 +146,10 @@ class SlideStoryboard(BaseModel):
 
     slide_number: int = Field(..., description="1-based slide number")
     slide_title: str = Field(..., description="Title for this slide")
-    slide_type: str = Field(
-        ..., description="Type: title/agenda/content/data/closing"
-    )
+    slide_type: str = Field(..., description="Type: title/agenda/content/data/closing")
     key_points: List[str] = Field(..., description="3-5 bullet points for this slide")
-    visual_suggestion: str = Field(
-        ..., description="Visual element recommendation"
-    )
-    transition_note: str = Field(
-        ..., description="How this slide connects to next"
-    )
+    visual_suggestion: str = Field(..., description="Visual element recommendation")
+    transition_note: str = Field(..., description="How this slide connects to next")
 
 
 class StoryboardPlan(BaseModel):
@@ -165,14 +157,24 @@ class StoryboardPlan(BaseModel):
 
     total_slides: int = Field(..., description="Total number of slides")
     presentation_title: str = Field(..., description="Main presentation title")
+    search_topic: str = Field(
+        "",
+        description=(
+            "Primary web research topic phrase extracted from user request; used to guide searches"
+        ),
+    )
     target_audience: str = Field(..., description="Target audience")
-    tone: str = Field(..., description="e.g. professional, inspiring, technical")
+    tone: str = Field(
+        ...,
+        description="Presentation tone, e.g. 'professional', 'inspiring', or 'technical'.",
+    )
     brand_voice: str = Field(
-        ..., description="e.g. authoritative, conversational, data-driven"
+        ...,
+        description="Brand voice style, e.g. 'authoritative', 'conversational', or 'data-driven'.",
     )
     global_context: str = Field(
         ...,
-        description="Shared context applicable to all slides - company, product, theme",
+        description="2-3 sentence shared context covering company, product, and central theme.",
     )
     slides: List[SlideStoryboard] = Field(
         ..., description="Per-slide storyboard entries"
@@ -189,7 +191,9 @@ class StoryboardPlan(BaseModel):
 # and parsed manually below.
 query_optimizer = Agent(
     name="Presentation Strategist",
-    model=Claude(id="claude-opus-4-6", betas=["context-1m-2025-08-07"], max_tokens=128000),
+    model=Claude(
+        id="claude-opus-4-6", betas=["context-1m-2025-08-07"], max_tokens=128000
+    ),
     description=(
         "You are a presentation strategist who first searches the web for current, "
         "relevant facts and data about the topic, then creates an optimized presentation "
@@ -210,18 +214,19 @@ query_optimizer = Agent(
 
 
 def _format_slide_markdown(slide: SlideStoryboard) -> str:
-    """Format a SlideStoryboard as a markdown file for the pptx agent.
+    """Format a SlideStoryboard as a markdown string for the pptx agent.
 
     Excludes transition_note (planning meta-info, not useful for content generation)
     to keep context size lean. Includes type, key points, and visual suggestion only.
+
+    Args:
+        slide: SlideStoryboard instance to format.
+
+    Returns:
+        Markdown string with slide number, title, type, key points, and visual suggestion.
     """
     points = "\n".join("- %s" % p for p in slide.key_points)
-    return (
-        "# Slide %d: %s\n\n"
-        "**Type:** %s\n\n"
-        "## Content\n%s\n\n"
-        "**Visual:** %s\n"
-    ) % (
+    return ("# Slide %d: %s\n\n**Type:** %s\n\n## Content\n%s\n\n**Visual:** %s\n") % (
         slide.slide_number,
         slide.slide_title,
         slide.slide_type,
@@ -231,10 +236,16 @@ def _format_slide_markdown(slide: SlideStoryboard) -> str:
 
 
 def _format_global_context_markdown(plan: StoryboardPlan) -> str:
-    """Format the global context as a markdown file for the pptx agent.
+    """Format the global context as a markdown string for the pptx agent.
 
     Kept concise: title, audience, tone, brand voice, and the 2-3 sentence global context.
     This file is included in every chunk prompt so brevity matters for context size.
+
+    Args:
+        plan: StoryboardPlan instance containing global presentation metadata.
+
+    Returns:
+        Markdown string with presentation title, audience, tone, brand voice, and context.
     """
     return (
         "# Presentation: %s\n\n"
@@ -252,7 +263,9 @@ def _format_global_context_markdown(plan: StoryboardPlan) -> str:
 # === HELPER: SAVE PROMPT TO FILE ===
 
 
-def _save_prompt_to_file(prompt: str, step_name: str, output_dir: str, extra: str = "") -> str:
+def _save_prompt_to_file(
+    prompt: str, step_name: str, output_dir: str, extra: str = ""
+) -> str:
     """Save a prompt string to a timestamped .txt file inside output_dir.
 
     Files are written to output_dir directly (which is output_chunked/chunked_workflow_work/).
@@ -326,13 +339,22 @@ def _extract_chunk_slides_data(chunk_file: str) -> List[dict]:
 def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Step 1: Enhance the user prompt, decide slide count, and generate a per-slide storyboard.
 
-    Uses the query_optimizer agent (Claude Sonnet) to produce a StoryboardPlan with:
+    Uses the query_optimizer agent (Claude Opus) to produce a StoryboardPlan with:
     - Optimal slide count (respects user-specified count, otherwise picks 8-15)
     - Global context applicable to all slides
     - Per-slide storyboard with title, type, key points, visual suggestions
     - Presentation tone and brand voice
 
     Saves storyboard to individual markdown files in {output_dir}/storyboard/.
+
+    Args:
+        step_input: Workflow step input (not used directly; context comes from session_state).
+        session_state: Shared workflow state containing user_prompt, output_dir, chunk_size,
+                       and max_retries.
+
+    Returns:
+        StepOutput with success=True and a summary string when a valid storyboard is produced,
+        or success=False with an error message if the optimizer fails or returns invalid JSON.
     """
     step_start = time.time()
 
@@ -353,9 +375,25 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "Analyze the following user request for a PowerPoint presentation and create an optimized storyboard.\n\n"
         "USER REQUEST:\n%s\n\n"
         "STEP 1 — RESEARCH FIRST:\n"
-        "Before planning slides, use web_search to find 2-4 relevant facts, statistics, or examples "
-        "for the topic. Search for current data (e.g. market size, adoption rates, key trends). "
-        "Use these findings to ground the storyboard in real, specific information.\n\n"
+        "STEP 1A — DEFINE SEARCH TOPIC (MANDATORY, DO THIS FIRST):\n"
+        "Extract and define ONE clear Search Topic from the user request before calling web_search.\n"
+        "Search Topic should be a short phrase (6-14 words) that captures the exact core focus.\n"
+        "Example format (for your internal planning only):\n"
+        "Search Topic: 'AI adoption trends in US healthcare providers (2023-2025)'\n"
+        "Then generate 4 focused search queries from that Search Topic:\n"
+        "- Query 1: market size or growth\n"
+        "- Query 2: adoption or usage rates\n"
+        "- Query 3: key challenges or risks\n"
+        "- Query 4: case studies or real-world examples\n"
+        "Add geography, industry, and year constraints when relevant.\n\n"
+        "STEP 1B — RUN WEB SEARCH USING THAT SEARCH TOPIC:\n"
+        "Before planning slides, use web_search with those queries to find 2-4 relevant facts, statistics, "
+        "or examples for the Search Topic. Prioritize recent, credible sources and specific numbers "
+        "(e.g., market size, CAGR, adoption rates, trend changes). Use these findings to ground the storyboard "
+        "in real, specific information. For each fact you use, internally track source name + publication year "
+        "and prefer the newest credible source when sources conflict.\n"
+        "If web_search returns weak or conflicting data, do NOT invent facts. Use conservative language "
+        "and reduce numeric specificity rather than fabricating values.\n\n"
         "STEP 2 — BUILD THE STORYBOARD:\n"
         "1. If the user specifies a slide count (e.g. '12 slides', '10-slide deck'), honor it exactly.\n"
         "2. If not specified, decide the optimal count: typically 8-15 slides for professional decks.\n"
@@ -376,10 +414,13 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "7. Use professional language. Do not add emojis or overly casual language.\n\n"
         "STEP 3 — OUTPUT FORMAT:\n"
         "Respond with ONLY a valid JSON object matching this exact schema (no markdown fences, "
-        "no extra commentary before or after the JSON):\n"
+        "no extra commentary before or after the JSON).\n"
+        "The JSON must be syntactically valid and parseable with strict JSON parsers.\n"
+        "Ensure slides length == total_slides and slide_number values are contiguous from 1..total_slides:\n"
         "{\n"
         '  "total_slides": <integer>,\n'
         '  "presentation_title": "<string>",\n'
+        '  "search_topic": "<string>",\n'
         '  "target_audience": "<string>",\n'
         '  "tone": "<string>",\n'
         '  "brand_voice": "<string>",\n'
@@ -398,13 +439,17 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "}\n"
     ) % user_prompt
 
-    prompt_file = _save_prompt_to_file(optimizer_prompt, "optimize_and_plan", output_dir)
+    prompt_file = _save_prompt_to_file(
+        optimizer_prompt, "optimize_and_plan", output_dir
+    )
     if prompt_file:
         print("[PROMPT] Optimizer prompt saved to: %s" % prompt_file)
 
     try:
         response = None
-        for event in query_optimizer.run(optimizer_prompt, stream=True, yield_run_output=True):
+        for event in query_optimizer.run(
+            optimizer_prompt, stream=True, yield_run_output=True
+        ):
             if isinstance(event, RunOutput):
                 response = event
     except Exception as e:
@@ -429,6 +474,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         elif isinstance(content, str):
             # Strip markdown code fences if present (```json ... ``` or ``` ... ```)
             import re as _re
+
             json_text = content.strip()
             fence_match = _re.search(r"```(?:json)?\s*([\s\S]+?)```", json_text)
             if fence_match:
@@ -442,7 +488,10 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             except Exception as e:
                 print("[ERROR] Failed to parse StoryboardPlan from JSON string: %s" % e)
                 if VERBOSE:  # noqa: F405
-                    print("[VERBOSE] Raw optimizer response (first 2000 chars):\n%s" % content[:2000])
+                    print(
+                        "[VERBOSE] Raw optimizer response (first 2000 chars):\n%s"
+                        % content[:2000]
+                    )
 
     if not plan:
         print("[ERROR] No valid storyboard plan produced.")
@@ -467,10 +516,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         slide_path = os.path.join(storyboard_dir, "slide_%03d.md" % slide.slide_number)
         slide_md = _format_slide_markdown(slide)
         if VERBOSE:  # noqa: F405
-            print(
-                "[VERBOSE] Slide %d storyboard:\n%s"
-                % (slide.slide_number, slide_md)
-            )
+            print("[VERBOSE] Slide %d storyboard:\n%s" % (slide.slide_number, slide_md))
         with open(slide_path, "w", encoding="utf-8") as f:
             f.write(slide_md)
     print("Saved %d slide storyboard files to: %s" % (len(plan.slides), storyboard_dir))
@@ -487,7 +533,14 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     summary = (
         "Storyboard created: '%s' | %d slides | tone: %s | brand voice: %s | chunk size: %d | Duration: %.1fs"
-    ) % (plan.presentation_title, plan.total_slides, plan.tone, plan.brand_voice, chunk_size, step_elapsed)
+    ) % (
+        plan.presentation_title,
+        plan.total_slides,
+        plan.tone,
+        plan.brand_voice,
+        chunk_size,
+        step_elapsed,
+    )
     return StepOutput(content=summary, success=True)
 
 
@@ -495,7 +548,20 @@ CHUNK_TIMEOUT_SECONDS = 300  # 5 minutes
 
 
 def _run_chunk_agent(chunk_agent, chunk_prompt):
-    """Worker function for timeout wrapper around chunk agent streaming."""
+    """Run the chunk agent with streaming and collect the final RunOutput.
+
+    Intended to be submitted to a ThreadPoolExecutor so the caller can enforce a
+    wall-clock timeout via Future.result(timeout=...).
+
+    Args:
+        chunk_agent: Configured Agent instance to run.
+        chunk_prompt: Full prompt string to send to the agent.
+
+    Returns:
+        Tuple of (RunOutput or None, int) where the second element is the total
+        number of streaming events received. RunOutput is None if no RunOutput
+        event was emitted during the stream.
+    """
     response = None
     event_count = 0
     for event in chunk_agent.run(chunk_prompt, stream=True, yield_run_output=True):
@@ -565,19 +631,21 @@ def generate_chunk_pptx(
         "You are generating a CHUNK of a larger presentation. "
         "This chunk contains %d slides.\n"
         "Maintain the presentation's tone (%s) and brand voice (%s).\n"
-        "These are slides %d-%d of the full %d-slide deck titled \"%s\".\n\n"
+        'These are slides %d-%d of the full %d-slide deck titled "%s".\n\n'
         "## Per-Slide Content for This Chunk:\n\n"
         "%s\n\n"
         "Please generate EXACTLY %d slides for this chunk with the content described above.\n"
         "Do not add extra slides. Do not include slide numbers outside the range %d-%d.\n"
         "Use clean formatting without custom fonts or colors. "
-        "Include tables or charts only where explicitly suggested.\n"
+        "Include native data-vis (tables/charts/infographics/diagrams) only where explicitly suggested.\n"
         "For any chart: use native PPTX chart objects only (bar, column, line, or pie) — "
         "do NOT use matplotlib or embed chart images.\n"
         "For any table: use native PPTX table objects only — do NOT embed a table as an image "
         "or use matplotlib/PIL to render one.\n"
         "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) "
         "or a native table to approximate the visual — do NOT insert images for infographics or diagrams.\n"
+        "If a requested visual cannot be represented exactly, preserve the slide structure and add a concise "
+        "native textbox note; do NOT fail the chunk and do NOT use image-based substitutes.\n"
         "Save the output as 'chunk_%03d.pptx'."
     ) % (
         global_context,
@@ -629,6 +697,7 @@ def generate_chunk_pptx(
             "For any chart mentioned in a visual_suggestion: produce a native Office chart with synthesized data — never embed a chart as an image.",
             "For tables: use ONLY native PPTX table objects — never embed a table as an image or use matplotlib/PIL to render one.",
             "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) or a native table to approximate the visual — never insert an image for an infographic or diagram.",
+            "When a visual request is ambiguous or over-specified, prefer deterministic native data-vis output and keep slide completeness over visual perfection.",
         ],
         markdown=True,
     )
@@ -662,7 +731,12 @@ def generate_chunk_pptx(
                 except concurrent.futures.TimeoutError:
                     print(
                         "[CHUNK %d] Attempt %d/%d timed out after %ds. Activating fallback generator."
-                        % (chunk_idx, attempt + 1, max_retries + 1, CHUNK_TIMEOUT_SECONDS)
+                        % (
+                            chunk_idx,
+                            attempt + 1,
+                            max_retries + 1,
+                            CHUNK_TIMEOUT_SECONDS,
+                        )
                     )
                     session_state["use_fallback_generator"] = True
                     timed_out = True
@@ -673,7 +747,10 @@ def generate_chunk_pptx(
                 return None
 
             if response is None:
-                print("[CHUNK %d] No RunOutput received after %d events." % (chunk_idx, event_count))
+                print(
+                    "[CHUNK %d] No RunOutput received after %d events."
+                    % (chunk_idx, event_count)
+                )
                 attempt_elapsed = time.time() - attempt_start
                 print(
                     "[TIMING] Chunk %d attempt %d/%d: %.1fs (no output)"
@@ -701,7 +778,10 @@ def generate_chunk_pptx(
                         )
 
         except Exception as e:
-            print("[CHUNK %d] Attempt %d/%d failed with error: %s" % (chunk_idx, attempt + 1, max_retries + 1, e))
+            print(
+                "[CHUNK %d] Attempt %d/%d failed with error: %s"
+                % (chunk_idx, attempt + 1, max_retries + 1, e)
+            )
             attempt_elapsed = time.time() - attempt_start
             print(
                 "[TIMING] Chunk %d attempt %d/%d: %.1fs (error)"
@@ -756,7 +836,11 @@ def generate_chunk_pptx(
                         break
 
         # Fallback: try response.model_provider_data
-        if not generated_file and hasattr(response, "model_provider_data") and response.model_provider_data:
+        if (
+            not generated_file
+            and hasattr(response, "model_provider_data")
+            and response.model_provider_data
+        ):
             if VERBOSE:  # noqa: F405
                 print(
                     "[VERBOSE] Chunk %d: trying fallback model_provider_data download..."
@@ -782,7 +866,8 @@ def generate_chunk_pptx(
                         continue
             except Exception as e:
                 print(
-                    "[CHUNK %d] download_skill_files (fallback) failed: %s" % (chunk_idx, e)
+                    "[CHUNK %d] download_skill_files (fallback) failed: %s"
+                    % (chunk_idx, e)
                 )
 
         attempt_elapsed = time.time() - attempt_start
@@ -803,7 +888,10 @@ def generate_chunk_pptx(
                 "[TIMING] Chunk %d attempt %d/%d: %.1fs (no file returned)"
                 % (chunk_idx, attempt + 1, max_retries + 1, attempt_elapsed)
             )
-            print("[CHUNK %d] Attempt %d/%d produced no file." % (chunk_idx, attempt + 1, max_retries + 1))
+            print(
+                "[CHUNK %d] Attempt %d/%d produced no file."
+                % (chunk_idx, attempt + 1, max_retries + 1)
+            )
 
     print(
         "[CHUNK %d] All %d attempts failed. Skipping chunk."
@@ -913,7 +1001,9 @@ def generate_chunk_pptx_fallback(
 
             if slide.slide_type == "title":
                 # Set subtitle placeholder
-                subtitle_text = slide.key_points[0] if slide.key_points else slide.slide_title
+                subtitle_text = (
+                    slide.key_points[0] if slide.key_points else slide.slide_title
+                )
                 if subtitle_text:
                     for ph in pptx_slide.placeholders:
                         if ph.placeholder_format.idx == 1:
@@ -948,6 +1038,7 @@ def generate_chunk_pptx_fallback(
                     # no matplotlib or image embedding is used.
                     try:
                         from pptx.chart.data import CategoryChartData
+
                         chart_data = CategoryChartData()
                         chart_data.categories = ["Q1", "Q2", "Q3", "Q4"]
                         chart_data.add_series("Series 1", (25, 40, 35, 55))
@@ -1016,6 +1107,7 @@ def generate_chunk_pptx_fallback(
                         # Uses native python-pptx shapes — no images inserted.
                         try:
                             from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE
+
                             labels = ["Step 1", "Step 2", "Step 3"]
                             box_w = Inches(2.2)
                             box_h = Inches(1.0)
@@ -1024,7 +1116,10 @@ def generate_chunk_pptx_fallback(
                                 left = Inches(0.8 + li * 2.8)
                                 shape = pptx_slide.shapes.add_shape(
                                     MSO_AUTO_SHAPE_TYPE.RECTANGLE,
-                                    left, top, box_w, box_h,
+                                    left,
+                                    top,
+                                    box_w,
+                                    box_h,
                                 )
                                 shape.text = label
                                 shape.text_frame.paragraphs[0].font.size = Pt(11)
@@ -1072,7 +1167,9 @@ def generate_chunk_pptx_fallback(
         return output_path
 
     except Exception as e:
-        print("[CHUNK %d FALLBACK] Failed to generate fallback PPTX: %s" % (chunk_idx, e))
+        print(
+            "[CHUNK %d FALLBACK] Failed to generate fallback PPTX: %s" % (chunk_idx, e)
+        )
         return None
 
 
@@ -1092,14 +1189,16 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "For line charts use XL_CHART_TYPE.LINE, for pie charts use XL_CHART_TYPE.PIE — always via ChartData, never via image embedding.",
     "For TABLES: ALWAYS use slide.shapes.add_table(rows, cols, Inches(1), Inches(1.5), Inches(8), Inches(4.5)). Fill cells via table.cell(row, col).text = 'value'. NEVER embed a table as an image or use matplotlib/PIL to render one.",
     "For INFOGRAPHICS or DIAGRAMS: use native python-pptx shapes (add_shape with MSO_AUTO_SHAPE_TYPE.RECTANGLE, add_textbox, add_connector) or a native table to approximate the layout. NEVER insert an image for an infographic or diagram.",
+    "Treat charts/tables/infographics/diagrams as native data-vis. Preserve data-vis intent even when exact styling cannot be replicated.",
     "Synthesize plausible, specific data values from the visual_suggestion and key_points descriptions. Do NOT use generic placeholder data.",
     "CHART AXIS SAFETY: When styling chart axes, always wrap axis.format.line.fill.background(), axis.format.line.color.rgb, and axis.major_gridlines.format.line.color.rgb calls in try/except blocks to handle cases where the underlying XML element does not yet exist. Example: try: chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0x80,0x80,0x80)\nexcept Exception: pass",
     "CHART AXIS SAFETY: Similarly wrap axis.tick_labels.font.color.rgb, chart.legend.font.color.rgb, and series.data_labels.font.color.rgb in try/except blocks — these can raise 'NoneType object has no attribute attrib' if the XML element is absent.",
     "Save the final presentation using prs.save('EXACT_OUTPUT_PATH') where EXACT_OUTPUT_PATH is the path given in the task.",
     "Execute the script using the save_to_file_and_run tool immediately after writing it.",
     "If the script has an error, fix it and re-run. Maximum 2 fix attempts.",
+    "If a visual cannot be implemented exactly, keep the slide and add a concise native textbox note. Do not skip slides.",
     "Do not add speaker notes, animations, or transitions.",
-    "Do not print or return anything except the final prs.save() call.",
+    "Do not print to stdout or write any files other than the final prs.save() call.",
 ]
 
 # Tier 2 fallback agent: generates python-pptx code with native charts and executes it.
@@ -1115,9 +1214,11 @@ fallback_code_agent = Agent(
     name="PPTX Code Generator",
     model=Claude(id="claude-opus-4-6", max_tokens=128000),
     instructions=PPTX_CODE_GEN_INSTRUCTIONS,
-    tools=[PythonTools(
-        base_dir=Path("."),
-    )],
+    tools=[
+        PythonTools(
+            base_dir=Path("."),
+        )
+    ],
     markdown=False,
 )
 
@@ -1129,7 +1230,7 @@ def generate_chunk_pptx_v2(
 ) -> Optional[str]:
     """Tier 2 fallback chunk generator using LLM code generation + PythonTools execution.
 
-    Prompts the fallback_code_agent (Claude Sonnet without PPTX skill, equipped with
+    Prompts the fallback_code_agent (Claude Opus without PPTX skill, equipped with
     PythonTools) to write and execute a python-pptx script that creates the chunk
     slides with native charts (CategoryChartData/ChartData), tables, and rich visual content.
     matplotlib is FORBIDDEN — all charts must use python-pptx native chart objects.
@@ -1170,9 +1271,7 @@ def generate_chunk_pptx_v2(
     slide_specs = []
     for slide in chunk_slides:
         spec = (
-            "Slide %d (type=%s): title='%s'\n"
-            "  Key points: %s\n"
-            "  Visual suggestion: %s"
+            "Slide %d (type=%s): title='%s'\n  Key points: %s\n  Visual suggestion: %s"
         ) % (
             slide.slide_number,
             slide.slide_type,
@@ -1213,8 +1312,10 @@ def generate_chunk_pptx_v2(
         "- Synthesize specific, plausible data values matching the visual_suggestion topic.\n"
         "- For any slide with a table visual_suggestion: generate a REAL native table using slide.shapes.add_table(). NEVER use matplotlib or embed a table as an image.\n"
         "- For any slide with an infographic or diagram visual_suggestion: use native python-pptx shapes (add_shape with MSO_AUTO_SHAPE_TYPE.RECTANGLE, add_textbox) or a native table to approximate it. NEVER insert an image for an infographic or diagram.\n"
+        "- If exact visual styling is not feasible, preserve content and structure with a concise native textbox note. Never skip a requested slide.\n"
         "- Save the file to: %s\n"
         "- Then immediately execute the script using save_to_file_and_run.\n"
+        "- Return only tool execution needed to write and run the script; avoid extra narrative output.\n"
     ) % (
         chunk_output_path,
         global_ctx,
@@ -1240,8 +1341,7 @@ def generate_chunk_pptx_v2(
             pass
         t2_elapsed = time.time() - t2_start
         print(
-            "[TIMING] Chunk %d Tier 2 code generation: %.1fs"
-            % (chunk_idx, t2_elapsed)
+            "[TIMING] Chunk %d Tier 2 code generation: %.1fs" % (chunk_idx, t2_elapsed)
         )
     except Exception as e:
         t2_elapsed = time.time() - t2_start
@@ -1249,10 +1349,7 @@ def generate_chunk_pptx_v2(
             "[CHUNK %d TIER2] Code generation agent failed after %.1fs: %s"
             % (chunk_idx, t2_elapsed, str(e))
         )
-        print(
-            "[CHUNK %d TIER2] Falling back to Tier 3 (text-only)."
-            % chunk_idx
-        )
+        print("[CHUNK %d TIER2] Falling back to Tier 3 (text-only)." % chunk_idx)
         return None
 
     # Verify the file was actually written by the executed code
@@ -1295,6 +1392,15 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
     once set, Tier 1 is skipped for all remaining chunks in the run.
 
     A 1-second inter-chunk delay is applied between calls to avoid rate limits.
+
+    Args:
+        step_input: Workflow step input (not used directly).
+        session_state: Shared workflow state; must contain storyboard, chunk_size, output_dir,
+                       max_retries, start_tier, and use_fallback_generator.
+
+    Returns:
+        StepOutput with success=True when at least one chunk was generated successfully,
+        or success=False if no storyboard was found or all chunks failed.
     """
     step_start = time.time()
 
@@ -1342,7 +1448,11 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
         # Determine effective starting tier for this chunk
         # If use_fallback_generator flag is set (Tier 1 failed in a previous chunk),
         # effective tier is max(start_tier, 2) to skip Tier 1 permanently.
-        effective_tier = max(start_tier, 2) if session_state.get("use_fallback_generator") else start_tier
+        effective_tier = (
+            max(start_tier, 2)
+            if session_state.get("use_fallback_generator")
+            else start_tier
+        )
 
         chunk_file = None
 
@@ -1352,7 +1462,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                 "[GENERATE] Chunk %d/%d: Starting at Tier 3 (text-only, instant)."
                 % (chunk_idx + 1, total_chunks)
             )
-            chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
+            chunk_file = generate_chunk_pptx_fallback(
+                chunk_slides, session_state, chunk_idx
+            )
 
         elif effective_tier == 2:
             # Start with Tier 2: LLM code generation, fallback to Tier 3
@@ -1366,7 +1478,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                     "[GENERATE] Chunk %d/%d: Tier 2 failed. Falling back to Tier 3 (text-only)."
                     % (chunk_idx + 1, total_chunks)
                 )
-                chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
+                chunk_file = generate_chunk_pptx_fallback(
+                    chunk_slides, session_state, chunk_idx
+                )
 
         else:  # effective_tier == 1
             # Start with Tier 1: Claude PPTX skill, fallback to Tier 2 → Tier 3
@@ -1383,7 +1497,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                     "[GENERATE] Chunk %d/%d: Tier 1 failed. Attempting Tier 2 (LLM code generation)..."
                     % (chunk_idx + 1, total_chunks)
                 )
-                chunk_file = generate_chunk_pptx_v2(chunk_slides, session_state, chunk_idx)
+                chunk_file = generate_chunk_pptx_v2(
+                    chunk_slides, session_state, chunk_idx
+                )
 
                 if chunk_file is None:
                     # Tier 2 also failed — fall through to Tier 3.
@@ -1392,7 +1508,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                         "Using Tier 3 (text-only fallback)."
                         % (chunk_idx + 1, total_chunks)
                     )
-                    chunk_file = generate_chunk_pptx_fallback(chunk_slides, session_state, chunk_idx)
+                    chunk_file = generate_chunk_pptx_fallback(
+                        chunk_slides, session_state, chunk_idx
+                    )
 
         chunk_elapsed = time.time() - chunk_start
         if chunk_file:
@@ -1456,6 +1574,15 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
 
     Each chunk is processed with a temporary session_state copy that adapts
     the existing step functions to work on individual chunk files.
+
+    Args:
+        step_input: Workflow step input (not used directly).
+        session_state: Shared workflow state; must contain chunk_files, chunk_slide_groups,
+                       template_path, output_dir, and no_images.
+
+    Returns:
+        StepOutput with success=True always (failures are logged but do not abort the step).
+        Content string reports how many chunks were processed.
     """
     step_start = time.time()
 
@@ -1478,7 +1605,10 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         chunk_proc_start = time.time()
 
         if chunk_file is None:
-            print("[PROCESS] Chunk %d (%d/%d): skipped (no file)." % (chunk_idx, chunk_idx + 1, total_process_chunks))
+            print(
+                "[PROCESS] Chunk %d (%d/%d): skipped (no file)."
+                % (chunk_idx, chunk_idx + 1, total_process_chunks)
+            )
             processed_chunks[chunk_idx] = None
             continue
 
@@ -1488,7 +1618,9 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         )
 
         # Determine which slides are in this chunk
-        chunk_slides = chunk_slide_groups[chunk_idx] if chunk_idx < len(chunk_slide_groups) else []
+        chunk_slides = (
+            chunk_slide_groups[chunk_idx] if chunk_idx < len(chunk_slide_groups) else []
+        )
         slides_data = _extract_chunk_slides_data(chunk_file)
 
         # Enrich slides_data entries with storyboard visual_suggestion and has_data_vis.
@@ -1552,10 +1684,13 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
             try:
                 # Build slides JSON for image planner
                 slides_json = json.dumps(slides_data, indent=2)
-                user_prompt = session_state.get("user_prompt", "professional presentation")
+                user_prompt = session_state.get(
+                    "user_prompt", "professional presentation"
+                )
                 combined_message = (
                     'Presentation topic: "%s"\n\nSlide metadata:\n%s\n\n'
                     "Analyze each slide and decide which ones need AI-generated images.\n"
+                    "Treat chart/table/infographic/diagram slides as native data-vis and do NOT request image generation for those slides.\n"
                     "Consider the presentation topic when writing image prompts."
                 ) % (user_prompt, slides_json)
 
@@ -1594,12 +1729,13 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                         % (chunk_idx, len(chunk_session.get("generated_images", {})))
                     )
                 else:
-                    print("[PROCESS] Chunk %d: image planner returned no plan." % chunk_idx)
+                    print(
+                        "[PROCESS] Chunk %d: image planner returned no plan."
+                        % chunk_idx
+                    )
 
             except Exception as e:
-                print(
-                    "[PROCESS] Chunk %d: image pipeline failed: %s" % (chunk_idx, e)
-                )
+                print("[PROCESS] Chunk %d: image pipeline failed: %s" % (chunk_idx, e))
                 if session_state.get("verbose"):
                     traceback.print_exc()
 
@@ -1618,7 +1754,8 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                 if assembled_output and os.path.isfile(assembled_output):
                     current_file = assembled_output
                     print(
-                        "[PROCESS] Chunk %d: assembled -> %s" % (chunk_idx, current_file)
+                        "[PROCESS] Chunk %d: assembled -> %s"
+                        % (chunk_idx, current_file)
                     )
                 else:
                     print(
@@ -1643,7 +1780,10 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         processed_chunks[chunk_idx] = current_file
 
         chunk_proc_elapsed = time.time() - chunk_proc_start
-        print("[TIMING] Chunk %d processing done in %.1fs" % (chunk_idx, chunk_proc_elapsed))
+        print(
+            "[TIMING] Chunk %d processing done in %.1fs"
+            % (chunk_idx, chunk_proc_elapsed)
+        )
         print("[PROCESS] Chunk %d: result -> %s" % (chunk_idx, current_file))
 
     session_state["processed_chunks"] = processed_chunks
@@ -1677,6 +1817,15 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
     This step is non-blocking: any failure silently returns success=True.
     If a programmatic fix is missing in Python, logs it to console regardless
     of --verbose setting.
+
+    Args:
+        step_input: Workflow step input (not used directly).
+        session_state: Shared workflow state; must contain processed_chunks, output_dir,
+                       template_path, and visual_passes.
+
+    Returns:
+        StepOutput with success=True always; errors per chunk are logged and do not abort.
+        Content string reports how many chunks were reviewed.
     """
     step_start = time.time()
 
@@ -1799,8 +1948,7 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
                 # Any exception here means the visual review or correction logic is broken/missing.
                 print(
                     "[VISUAL REVIEW MISSING FIX] Chunk %d, pass %d: exception during "
-                    "visual correction step: %s"
-                    % (chunk_idx, pass_num + 1, str(e))
+                    "visual correction step: %s" % (chunk_idx, pass_num + 1, str(e))
                 )
                 print(
                     "[SUGGESTION] Review step_visual_quality_review() and "
@@ -1856,6 +2004,7 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
     """
     import posixpath
     import re
+
     from lxml import etree
 
     valid_paths = [p for p in pptx_paths if p and os.path.exists(p)]
@@ -1888,6 +2037,15 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
     NS_CT = "http://schemas.openxmlformats.org/package/2006/content-types"
 
     def _get_slide_numbers(prs_rels_tree):
+        """Extract slide XML numbers from ``presentation.xml.rels``.
+
+        Args:
+            prs_rels_tree: Parsed lxml tree for ``ppt/_rels/presentation.xml.rels``.
+
+        Returns:
+            List of integer slide numbers extracted from Target attributes of slide
+            relationships in prs_rels_tree. Non-slide relationships are ignored.
+        """
         slide_nums = []
         for rel in prs_rels_tree.findall("{%s}Relationship" % NS_RELS):
             target = rel.get("Target", "")
@@ -1908,7 +2066,9 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
     next_rel_id = max(existing_rel_ids) + 1 if existing_rel_ids else 100
 
     # Open output as writable archive
-    with zipfile.ZipFile(output_path, "a", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as out_zip:
+    with zipfile.ZipFile(
+        output_path, "a", compression=zipfile.ZIP_DEFLATED, allowZip64=True
+    ) as out_zip:
         for src_path in valid_paths[1:]:
             with zipfile.ZipFile(src_path, "r") as src_zip:
                 src_names = set(src_zip.namelist())
@@ -1924,8 +2084,12 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
 
                     old_slide_name = "ppt/slides/slide%d.xml" % src_slide_num
                     new_slide_name = "ppt/slides/slide%d.xml" % new_slide_num
-                    old_slide_rels_name = "ppt/slides/_rels/slide%d.xml.rels" % src_slide_num
-                    new_slide_rels_name = "ppt/slides/_rels/slide%d.xml.rels" % new_slide_num
+                    old_slide_rels_name = (
+                        "ppt/slides/_rels/slide%d.xml.rels" % src_slide_num
+                    )
+                    new_slide_rels_name = (
+                        "ppt/slides/_rels/slide%d.xml.rels" % new_slide_num
+                    )
 
                     if old_slide_name not in src_names:
                         continue
@@ -1939,7 +2103,9 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                         slide_rels_xml = src_zip.read(old_slide_rels_name)
                         slide_rels_tree = etree.fromstring(slide_rels_xml)
 
-                        for rel in slide_rels_tree.findall("{%s}Relationship" % NS_RELS):
+                        for rel in slide_rels_tree.findall(
+                            "{%s}Relationship" % NS_RELS
+                        ):
                             rel_type = rel.get("Type", "")
                             target = rel.get("Target", "")
 
@@ -2008,11 +2174,15 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                                     # lstrip("../") would incorrectly strip leading
                                     # '.' and '/' characters individually.
                                     cr_tree = etree.fromstring(cr_bytes)
-                                    for cr_rel in cr_tree.findall("{%s}Relationship" % NS_RELS):
+                                    for cr_rel in cr_tree.findall(
+                                        "{%s}Relationship" % NS_RELS
+                                    ):
                                         cr_target = cr_rel.get("Target", "")
                                         if cr_target.startswith(".."):
                                             wb_old = posixpath.normpath(
-                                                os.path.dirname(actual_old) + "/" + cr_target
+                                                os.path.dirname(actual_old)
+                                                + "/"
+                                                + cr_target
                                             )
                                             if wb_old in src_names:
                                                 wb_bytes = src_zip.read(wb_old)
@@ -2025,16 +2195,17 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                                                     + "_s%d_wb" % new_slide_num
                                                     + wb_ext,
                                                 )
-                                                if wb_new not in set(out_zip.namelist()):
+                                                if wb_new not in set(
+                                                    out_zip.namelist()
+                                                ):
                                                     out_zip.writestr(wb_new, wb_bytes)
                                                 # Update the chart rels entry to point
                                                 # to the renamed workbook.
                                                 # The new target must be relative to the
                                                 # chart's directory (ppt/charts/), so we
                                                 # build a "../<subdir>/<name>" path.
-                                                new_wb_rel_target = (
-                                                    "../"
-                                                    + "/".join(wb_new.split("/")[1:])
+                                                new_wb_rel_target = "../" + "/".join(
+                                                    wb_new.split("/")[1:]
                                                 )
                                                 cr_rel.set("Target", new_wb_rel_target)
                                     # Serialise the (possibly updated) rels tree.
@@ -2054,7 +2225,9 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                             # relative target "../chart1_s5_1.xml".
                             # split("/")[1:] yields ["charts", "chart1_s5_1.xml"],
                             # producing the correct "../charts/chart1_s5_1.xml".
-                            new_rel_target = "../" + "/".join(new_part_name.split("/")[1:])
+                            new_rel_target = "../" + "/".join(
+                                new_part_name.split("/")[1:]
+                            )
                             rel.set("Target", new_rel_target)
 
                         updated_rels_bytes = etree.tostring(
@@ -2111,6 +2284,7 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
     # Write updated presentation.xml, rels, and content types back.
     # Python's zipfile does not support overwriting entries, so we copy to a temp file.
     import tempfile
+
     tmp_path = output_path + ".tmp"
     with zipfile.ZipFile(output_path, "r") as old_zip:
         with zipfile.ZipFile(
@@ -2178,7 +2352,15 @@ def _try_auto_repair_with_libreoffice(pptx_path: str) -> bool:
     tmp_dir = tempfile.mkdtemp(prefix="pptx_repair_")
     try:
         result = subprocess.run(
-            [soffice, "--headless", "--convert-to", "pptx", "--outdir", tmp_dir, pptx_path],
+            [
+                soffice,
+                "--headless",
+                "--convert-to",
+                "pptx",
+                "--outdir",
+                tmp_dir,
+                pptx_path,
+            ],
             capture_output=True,
             timeout=180,
         )
@@ -2244,21 +2426,19 @@ def step_merge_chunks(step_input: StepInput, session_state: Dict) -> StepOutput:
     has_template = bool(session_state.get("template_path"))
     visual_review = session_state.get("visual_review", False)
     chunk_files: List[Optional[str]] = session_state.get("chunk_files", [])
-    processed_chunks: Dict[int, Optional[str]] = session_state.get("processed_chunks", {})
+    processed_chunks: Dict[int, Optional[str]] = session_state.get(
+        "processed_chunks", {}
+    )
     reviewed_chunks: Dict[int, Optional[str]] = session_state.get("reviewed_chunks", {})
 
     # Determine which chunk paths to use (priority: reviewed > processed > raw)
     if has_template and visual_review and reviewed_chunks:
         source_label = "reviewed (template + visual review)"
-        ordered_paths = [
-            reviewed_chunks.get(i)
-            for i in sorted(reviewed_chunks.keys())
-        ]
+        ordered_paths = [reviewed_chunks.get(i) for i in sorted(reviewed_chunks.keys())]
     elif has_template and processed_chunks:
         source_label = "processed (template-assembled)"
         ordered_paths = [
-            processed_chunks.get(i)
-            for i in sorted(processed_chunks.keys())
+            processed_chunks.get(i) for i in sorted(processed_chunks.keys())
         ]
     else:
         # No template path: use raw chunk files directly
@@ -2336,6 +2516,13 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
 
     No-template pipeline: Step 1 -> Step 2 -> Step 5
     Template pipeline:    Step 1 -> Step 2 -> Step 3 [-> Step 4] -> Step 5
+
+    Args:
+        session_state: Shared workflow state; must contain template_path and visual_review
+                       to determine which optional steps to include.
+
+    Returns:
+        Configured Workflow instance with the appropriate step sequence.
     """
     has_template = bool(session_state.get("template_path"))
     do_visual_review = has_template and bool(session_state.get("visual_review"))
@@ -2368,6 +2555,13 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
 
 
 def main() -> None:
+    """Parse CLI flags, build session state, and execute the chunked workflow.
+
+    Validates required environment variables and the optional template path, creates
+    output working directories under output_chunked/, runs the workflow end-to-end,
+    and writes the final PPTX to the path specified by --output. Step-level progress
+    and timing diagnostics are printed to stdout.
+    """
     parser = argparse.ArgumentParser(
         description="Chunked PPTX generation workflow — overcomes Claude API limits for large presentations."
     )
@@ -2511,9 +2705,7 @@ def main() -> None:
     output_dir = os.path.join(output_base, "chunked_workflow_work")
     os.makedirs(output_dir, exist_ok=True)
 
-    default_prompt = (
-        "Create a professional business presentation about AI transformation in enterprise companies"
-    )
+    default_prompt = "Create a professional business presentation about AI transformation in enterprise companies"
 
     session_state = {
         # Core paths
@@ -2574,10 +2766,15 @@ def main() -> None:
         print("Visual review: skipped (no template)")
     print("Chunk size: %d slides per API call" % args.chunk_size)
     print("Max retries per chunk: %d" % args.max_retries)
-    print("Start tier: %d (%s)" % (
-        args.start_tier,
-        {1: "Claude PPTX skill", 2: "LLM code generation", 3: "text-only"}[args.start_tier]
-    ))
+    print(
+        "Start tier: %d (%s)"
+        % (
+            args.start_tier,
+            {1: "Claude PPTX skill", 2: "LLM code generation", 3: "text-only"}[
+                args.start_tier
+            ],
+        )
+    )
     print("Images:     %s" % ("disabled" if args.no_images else "enabled"))
     if args.verbose:
         print("Verbose:    enabled")

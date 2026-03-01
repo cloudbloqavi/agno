@@ -55,7 +55,6 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from anthropic import Anthropic
-
 from file_download_helper import download_skill_files
 from template_to_markdown import extract_template_to_markdown
 
@@ -126,7 +125,11 @@ def extract_file_ids(response, debug: bool = False) -> list[str]:
                 logger.debug("Found file_ids in response.extra_data: %s", ids)
             file_ids = ids
 
-    if not file_ids and hasattr(response, "provider_data") and isinstance(response.provider_data, dict):
+    if (
+        not file_ids
+        and hasattr(response, "provider_data")
+        and isinstance(response.provider_data, dict)
+    ):
         ids = response.provider_data.get("file_ids", [])
         if ids:
             if debug:
@@ -157,7 +160,9 @@ def extract_file_ids(response, debug: bool = False) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def run_workflow(template_path: Path, user_prompt: str, output_path: Path, debug: bool = False) -> None:
+def run_workflow(
+    template_path: Path, user_prompt: str, output_path: Path, debug: bool = False
+) -> None:
     """Execute the markdown-style injection workflow.
 
     Steps:
@@ -193,7 +198,9 @@ def run_workflow(template_path: Path, user_prompt: str, output_path: Path, debug
     print(f"Styling guide extracted ({len(template_markdown)} characters)")
 
     if debug:
-        logger.debug("Template markdown preview (first 500 chars):\n%s", template_markdown[:500])
+        logger.debug(
+            "Template markdown preview (first 500 chars):\n%s", template_markdown[:500]
+        )
 
     # Step 2: Create agent -- styling guide goes into system instructions.
     #
@@ -288,7 +295,9 @@ def run_workflow(template_path: Path, user_prompt: str, output_path: Path, debug
         print(f"  Output: {path}")
     print("=" * 60)
     print("\nApproach used: Template styling injected into system instructions.")
-    print("Claude applied the colors, fonts, and dimensions directly in PptxGenJS code.")
+    print(
+        "Claude applied the colors, fonts, and dimensions directly in PptxGenJS code."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +347,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
+        logging.basicConfig(
+            level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s"
+        )
         logger.debug("Debug logging enabled")
     else:
         logging.basicConfig(level=logging.WARNING)

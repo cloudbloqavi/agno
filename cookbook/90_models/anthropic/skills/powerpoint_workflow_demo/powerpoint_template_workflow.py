@@ -4619,7 +4619,8 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
         # Find slides not yet selected, excluding data-vis slides
         selected_indices = {d["slide_index"] for d in slides_needing_images}
         remaining = [
-            d for d in decisions
+            d
+            for d in decisions
             if d["slide_index"] not in selected_indices
             # Skip slides that the planner flagged as having native data visualizations
             and not d.get("has_table", False)
@@ -4627,8 +4628,7 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
             and not d.get("has_data_vis", False)
             # Skip slides whose visual_suggestion mentions a data-vis type
             and not any(
-                kw in d.get("visual_suggestion", "").lower()
-                for kw in DATA_VIS_KEYWORDS
+                kw in d.get("visual_suggestion", "").lower() for kw in DATA_VIS_KEYWORDS
             )
         ]
         # Sort: image_placeholder slides first, then title slide (index 0)
@@ -4670,7 +4670,9 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
     # it never has has_table, has_chart, has_data_vis, or visual_suggestion.
     # Without this lookup, the existing decision.get("has_table", ...) checks always
     # return False and the guard never fires, allowing data-vis slides to receive images.
-    slides_data_by_idx: Dict[int, dict] = {s.get("index", i): s for i, s in enumerate(slides_data)}
+    slides_data_by_idx: Dict[int, dict] = {
+        s.get("index", i): s for i, s in enumerate(slides_data)
+    }
 
     # Initialize NanoBanana
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -4821,9 +4823,8 @@ def _extract_shape_design_info(shape) -> dict:
                         info["line_color_hex"] = srgb.get("val", "")
 
         try:
-            info["has_text"] = (
-                getattr(shape, "has_text_frame", False)
-                and bool(getattr(shape, "text", "").strip())
+            info["has_text"] = getattr(shape, "has_text_frame", False) and bool(
+                getattr(shape, "text", "").strip()
             )
         except Exception:
             info["has_text"] = False
@@ -5094,14 +5095,10 @@ def _analyze_template_in_depth(template_prs) -> dict:
         )[:5]
 
         avg_title_size = (
-            int(sum(all_title_sizes) / len(all_title_sizes))
-            if all_title_sizes
-            else 28
+            int(sum(all_title_sizes) / len(all_title_sizes)) if all_title_sizes else 28
         )
         avg_body_size = (
-            int(sum(all_body_sizes) / len(all_body_sizes))
-            if all_body_sizes
-            else 18
+            int(sum(all_body_sizes) / len(all_body_sizes)) if all_body_sizes else 18
         )
 
         result["design_language_summary"] = {
@@ -5150,8 +5147,7 @@ def _analyze_template_in_depth(template_prs) -> dict:
                 % (avg_title_size, avg_body_size)
             )
             print(
-                "[VERBOSE]   Layouts with picture placeholders: %d"
-                % layouts_with_pics
+                "[VERBOSE]   Layouts with picture placeholders: %d" % layouts_with_pics
             )
             print(
                 "[VERBOSE]   Layouts with decorative shapes: %d"
@@ -5337,9 +5333,7 @@ def _build_assembly_knowledge_file(
         "target_title_font_size_pt": design_summary.get(
             "typical_title_font_size_pt", 28
         ),
-        "target_body_font_size_pt": design_summary.get(
-            "typical_body_font_size_pt", 18
-        ),
+        "target_body_font_size_pt": design_summary.get("typical_body_font_size_pt", 18),
         "target_slide_width_emu": slide_dims.get("width_emu", 0),
         "target_slide_height_emu": slide_dims.get("height_emu", 0),
         "template_has_picture_layouts": (
@@ -5576,7 +5570,8 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         if gen_img is not None and _slide_has_data_vis:
             print(
                 "  Slide %d: Has native data visualization (chart/table/infographic) — "
-                "suppressing generated image to preserve data visualization." % (idx + 1)
+                "suppressing generated image to preserve data visualization."
+                % (idx + 1)
             )
             gen_img = None
 
@@ -6689,7 +6684,9 @@ def step_visual_quality_review(
         # for the absence of an AI-generated photo.
         _DATA_VIS_KW_REVIEW = ("chart", "table", "infographic", "diagram", "graph")
         _slides_data_list = session_state.get("slides_data", [])
-        _slides_data_map = {s.get("index", i): s for i, s in enumerate(_slides_data_list)}
+        _slides_data_map = {
+            s.get("index", i): s for i, s in enumerate(_slides_data_list)
+        }
 
         reports = []
         for idx, img_path in enumerate(slide_images):
@@ -7133,8 +7130,12 @@ if __name__ == "__main__":
         generated_file = workflow.session_state.get("generated_file", "")
         if generated_file and os.path.isfile(generated_file):
             import shutil as _shutil
+
             _shutil.copy2(generated_file, output_path)
-            print("No template specified: raw generated presentation saved to %s" % output_path)
+            print(
+                "No template specified: raw generated presentation saved to %s"
+                % output_path
+            )
 
     _workflow_elapsed = time.time() - _workflow_start
     print("[TIMING] Total workflow execution: %.2fs" % _workflow_elapsed)

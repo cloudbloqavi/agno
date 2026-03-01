@@ -66,7 +66,7 @@ User prompt
     │
     ▼
 Step 1: Optimize & Plan
-    │  (Claude Sonnet → StoryboardPlan)
+    │  (claude-opus-4-6 → StoryboardPlan)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -89,7 +89,7 @@ User prompt + Template
     │
     ▼
 Step 1: Optimize & Plan
-    │  (Claude Sonnet → StoryboardPlan)
+    │  (claude-opus-4-6 → StoryboardPlan)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -246,7 +246,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 
 | Option | What It Does | Default |
 |--------|-------------|---------|
-| `--template` / `-t` | Your company's .pptx template | Required |
+| `--template` / `-t` | Your company's .pptx template | None (optional) |
 | `--prompt` / `-p` | What the presentation should be about | Built-in demo |
 | `--output` / `-o` | Where to save the result | `presentation_from_template.pptx` |
 | `--no-images` | Skip Steps 2 and 3 (faster, text-only) | Images enabled |
@@ -272,6 +272,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
 | `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
 | `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
+| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill, 2=LLM code gen, 3=text-only |
 | `--verbose` / `-v` | Verbose/debug logging | Off | |
 
 ### Quick Example
@@ -365,7 +366,7 @@ flowchart LR
 
 **Type:** Executor function
 **Function:** [`step_generate_content()`](powerpoint_template_workflow.py)
-**Agent:** Claude `claude-sonnet-4-5-20250929` with `pptx` skill
+**Agent:** Claude `claude-opus-4-6` (with `context-1m-2025-08-07` beta) with `pptx` skill
 
 **Flow:**
 1. Reads the template to extract available layout names
@@ -396,8 +397,9 @@ flowchart LR
 
 ### Step 2: Image Planning
 
-**Type:** Agent step
-**Agent:** [`image_planner`](powerpoint_template_workflow.py) — Gemini `gemini-2.5-flash-image` with `output_schema=ImagePlan`
+**Type:** Executor function
+**Function:** [`step_plan_images()`](powerpoint_template_workflow.py) — wraps [`image_planner`](powerpoint_template_workflow.py) agent
+**Agent (internal):** Gemini `gemini-3-flash-preview` with `output_schema=ImagePlan`
 
 **Flow:**
 1. Receives the JSON summary of slides from Step 1 as input
@@ -735,7 +737,7 @@ session_state = {
 
 | Flag | Short | Required | Default | Description |
 |------|-------|----------|---------|-------------|
-| `--template` | `-t` | Yes | — | Path to `.pptx` template file |
+| `--template` | `-t` | No | `None` | Path to `.pptx` template file (optional; omit for raw Claude output) |
 | `--output` | `-o` | No | `presentation_from_template.pptx` | Output filename |
 | `--prompt` | `-p` | No | Built-in 6-slide demo | Custom presentation prompt |
 | `--no-images` | — | No | `False` | Skip Steps 2 and 3 entirely |
@@ -756,7 +758,7 @@ The workflow is conditionally assembled based on CLI flags:
 ```mermaid
 flowchart LR
     S1[Step 1: Content Generation<br>executor=step_generate_content]
-    S2[Step 2: Image Planning<br>agent=image_planner]
+    S2[Step 2: Image Planning<br>executor=step_plan_images]
     S3[Step 3: Image Generation<br>executor=step_generate_images]
     S4[Step 4: Template Assembly<br>executor=step_assemble_template]
     S5[Step 5: Visual Quality Review<br>executor=step_visual_quality_review]
@@ -765,23 +767,25 @@ flowchart LR
 
     style S2 stroke-dasharray: 5 5
     style S3 stroke-dasharray: 5 5
+    style S4 stroke-dasharray: 5 5
     style S5 stroke-dasharray: 5 5
 ```
 
-*Steps 2 and 3 (dashed) are skipped with `--no-images`.  
+*Steps 2 and 3 (dashed) are skipped with `--no-images`.
+Step 4 (dashed) is skipped when `--template` is not provided.
 Step 5 (dashed) is only added with `--visual-review`.*
 
 | Step | Name | Type | Executor/Agent |
 |------|------|------|----------------|
 | 1 | Content Generation | `executor` | `step_generate_content` |
-| 2 | Image Planning | `agent` | `image_planner` (Gemini + `output_schema`) |
+| 2 | Image Planning | `executor` | `step_plan_images` (wraps `image_planner` agent internally) |
 | 3 | Image Generation | `executor` | `step_generate_images` |
 | 4 | Template Assembly | `executor` | `step_assemble_template` |
 | 5 *(opt)* | Visual Quality Review | `executor` | `step_visual_quality_review` |
 
 **Agno Workflow wiring:**
 - Each `Step` can have either an `agent` or an `executor` — not both
-- Agent steps pass `step_input.previous_step_content` as the prompt
+- All steps in this workflow use `executor=` functions
 - Executor steps receive `(step_input, session_state)` and return `StepOutput`
 - `session_state` is shared across all steps for passing large data like file paths and image bytes
 
@@ -802,10 +806,12 @@ Step 5 (dashed) is only added with `--visual-review`.*
 
 The pipeline is **strictly sequential** — each step depends on the previous step's output. A Workflow with ordered Steps is the natural fit. A Team-based approach would add coordination overhead without benefit since there is no parallelism or dynamic delegation.
 
-### Why Mixed Agent + Executor Steps?
+### Why All Steps Use Executor Functions
 
-- **Steps 1, 2, and 5** involve LLM reasoning and benefit from Agno Agent abstractions
-- **Steps 3 and 4** are primarily procedural: calling an API in a loop and manipulating python-pptx objects. Executor functions give full control over error handling and session state management.
+All five workflow steps use `executor=` rather than `agent=`. This is intentional:
+
+- **Steps 1, 2, and 5** involve LLM reasoning but still use executor functions that instantiate and call Agno Agents internally (`step_generate_content` calls a Claude agent, `step_plan_images` calls the `image_planner` Gemini agent, `step_visual_quality_review` calls `slide_quality_reviewer`). The executor wrapper is needed because these steps require fine-grained session state management, custom error handling, or multi-phase logic that cannot be expressed as a simple single-agent input/output chain.
+- **Steps 3 and 4** are entirely procedural — calling an image generation API in a loop, and manipulating python-pptx objects. Executor functions give full control without any LLM in the loop.
 
 ### Why Deterministic Template Assembly?
 
@@ -920,7 +926,7 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 | Tier | Function | Quality | Trigger |
 |------|----------|---------|---------|
 | **Tier 1** | [`generate_chunk_pptx()`](powerpoint_chunked_workflow.py) — Claude PPTX skill | 100% | Primary; used unless `use_fallback_generator=True` |
-| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
+| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation (`claude-opus-4-6` + `PythonTools`) | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
 | **Tier 3** | [`generate_chunk_pptx_fallback()`](powerpoint_chunked_workflow.py) — text-only python-pptx | ~100% reliable | Tier 2 failure; last resort, <100ms, zero network I/O |
 
 **Tier 1 — Claude PPTX skill:**
@@ -928,7 +934,7 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 - On timeout or all retries exhausted: sets `session_state["use_fallback_generator"] = True`
 
 **Tier 2 — LLM code generation:**
-- `fallback_code_agent`: Claude Sonnet + `PythonTools`
+- `fallback_code_agent`: Claude `claude-opus-4-6` + `PythonTools`
 - Generates and immediately executes a `python-pptx` + `matplotlib` script
 - Produces real Office charts (via `ChartData`), matplotlib PNG embeds, and tables
 - No internal retry — callers escalate directly to Tier 3 on any failure
@@ -956,7 +962,7 @@ for each chunk:
 |--------|---------|
 | `CHUNK_TIMEOUT_SECONDS` | Per-attempt timeout (300s) enforced via `ThreadPoolExecutor.result(timeout=...)` |
 | `_run_chunk_agent()` | Wraps Tier 1 agent call in `ThreadPoolExecutor`; raises `TimeoutError` on expiry |
-| `fallback_code_agent` | Claude Sonnet + `PythonTools`; powers Tier 2 |
+| `fallback_code_agent` | `claude-opus-4-6` (without `context-1m` beta) + `PythonTools`; powers Tier 2 |
 | `FALLBACK_SLIDE_LAYOUT_MAP` | Dict mapping slide type keywords to layout indices for Tier 3 |
 | `use_fallback_generator` | `session_state` bool; once `True`, Tier 1 is bypassed for all remaining chunks |
 

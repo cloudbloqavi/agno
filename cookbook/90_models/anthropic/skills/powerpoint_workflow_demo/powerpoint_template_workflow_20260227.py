@@ -4741,9 +4741,8 @@ def _extract_shape_design_info(shape) -> dict:
                         info["line_color_hex"] = srgb.get("val", "")
 
         try:
-            info["has_text"] = (
-                getattr(shape, "has_text_frame", False)
-                and bool(getattr(shape, "text", "").strip())
+            info["has_text"] = getattr(shape, "has_text_frame", False) and bool(
+                getattr(shape, "text", "").strip()
             )
         except Exception:
             info["has_text"] = False
@@ -5014,14 +5013,10 @@ def _analyze_template_in_depth(template_prs) -> dict:
         )[:5]
 
         avg_title_size = (
-            int(sum(all_title_sizes) / len(all_title_sizes))
-            if all_title_sizes
-            else 28
+            int(sum(all_title_sizes) / len(all_title_sizes)) if all_title_sizes else 28
         )
         avg_body_size = (
-            int(sum(all_body_sizes) / len(all_body_sizes))
-            if all_body_sizes
-            else 18
+            int(sum(all_body_sizes) / len(all_body_sizes)) if all_body_sizes else 18
         )
 
         result["design_language_summary"] = {
@@ -5070,8 +5065,7 @@ def _analyze_template_in_depth(template_prs) -> dict:
                 % (avg_title_size, avg_body_size)
             )
             print(
-                "[VERBOSE]   Layouts with picture placeholders: %d"
-                % layouts_with_pics
+                "[VERBOSE]   Layouts with picture placeholders: %d" % layouts_with_pics
             )
             print(
                 "[VERBOSE]   Layouts with decorative shapes: %d"
@@ -5257,9 +5251,7 @@ def _build_assembly_knowledge_file(
         "target_title_font_size_pt": design_summary.get(
             "typical_title_font_size_pt", 28
         ),
-        "target_body_font_size_pt": design_summary.get(
-            "typical_body_font_size_pt", 18
-        ),
+        "target_body_font_size_pt": design_summary.get("typical_body_font_size_pt", 18),
         "target_slide_width_emu": slide_dims.get("width_emu", 0),
         "target_slide_height_emu": slide_dims.get("height_emu", 0),
         "template_has_picture_layouts": (
@@ -6966,8 +6958,12 @@ if __name__ == "__main__":
         generated_file = workflow.session_state.get("generated_file", "")
         if generated_file and os.path.isfile(generated_file):
             import shutil as _shutil
+
             _shutil.copy2(generated_file, output_path)
-            print("No template specified: raw generated presentation saved to %s" % output_path)
+            print(
+                "No template specified: raw generated presentation saved to %s"
+                % output_path
+            )
 
     print("\n" + "=" * 60)
     print("Workflow complete!")

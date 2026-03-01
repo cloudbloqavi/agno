@@ -52,9 +52,18 @@ COLOR_ROLE_NAMES = [
 
 # Color role tags in the order they appear in <a:clrScheme>
 COLOR_ROLE_TAGS = [
-    "dk1", "dk2", "lt1", "lt2",
-    "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
-    "hlink", "folHlink",
+    "dk1",
+    "dk2",
+    "lt1",
+    "lt2",
+    "accent1",
+    "accent2",
+    "accent3",
+    "accent4",
+    "accent5",
+    "accent6",
+    "hlink",
+    "folHlink",
 ]
 
 # Usage hints per role
@@ -371,6 +380,7 @@ def _build_dimensions_section(dims: dict[str, float]) -> str:
 
     # Compute aspect ratio
     from math import gcd
+
     w = int(round(width_in * 100))
     h = int(round(height_in * 100))
     d = gcd(w, h)
@@ -432,11 +442,15 @@ def _build_typography_section(layouts: list[dict], fonts: dict[str, str]) -> str
         "|---------|-------------|------|------|-------|",
     ]
     for ph_type, info in seen.items():
-        family = info.get("family") or fonts.get("major" if "title" in ph_type else "minor", "")
+        family = info.get("family") or fonts.get(
+            "major" if "title" in ph_type else "minor", ""
+        )
         size = f"{info['size_pt']}pt" if info.get("size_pt") else "—"
         bold = "Yes" if info.get("bold") else "No"
         color = f"#{info['color_hex']}" if info.get("color_hex") else "—"
-        lines.append(f"| {ph_type.replace('_', ' ').title()} | {family} | {size} | {bold} | {color} |")
+        lines.append(
+            f"| {ph_type.replace('_', ' ').title()} | {family} | {size} | {bold} | {color} |"
+        )
 
     lines.append("")
     return "\n".join(lines)
@@ -527,16 +541,20 @@ def build_pptxgenjs_directives(
         f'(`slide.addText(title, {{ fontFace: "{major_font}" }})`)',
         f'2. Use font family `"{minor_font}"` for all body text and bullet points',
         f"3. Apply color `#{primary_hex}` as the primary accent for shapes and highlights",
-        f"4. Set slide dimensions: width {width_emu} EMU ({width_in}\"), "
-        f"height {height_emu} EMU ({height_in}\")",
+        f'4. Set slide dimensions: width {width_emu} EMU ({width_in}"), '
+        f'height {height_emu} EMU ({height_in}")',
         f"5. For title text color use `#{title_color}`; for body text use `#{body_color}`",
         f"6. Use `#{bg_color}` as the default slide background",
         "7. Match chart series colors to the accent palette in order:",
     ]
 
     accent_order = [
-        "Accent 1 (Primary)", "Accent 2 (Secondary)",
-        "Accent 3", "Accent 4", "Accent 5", "Accent 6",
+        "Accent 1 (Primary)",
+        "Accent 2 (Secondary)",
+        "Accent 3",
+        "Accent 4",
+        "Accent 5",
+        "Accent 6",
     ]
     accent_list = [f"`#{theme[k]}`" for k in accent_order if k in theme]
     if accent_list:
@@ -553,27 +571,27 @@ def build_pptxgenjs_directives(
     lines.append("// Title slide")
     lines.append("const slide = prs.addSlide();")
     lines.append(f'slide.addText("Presentation Title", {{')
-    lines.append(f'    x: 0.5, y: 2.0, w: 9.0, h: 1.5,')
+    lines.append(f"    x: 0.5, y: 2.0, w: 9.0, h: 1.5,")
     lines.append(f'    fontFace: "{major_font}",')
-    lines.append(f'    fontSize: 40,')
+    lines.append(f"    fontSize: 40,")
     lines.append(f'    color: "{title_color}",')
     lines.append(f'    align: "center"')
-    lines.append(f'}});')
+    lines.append(f"}});")
     lines.append("")
     lines.append("// Body text")
     lines.append(f'slide.addText("Bullet point", {{')
-    lines.append(f'    x: 0.5, y: 1.5, w: 9.0, h: 4.0,')
+    lines.append(f"    x: 0.5, y: 1.5, w: 9.0, h: 4.0,")
     lines.append(f'    fontFace: "{minor_font}",')
-    lines.append(f'    fontSize: 18,')
+    lines.append(f"    fontSize: 18,")
     lines.append(f'    color: "{body_color}",')
-    lines.append(f'    bullet: true')
-    lines.append(f'}});')
+    lines.append(f"    bullet: true")
+    lines.append(f"}});")
     lines.append("")
     lines.append("// Accent shape")
-    lines.append(f'slide.addShape(prs.ShapeType.rect, {{')
-    lines.append(f'    x: 0, y: 0, w: 10, h: 0.1,')
+    lines.append(f"slide.addShape(prs.ShapeType.rect, {{")
+    lines.append(f"    x: 0, y: 0, w: 10, h: 0.1,")
     lines.append(f'    fill: {{ color: "{primary_hex}" }}')
-    lines.append(f'}});')
+    lines.append(f"}});")
     lines.append("```")
     lines.append("")
 
@@ -630,7 +648,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("template", help="Path to the .pptx template file")
     parser.add_argument(
-        "--output", "-o", help="Save markdown to this file instead of printing to stdout"
+        "--output",
+        "-o",
+        help="Save markdown to this file instead of printing to stdout",
     )
     args = parser.parse_args()
 

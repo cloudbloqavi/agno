@@ -54,7 +54,7 @@ import anthropic
 client = anthropic.Anthropic()
 
 response = client.messages.create(
-    model="claude-sonnet-4-5-20250929",
+    model="claude-opus-4-6",
     max_tokens=4096,
     betas=["skills-2025-10-02"],  # Enable skills beta
     container={
@@ -85,7 +85,7 @@ from agno.models.anthropic import Claude
 # Enable PowerPoint skill
 agent = Agent(
     model=Claude(
-        id="claude-sonnet-4-5-20250929",
+        id="claude-opus-4-6",
         skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]  # Enable PowerPoint skill
     ),
     instructions=[
@@ -103,7 +103,7 @@ agent.print_response("Create a sales presentation with 5 slides")
 You can enable multiple skills at once:
 ```python
 model=Claude(
-    id="claude-sonnet-4-5-20250929",
+    id="claude-opus-4-6",
     skills=[
         {"type": "anthropic", "skill_id": "pptx", "version": "latest"},
         {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
@@ -126,19 +126,13 @@ Shows how to create an Agno agent specialized in PowerPoint presentations:
 - Market analysis reports
 - Slide design and formatting
 
-### 2. `agent_with_excel.py`
-Demonstrates Excel/spreadsheet capabilities:
-- Data analysis and visualization
-- Financial calculations
-- CSV to Excel conversion
-
-### 3. `agent_with_documents.py`
+### 2. `agent_with_documents.py`
 Examples for Word and PDF processing:
 - Document creation and editing
 - PDF analysis and extraction
 - Format conversion
 
-### 4. `multi_skill_agent.py`
+### 3. `multi_skill_agent.py`
 Advanced example combining multiple skills:
 - Complete business workflow (Excel → PowerPoint → PDF)
 - Progressive skill loading
@@ -209,9 +203,9 @@ chunk, then merges all chunks into the final output.
 **Architecture:**
 
 ```
-powerpoint_template_workflow.py   ← Core: helpers, agents, step functions (~7000 lines)
+powerpoint_template_workflow.py   ← Core: helpers, agents, step functions (~7,147 lines)
         ↑ wildcard import
-powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge (~1500 lines)
+powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge (~2,648 lines)
 ```
 
 **Workflow steps:**
@@ -230,6 +224,10 @@ powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge 
 --chunk-size         Slides per Claude API call (default: 3)
 --max-retries        Retries per chunk on failure (default: 2)
 --visual-passes      Max visual inspection passes per chunk (default: 3)
+--start-tier         Starting tier for chunk generation (default: 1):
+                     1 = Claude PPTX skill (best quality, native charts/tables)
+                     2 = LLM code generation (80-92% quality, faster)
+                     3 = Text-only (structural only, instant, no API calls)
 ```
 
 **Run examples:**
@@ -302,7 +300,7 @@ retrying the Claude skill) to avoid further delays.
 - **Format Support**: Full support for PPTX, XLSX, DOCX, and PDF formats
 - **Agno Integration**: Seamless integration with Agno's agent framework
 
-## ⚠️ Important: File Downloads
+## Important: File Downloads
 
 **Files created by Agent Skills are NOT automatically saved to your local filesystem.**
 
@@ -320,7 +318,7 @@ client = anthropic.Anthropic()
 
 # 1. Create document with skills
 response = client.beta.messages.create(
-    model="claude-sonnet-4-5-20250929",
+    model="claude-opus-4-6",
     max_tokens=4096,
     betas=["code-execution-2025-08-25", "skills-2025-10-02"],
     container={"skills": [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]},
@@ -342,14 +340,14 @@ if file_id:
         f.write(file_content)
 ```
 
-See `test_with_file_download.py` for a complete example.
+See `file_download_helper.py` for the shared download helper used by both workflow files.
 
 ## Configuration
 
 ### Model Requirements
-- Recommended: `claude-sonnet-4-5-20250929` or later
-- Minimum: `claude-3-5-sonnet-20241022`
+- Recommended: `claude-opus-4-6` or later
 - Skills require models with code execution capability
+- Note: `claude-opus-4-6` is used by both the content generation step and the chunked workflow's query optimizer and fallback code generator
 
 ### Beta Version
 Skills require the beta parameter:
@@ -360,10 +358,19 @@ betas=["skills-2025-10-02"]
 ### Enabling Skills
 Specify skills in the container parameter:
 ```python
+# Enable only PowerPoint skill
 container={
-    "skills": ["pptx"]  # Enable only PowerPoint
-    # or
-    "skills": ["pptx", "xlsx", "docx", "pdf"]  # Enable all skills
+    "skills": [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
+}
+
+# Enable all skills
+container={
+    "skills": [
+        {"type": "anthropic", "skill_id": "pptx", "version": "latest"},
+        {"type": "anthropic", "skill_id": "xlsx", "version": "latest"},
+        {"type": "anthropic", "skill_id": "docx", "version": "latest"},
+        {"type": "anthropic", "skill_id": "pdf", "version": "latest"},
+    ]
 }
 ```
 
