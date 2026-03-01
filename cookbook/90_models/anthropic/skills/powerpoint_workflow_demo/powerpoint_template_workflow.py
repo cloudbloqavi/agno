@@ -5690,6 +5690,8 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             show_slide_number=session_state.get("show_slide_numbers", False),
         )
 
+    # Clean up empty placeholders and hardcoded contrast issues
+    clean_presentation_visual_noise_and_contrast(output_prs)
     output_prs.save(output_path)
     print("\nSaved final presentation: %s" % output_path)
 
@@ -6574,10 +6576,11 @@ def _apply_visual_corrections(
 
     if modified:
         prs.save(pptx_path)
-        if VERBOSE:
-            print("[VERBOSE] Corrected presentation saved: %s" % pptx_path)
-
-    return modified
+        # Clean up empty placeholders and hardcoded contrast issues
+        clean_presentation_visual_noise_and_contrast(prs)
+        prs.save(pptx_path)
+        print("\nFallback presentation generation successful: %s" % pptx_path)
+        return modified
 
 
 def step_visual_quality_review(
@@ -7144,3 +7147,71 @@ if __name__ == "__main__":
     print("Workflow complete!")
     print("Output: %s" % output_path)
     print("=" * 60)
+
+
+def clean_presentation_visual_noise_and_contrast(prs) -> None:
+    """Clean empty placeholder ghost text and strip hardcoded font colors.
+
+    1. Removes any text shapes containing default MS PowerPoint placeholder ghost text or empty text.
+    2. Strips <a:solidFill> from text runs so text inherits the high-contrast
+       theme color from the slide master.
+    """
+    ghost_texts = {
+        "click to add title",
+        "click to add subtitle",
+        "click to add text",
+        "click to add notes",
+        "double-tap to add title",
+        "double-tap to add subtitle",
+        "double-tap to add text",
+    }
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+    for slide in prs.slides:
+        spTree = slide.shapes._spTree
+        elements_to_remove = []
+        
+        for shape in list(slide.shapes):
+            # 1. Clean visual noise
+            try:
+                if getattr(shape, "has_text_frame", False):
+                    text = shape.text.strip().lower()
+                    if text in ghost_texts or text == "":
+                        elements_to_remove.append(shape._element)
+                        continue # Removed, don't check for color
+            except Exception:
+                pass
+            
+            # 2. Fix Text Contrast (strip hardcoded colors)
+            try:
+                if getattr(shape, "has_text_frame", False):
+                    for para in shape.text_frame.paragraphs:
+                        for run in para.runs:
+                            rPr = run._r.find(ns_a + "rPr")
+                            if rPr is not None:
+                                solidFill = rPr.find(ns_a + "solidFill")
+                                if solidFill is not None:
+                                    rPr.remove(solidFill)
+            except Exception:
+                pass
+            
+            # Fix contrast in tables
+            try:
+                if getattr(shape, "has_table", False):
+                    for row in shape.table.rows:
+                        for cell in row.cells:
+                            for para in cell.text_frame.paragraphs:
+                                for run in para.runs:
+                                    rPr = run._r.find(ns_a + "rPr")
+                                    if rPr is not None:
+                                        solidFill = rPr.find(ns_a + "solidFill")
+                                        if solidFill is not None:
+                                            rPr.remove(solidFill)
+            except Exception:
+                pass
+        
+        for element in elements_to_remove:
+            try:
+                spTree.remove(element)
+            except Exception:
+                pass

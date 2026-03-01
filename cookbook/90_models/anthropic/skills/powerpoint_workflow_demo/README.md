@@ -205,18 +205,62 @@ chunk, then merges all chunks into the final output.
 ```
 powerpoint_template_workflow.py   ← Core: helpers, agents, step functions (~7,147 lines)
         ↑ wildcard import
-powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge (~2,648 lines)
+powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge (~3,300 lines)
 ```
 
 **Workflow steps:**
 
 | Step | Name | Description |
 |------|------|-------------|
-| 1 | Optimize & Plan | LLM creates storyboard: slide count, per-slide content, tone |
-| 2 | Generate Chunks | Claude pptx skill called N times (chunk_size slides each) |
+| 0 | Brand/Style Parse | (within Step 1) Detects brand intent via `brand_style_analyzer` agent (Sonnet + web_search), handles template override |
+| 1 | Optimize & Plan | LLM creates storyboard with brand-aware search queries, tone, per-slide content |
+| 2 | Generate Chunks | Claude pptx skill called N times; brand context injected into Tier 1 & 2 prompts |
 | 3 | Process Chunks | Template assembly + image pipeline per chunk |
 | 4 (opt) | Visual Review | Gemini vision QA per chunk (up to --visual-passes passes each) |
 | 5 | Merge Chunks | OPC-aware merge of all chunk PPTX files into final output |
+
+**Brand/Style-Aware Query Parsing:**
+
+The chunked pipeline includes intelligent brand/style extraction:
+
+- **`brand_style_analyzer` agent** (Claude Sonnet with `web_search`, max 2 uses) detects brand directives in user prompts (e.g. "using Nike branding", "in the style of Apple")
+- The agent autonomously decides whether to search for brand guidelines based on confidence — well-known brands may skip search, unfamiliar brands trigger a web lookup
+- Returns structured `BrandStyleIntent` (brand_name, color_palette, tone, typography_hints, style_keywords)
+- Brand context is injected into the optimizer prompt, Tier 1 chunk prompts, and Tier 2 code-gen prompts
+- **Template override:** When a template file is provided alongside query-level branding, template styling takes precedence with a descriptive `[BRAND OVERRIDE]` log
+- Downstream steps (image pipeline, visual review, merge) are unchanged
+
+**Brand/Style Flow Diagram:**
+
+```mermaid
+flowchart TD
+    A["User Query"] --> B["brand_style_analyzer Agent<br/>(Sonnet + web_search)"]
+    B --> C{"Brand Detected?"}
+    C -->|No| D["Empty BrandStyleIntent"]
+    C -->|Yes| E["BrandStyleIntent<br/>(name, colors, tone, fonts)"]
+    
+    F["Template File?"] --> G{"Template Provided?"}
+    G -->|No| H["Use Query Intent"]
+    G -->|Yes| I["extract_style_from_template()"]
+    I --> J["Override Log"]
+    I --> K["Use Template Intent"]
+    
+    H --> L["Inject into Optimizer Prompt"]
+    K --> L
+    L --> M["Step 1: Storyboard"]
+    M --> N["Tier 1/2: Brand in Chunk Prompts"]
+    N --> O["Steps 3-5: Unchanged"]
+```
+
+**Key Design Decisions:**
+
+| Decision | Rationale |
+|----------|----------|
+| Separate agent (not regex) | LLM decides if branding exists; no brittle patterns |
+| Claude Sonnet (not Opus) | Fast, cheap — this is a lightweight analysis task |
+| Web search (max 2 uses) | LLM decides whether to search for brand guidelines |
+| Template overrides query | Per spec; explicit template takes precedence |
+| Tier 3 unchanged | No LLM call, so brand context can't influence output |
 
 **CLI Flags (inherits all template_workflow flags, plus):**
 
@@ -237,7 +281,11 @@ powerpoint_chunked_workflow.py    ← Orchestration: chunked generation + merge 
 .venvs/demo/bin/python powerpoint_chunked_workflow.py \
     -p "Create a 10-slide AI transformation strategy deck"
 
-# With template, 4 slides per chunk, visual review, 5 passes max
+# Brand-aware: Nike-branded deck
+.venvs/demo/bin/python powerpoint_chunked_workflow.py \
+    -p "Create a 7-slide presentation about AI trends using Nike branding"
+
+# With template (template styling overrides query branding), visual review
 .venvs/demo/bin/python powerpoint_chunked_workflow.py \
     -t my_template.pptx \
     -p "12-slide enterprise AI strategy deck" \
@@ -274,7 +322,9 @@ retrying the Claude skill) to avoid further delays.
 | Feature | `powerpoint_template_workflow.py` | `powerpoint_chunked_workflow.py` |
 |---------|----------------------------------|----------------------------------|
 | Slide capacity | ~7 slides (single Claude call) | 8-15+ slides (multiple Claude calls) |
+| Brand/style parsing | No | Yes — `brand_style_analyzer` agent w/ web_search |
 | Query optimization | No | Yes — storyboard + tone/brand context |
+| Template override | N/A | Yes — template styling overrides query branding |
 | Storyboard files | No | Yes — `storyboard/global_context.md` + `slide_NNN.md` |
 | Chunk size control | N/A | `--chunk-size` (default 3) |
 | Retry per chunk | N/A | `--max-retries` (default 2) + exponential backoff |
@@ -289,6 +339,8 @@ retrying the Claude skill) to avoid further delays.
 [ERROR] ...                            — Always printed; failures
 [WARNING] ...                          — Always printed; non-fatal issues
 [VISUAL REVIEW MISSING FIX] ...       — Always printed; missing correction logic
+[BRAND] ...                            — Always printed; brand detection and extraction
+[BRAND OVERRIDE] ...                   — Always printed; template overriding query branding
 [VERBOSE] ...                          — Only with --verbose / -v flag
 ```
 

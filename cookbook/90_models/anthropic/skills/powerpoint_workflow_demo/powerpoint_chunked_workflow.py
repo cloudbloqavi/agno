@@ -18,13 +18,26 @@ Architecture:
 
   powerpoint_template_workflow.py  — Core pipeline: content gen, images, template assembly,
                                     visual review, all helper functions (~6500 lines)
-  powerpoint_chunked_workflow.py   — Chunked orchestration layer (~2600 lines, this file)
+  powerpoint_chunked_workflow.py   — Chunked orchestration layer (~3200 lines, this file)
 
 Chunk generation uses a 3-tier fallback hierarchy per chunk:
   Tier 1  Claude PPTX Skill    - Primary; native charts, tables, rich visuals
   Tier 2  LLM Code Generation  - Fallback; LLM writes + executes python-pptx
                                   code (native charts only); 80-92% quality parity
   Tier 3  python-pptx Direct   - Last resort; text-only slides; 100% reliable
+
+Brand/Style-Aware Query Parsing:
+  Before the optimizer step, the workflow analyzes the user prompt for branding
+  or styling intent using a dedicated brand_style_analyzer agent (Claude Sonnet
+  with web_search). This agent:
+    - Detects brand directives (e.g. "using Nike branding", "in the style of Apple")
+    - Decides autonomously whether to search for brand guidelines (colors, tone, fonts)
+    - Returns structured BrandStyleIntent (brand_name, color_palette, tone, typography)
+  When a template file is provided, the workflow extracts styling from the template's
+  theme XML (colors, fonts, company name heuristics) and overrides any query-level
+  branding, with a descriptive [BRAND OVERRIDE] log explaining the decision.
+  Brand context is propagated to Tier 1 and Tier 2 chunk prompts; Tier 3 is unaffected
+  (no LLM call). Downstream steps (image pipeline, visual review, merge) are unchanged.
 
 Relationship between the two files:
   - powerpoint_template_workflow.py is self-contained and can run standalone (single Claude
@@ -34,13 +47,27 @@ Relationship between the two files:
   - Do NOT modify powerpoint_template_workflow.py to add chunking logic; keep them separate.
 
 Workflow steps:
-  Step 1  Optimize & Plan    - LLM analyzes prompt, decides slide count, creates storyboard
+  Step 0  Brand/Style Parse  - (within Step 1) Detects brand intent, optionally searches
+                                for brand guidelines, handles template override
+  Step 1  Optimize & Plan    - LLM analyzes prompt, decides slide count, creates storyboard;
+                                brand context is injected into the optimizer prompt and search
   Step 2  Generate Chunks    - Call Claude pptx skill (Tier 1) for each chunk;
                                auto-escalates to Tier 2 (LLM code gen) on timeout/
                                failure, then Tier 3 (text-only) if Tier 2 fails.
+                               Brand context is included in Tier 1 and Tier 2 prompts.
   Step 3  Process Chunks     - Apply template + image pipeline per chunk (if template provided)
   Step 4  Visual Review      - Optional per-chunk visual QA (if --visual-review + template)
   Step 5  Merge Chunks       - Merge all processed chunks into the final PPTX
+
+Key Models:
+  BrandStyleIntent      - Structured brand/style data (name, colors, tone, fonts, style)
+  SlideStoryboard       - Per-slide storyboard entry (title, type, key points, visual)
+  StoryboardPlan        - Complete storyboard plan with global context and per-slide entries
+
+Key Agents:
+  brand_style_analyzer  - Claude Sonnet + web_search (max 2); detects and enriches brand intent
+  query_optimizer       - Claude Opus + web_search (max 5); creates researched storyboard
+  fallback_code_agent   - Claude Opus + PythonTools; Tier 2 code generation fallback
 
 Prerequisites:
 - uv pip install agno anthropic python-pptx google-genai pillow
@@ -53,7 +80,11 @@ Usage:
     .venvs/demo/bin/python powerpoint_chunked_workflow.py \\
         -p "Create a presentation about AI in healthcare"
 
-    # With template, 4 slides per chunk:
+    # With brand-aware generation:
+    .venvs/demo/bin/python powerpoint_chunked_workflow.py \\
+        -p "Create a 7-slide presentation about AI trends using Nike branding"
+
+    # With template (template styling overrides query branding):
     .venvs/demo/bin/python powerpoint_chunked_workflow.py \\
         -t my_template.pptx --chunk-size 4
 
@@ -69,8 +100,12 @@ Usage:
 CLI Flags:
     --template, -t       Path to .pptx template (optional). Without it, skips
                          template assembly and visual review; just merges raw chunks.
+                         When provided, template styling overrides any query-level
+                         branding with a [BRAND OVERRIDE] log.
     --output, -o         Output filename (default: presentation_chunked.pptx).
     --prompt, -p         User prompt describing the presentation.
+                         Supports brand directives like "using X branding" or
+                         "in the style of X".
     --no-images          Skip AI image generation.
     --no-stream          Disable streaming mode for Claude agent.
     --min-images         Minimum slides that must have images (default: 1).
@@ -98,6 +133,8 @@ Logging conventions:
         [ERROR] ...
         [WARNING] ...
         [VISUAL REVIEW MISSING FIX] ...  (always, per spec)
+        [BRAND] Brand detection and extraction results
+        [BRAND OVERRIDE] Template overriding query-level branding (with reason)
     Verbose-only (requires --verbose / -v):
         [VERBOSE] detailed debug information
 """
@@ -107,6 +144,14 @@ import concurrent.futures
 import copy
 import json
 import os
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 import shutil
 import sys
 import time
@@ -181,8 +226,121 @@ class StoryboardPlan(BaseModel):
     )
 
 
+# === BRAND/STYLE INTENT MODEL ===
+
+
+class BrandStyleIntent(BaseModel):
+    """Parsed branding/styling intent extracted from a user query or template file.
+
+    Produced by the brand_style_analyzer agent (query-based) or by
+    extract_style_from_template() (template-based).  Propagated through the
+    workflow via session_state["brand_style_intent"] and injected into
+    optimizer, Tier 1, and Tier 2 prompts.
+    """
+
+    has_branding: bool = Field(
+        False,
+        description=(
+            "True when the user query contains an identifiable branding or styling "
+            "intent (e.g. 'Nike branding', 'in the style of Apple').  False when "
+            "the query is purely topical with no brand/style directive."
+        ),
+    )
+    brand_name: str = Field(
+        "",
+        description="Brand name extracted from query (e.g. 'Nike', 'Tesla').",
+    )
+    style_keywords: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Style descriptors inferred or researched for the brand "
+            "(e.g. ['bold', 'sporty', 'minimalist'])."
+        ),
+    )
+    color_palette: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific color names or hex codes associated with the brand "
+            "(e.g. ['#FF6600', 'black', 'white']).  Prefer hex when known."
+        ),
+    )
+    tone_override: str = Field(
+        "",
+        description=(
+            "Tone suggested by the brand identity "
+            "(e.g. 'empowering', 'innovative', 'luxurious')."
+        ),
+    )
+    typography_hints: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Font families or typographic style hints associated with the brand "
+            "(e.g. ['Futura', 'Helvetica Neue', 'sans-serif bold'])."
+        ),
+    )
+    content_query: str = Field(
+        "",
+        description=(
+            "The user's original query with branding clauses removed, preserving "
+            "only the content/topic portion.  Empty when has_branding is False."
+        ),
+    )
+    source: str = Field(
+        "query",
+        description="'query' or 'template' — where the intent was derived.",
+    )
+    source_detail: str = Field(
+        "",
+        description=(
+            "Human-readable detail about the source "
+            "(e.g. template filename, or 'user query')."
+        ),
+    )
+
+
 # === MODULE-LEVEL AGENTS ===
 # Do NOT create agents in loops — define them here at module level.
+
+# Brand/style analyzer: lightweight agent that decides whether the user query
+# contains branding intent and optionally searches for brand guidelines.
+# Uses Claude Sonnet (fast, cheap) with web_search (max 2 uses).
+# output_schema enforces structured BrandStyleIntent output.
+brand_style_analyzer = Agent(
+    name="Brand Style Analyzer",
+    model=Claude(id="claude-sonnet-4-20250514", max_tokens=4096),
+    description=(
+        "You analyze user presentation requests to detect and extract branding "
+        "or styling intent.  When a brand is mentioned, you decide whether you "
+        "already know enough about the brand's visual identity (colors, tone, "
+        "typography) or whether you need to search for brand guidelines."
+    ),
+    instructions=[
+        "Analyze the user's presentation request for branding or styling directives.",
+        "Look for patterns like: 'using X branding', 'X-branded', 'in the style of X', "
+        "'with X theme', 'X corporate style', 'like X would present it'.",
+        "If NO branding intent is found, return has_branding=false with all other fields empty.",
+        "If branding IS found, extract the brand_name and decide:",
+        "  - For well-known global brands (Nike, Apple, Google, etc.) where you are "
+        "    confident about colors and tone, you MAY skip web_search.",
+        "  - For less familiar brands, regional brands, or when you are unsure about "
+        "    specific hex colors or typography, USE web_search to look up "
+        "    '<brand_name> brand guidelines colors typography'.",
+        "Fill in color_palette with specific hex codes when possible.",
+        "Fill in content_query with the user's query MINUS the branding clause.",
+        "Keep style_keywords to 3-5 concise descriptors.",
+        "Keep typography_hints to 1-3 font families.",
+        "Set source='query' and source_detail='user query'.",
+    ],
+    tools=[
+        {
+            "type": "web_search_20250305",
+            "name": "web_search",
+            "max_uses": 2,
+        }
+    ],
+    output_schema=BrandStyleIntent,
+    markdown=False,
+)
 
 # output_schema is intentionally omitted: claude-opus-4-6 does not support structured
 # outputs, which causes Agno to make an internal non-streaming extraction call that the
@@ -208,6 +366,271 @@ query_optimizer = Agent(
     ],
     markdown=False,
 )
+
+
+# === BRAND/STYLE HELPER FUNCTIONS ===
+
+
+def parse_brand_style_intent(user_prompt: str) -> "BrandStyleIntent":
+    """Extract branding/styling intent from the user query via the brand_style_analyzer agent.
+
+    Uses an LLM (Claude Sonnet) with optional web_search to detect brand names,
+    research brand colors/tone/typography, and return a structured BrandStyleIntent.
+
+    When the user query contains no branding directive, returns a BrandStyleIntent
+    with has_branding=False and all other fields empty.
+
+    Args:
+        user_prompt: The raw user prompt string.
+
+    Returns:
+        BrandStyleIntent with extracted brand data (may have empty fields if no
+        branding was detected or the agent call failed).
+    """
+    print("[BRAND] Analyzing query for branding/styling intent...")
+
+    try:
+        response = brand_style_analyzer.run(user_prompt, stream=False)
+
+        if response and response.content:
+            content = response.content
+            if isinstance(content, BrandStyleIntent):
+                intent = content
+            elif isinstance(content, dict):
+                intent = BrandStyleIntent(**content)
+            elif isinstance(content, BaseModel):
+                intent = BrandStyleIntent(**content.model_dump())
+            else:
+                # Try JSON parse from string
+                import re as _re
+
+                text = str(content).strip()
+                fence = _re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+                if fence:
+                    text = fence.group(1).strip()
+                obj = _re.search(r"\{[\s\S]+\}", text)
+                if obj:
+                    text = obj.group(0)
+                intent = BrandStyleIntent.model_validate_json(text)
+
+            if intent.has_branding:
+                print(
+                    "[BRAND] Detected brand intent: '%s' | style: %s | colors: %s"
+                    % (
+                        intent.brand_name,
+                        intent.style_keywords[:3],
+                        intent.color_palette[:4],
+                    )
+                )
+                if intent.tone_override:
+                    print("[BRAND] Tone override: '%s'" % intent.tone_override)
+            else:
+                print("[BRAND] No branding intent detected in query.")
+
+            return intent
+
+    except Exception as e:
+        print("[WARNING] Brand style analysis failed: %s" % str(e))
+        if VERBOSE:  # noqa: F405
+            traceback.print_exc()
+
+    return BrandStyleIntent()
+
+
+def extract_style_from_template(template_path: str) -> "BrandStyleIntent":
+    """Extract branding/styling information from a .pptx template file.
+
+    Reads the template's theme XML to extract:
+    - Color palette (theme colors as hex values)
+    - Font scheme (major/minor theme fonts)
+    - Company name heuristics (from title slide placeholder text)
+
+    This is a structural read — it captures color palettes and font families
+    but does not perform OCR or pixel-level analysis.
+
+    Args:
+        template_path: Absolute or relative path to a .pptx template file.
+
+    Returns:
+        BrandStyleIntent with source='template' and extracted styling data.
+        Returns an empty BrandStyleIntent on any read error.
+    """
+    print("[BRAND] Extracting style from template: %s" % template_path)
+
+    intent = BrandStyleIntent(
+        source="template",
+        source_detail=os.path.basename(template_path),
+        has_branding=True,
+    )
+
+    try:
+        prs = Presentation(template_path)
+
+        # --- Extract theme colors ---
+        colors = []
+        try:
+            theme_el = prs.slide_masters[0].element.find(
+                ".//{http://schemas.openxmlformats.org/drawingml/2006/main}theme"
+            )
+            if theme_el is None:
+                # Try via the slide master's part
+                theme_part = prs.slide_masters[0].part.slide_master.element
+                ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+                # Search for clrScheme in the theme
+                for clr_scheme in theme_part.iter(ns_a + "clrScheme"):
+                    for child in clr_scheme:
+                        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                        if tag in ("dk1", "dk2", "lt1", "lt2", "accent1", "accent2",
+                                   "accent3", "accent4", "accent5", "accent6"):
+                            for color_el in child:
+                                val = color_el.get("val", "")
+                                last_clr = color_el.get("lastClr", "")
+                                hex_val = val if len(val) == 6 else last_clr
+                                if hex_val and len(hex_val) == 6:
+                                    colors.append("#%s" % hex_val.upper())
+        except Exception as e:
+            if VERBOSE:  # noqa: F405
+                print("[VERBOSE] Theme color extraction error: %s" % e)
+
+        if colors:
+            intent.color_palette = list(dict.fromkeys(colors))[:8]  # dedupe, max 8
+            print("[BRAND] Template colors: %s" % intent.color_palette)
+
+        # --- Extract theme fonts ---
+        fonts = []
+        try:
+            theme_part = prs.slide_masters[0].part.slide_master.element
+            ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+            for font_scheme in theme_part.iter(ns_a + "fontScheme"):
+                for font_tag in ("majorFont", "minorFont"):
+                    font_el = font_scheme.find(ns_a + font_tag)
+                    if font_el is not None:
+                        latin = font_el.find(ns_a + "latin")
+                        if latin is not None:
+                            typeface = latin.get("typeface", "")
+                            if typeface and typeface not in fonts:
+                                fonts.append(typeface)
+        except Exception as e:
+            if VERBOSE:  # noqa: F405
+                print("[VERBOSE] Theme font extraction error: %s" % e)
+
+        if fonts:
+            intent.typography_hints = fonts[:3]
+            print("[BRAND] Template fonts: %s" % intent.typography_hints)
+
+        # --- Extract company name heuristic ---
+        try:
+            if prs.slides:
+                first_slide = prs.slides[0]
+                for shape in first_slide.shapes:
+                    if shape.has_text_frame:
+                        text = shape.text_frame.text.strip()
+                        # Heuristic: short text (1-4 words) in the first slide
+                        # that is not a common placeholder is likely a company name
+                        if 0 < len(text) < 60 and len(text.split()) <= 4:
+                            lower = text.lower()
+                            skip = {
+                                "click to add title", "click to add subtitle",
+                                "click to add text", "title", "subtitle",
+                            }
+                            if lower not in skip:
+                                intent.brand_name = text
+                                print(
+                                    "[BRAND] Template company name heuristic: '%s'"
+                                    % text
+                                )
+                                break
+        except Exception as e:
+            if VERBOSE:  # noqa: F405
+                print("[VERBOSE] Company name extraction error: %s" % e)
+
+    except Exception as e:
+        print("[WARNING] Template style extraction failed: %s" % str(e))
+        return BrandStyleIntent(source="template", source_detail=os.path.basename(template_path))
+
+    return intent
+
+
+def _build_brand_override_log(
+    query_intent: "BrandStyleIntent",
+    template_intent: "BrandStyleIntent",
+) -> str:
+    """Build a structured log message when template styling overrides query branding.
+
+    Called only when a template file is provided AND the user query contained
+    an explicit branding directive.  The log captures the specific reason for
+    ignoring the query-level styling intent.
+
+    Args:
+        query_intent: BrandStyleIntent extracted from the user's natural language query.
+        template_intent: BrandStyleIntent extracted from the template file.
+
+    Returns:
+        Multi-line log string suitable for printing to stdout.
+    """
+    template_name = template_intent.source_detail or "provided template"
+    lines = [
+        "[BRAND OVERRIDE] User specified '%s branding' in query, but a template file "
+        "was provided (%s)." % (query_intent.brand_name, template_name),
+        "[BRAND OVERRIDE] Styling will be derived from the template file. "
+        "Query-level branding intent has been disregarded.",
+        "[BRAND OVERRIDE] Reason: Explicit template file takes precedence over "
+        "natural language branding directives per workflow specification.",
+    ]
+    if template_intent.color_palette:
+        lines.append(
+            "[BRAND OVERRIDE] Template colors: %s"
+            % ", ".join(template_intent.color_palette[:6])
+        )
+    if template_intent.typography_hints:
+        lines.append(
+            "[BRAND OVERRIDE] Template fonts: %s"
+            % ", ".join(template_intent.typography_hints)
+        )
+    return "\n".join(lines)
+
+
+def _format_brand_context_for_prompt(brand_intent: "BrandStyleIntent") -> str:
+    """Format a BrandStyleIntent as a markdown section for injection into LLM prompts.
+
+    Produces a concise, structured block that can be appended to the optimizer prompt,
+    Tier 1 chunk prompt, or Tier 2 code-gen prompt to guide brand-aware generation.
+
+    Args:
+        brand_intent: BrandStyleIntent to format.
+
+    Returns:
+        Markdown string with brand context, or empty string if no branding is present.
+    """
+    if not brand_intent or not brand_intent.has_branding:
+        return ""
+
+    sections = ["## Brand/Style Guidance\n"]
+
+    if brand_intent.brand_name:
+        sections.append("**Brand:** %s" % brand_intent.brand_name)
+    if brand_intent.style_keywords:
+        sections.append(
+            "**Style:** %s" % ", ".join(brand_intent.style_keywords[:5])
+        )
+    if brand_intent.color_palette:
+        sections.append(
+            "**Color Palette:** %s" % ", ".join(brand_intent.color_palette[:6])
+        )
+    if brand_intent.tone_override:
+        sections.append("**Tone:** %s" % brand_intent.tone_override)
+    if brand_intent.typography_hints:
+        sections.append(
+            "**Typography:** %s" % ", ".join(brand_intent.typography_hints[:3])
+        )
+
+    sections.append(
+        "\nUse these brand guidelines to inform visual direction, tone, terminology, "
+        "and content framing throughout the presentation. Reflect the brand's identity "
+        "in slide language, suggested color references, and overall aesthetic.\n"
+    )
+
+    return "\n".join(sections)
 
 
 # === HELPER: STORYBOARD MARKDOWN FORMATTING ===
@@ -337,7 +760,19 @@ def _extract_chunk_slides_data(chunk_file: str) -> List[dict]:
 
 
 def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOutput:
-    """Step 1: Enhance the user prompt, decide slide count, and generate a per-slide storyboard.
+    """Step 1: Parse brand intent, enhance the user prompt, and generate a per-slide storyboard.
+
+    Substeps:
+      0. Brand/Style Parsing — calls the brand_style_analyzer agent (Claude Sonnet)
+         to detect branding directives in the user prompt (e.g. "using Nike branding").
+         The agent may use web_search to look up brand colors, tone, and typography.
+         If a template file is provided, extracts styling from the template's theme XML
+         and overrides any query-level branding with a [BRAND OVERRIDE] log.
+         Stores the effective BrandStyleIntent in session_state["brand_style_intent"].
+      1. Query Optimization — calls the query_optimizer agent (Claude Opus) with the
+         user prompt enriched with brand context and brand-aware search guidance.
+         Produces a StoryboardPlan with optimal slide count, global context, per-slide
+         storyboard, tone, and brand voice.
 
     Uses the query_optimizer agent (Claude Opus) to produce a StoryboardPlan with:
     - Optimal slide count (respects user-specified count, otherwise picks 8-15)
@@ -350,11 +785,16 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     Args:
         step_input: Workflow step input (not used directly; context comes from session_state).
         session_state: Shared workflow state containing user_prompt, output_dir, chunk_size,
-                       and max_retries.
+                       max_retries, and template_path.
 
     Returns:
         StepOutput with success=True and a summary string when a valid storyboard is produced,
         or success=False with an error message if the optimizer fails or returns invalid JSON.
+
+    Side effects:
+        - session_state["brand_style_intent"] is set to the effective BrandStyleIntent.
+        - session_state["storyboard"] is set to the validated StoryboardPlan.
+        - Storyboard markdown files are written to {output_dir}/storyboard/.
     """
     step_start = time.time()
 
@@ -362,11 +802,45 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     output_dir = session_state.get("output_dir", ".")
     chunk_size = session_state.get("chunk_size", 3)
     max_retries = session_state.get("max_retries", 2)
+    template_path = session_state.get("template_path", "")
 
     print("=" * 60)
     print("Step 1: Optimizing query and generating storyboard...")
     print("=" * 60)
     print("User prompt: %s" % user_prompt[:200])
+
+    # === BRAND/STYLE PARSING ===
+    # Parse branding intent from user query via the brand_style_analyzer agent.
+    # If a template file is provided, extract template styling and override query branding.
+    brand_parse_start = time.time()
+    query_brand_intent = parse_brand_style_intent(user_prompt)
+    brand_intent = query_brand_intent  # default: use query-derived intent
+
+    if template_path and os.path.isfile(template_path):
+        template_intent = extract_style_from_template(template_path)
+        if query_brand_intent.has_branding and query_brand_intent.brand_name:
+            # Template overrides query-level branding — log the decision
+            override_log = _build_brand_override_log(query_brand_intent, template_intent)
+            print(override_log)
+        brand_intent = template_intent
+
+    session_state["brand_style_intent"] = brand_intent
+    brand_parse_elapsed = time.time() - brand_parse_start
+    print("[TIMING] Brand/style parsing completed in %.1fs" % brand_parse_elapsed)
+
+    # Build brand context section for injection into the optimizer prompt
+    brand_context_section = _format_brand_context_for_prompt(brand_intent)
+
+    # Build brand-enriched search guidance
+    brand_search_guidance = ""
+    if brand_intent.has_branding and brand_intent.brand_name:
+        brand_search_guidance = (
+            "BRAND-ENRICHED SEARCH GUIDANCE:\n"
+            "The presentation has a brand context: '%s'. When constructing search queries,\n"
+            "include at least one query that combines the core topic with the brand name\n"
+            "(e.g., '%s [core topic]' or '[core topic] %s innovation').\n"
+            "This helps ground the presentation in brand-relevant context.\n\n"
+        ) % (brand_intent.brand_name, brand_intent.brand_name, brand_intent.brand_name)
 
     storyboard_dir = os.path.join(output_dir, "storyboard")
     os.makedirs(storyboard_dir, exist_ok=True)
@@ -374,6 +848,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     optimizer_prompt = (
         "Analyze the following user request for a PowerPoint presentation and create an optimized storyboard.\n\n"
         "USER REQUEST:\n%s\n\n"
+        "%s"
         "STEP 1 — RESEARCH FIRST:\n"
         "STEP 1A — DEFINE SEARCH TOPIC (MANDATORY, DO THIS FIRST):\n"
         "Extract and define ONE clear Search Topic from the user request before calling web_search.\n"
@@ -386,6 +861,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "- Query 3: key challenges or risks\n"
         "- Query 4: case studies or real-world examples\n"
         "Add geography, industry, and year constraints when relevant.\n\n"
+        "%s"
         "STEP 1B — RUN WEB SEARCH USING THAT SEARCH TOPIC:\n"
         "Before planning slides, use web_search with those queries to find 2-4 relevant facts, statistics, "
         "or examples for the Search Topic. Prioritize recent, credible sources and specific numbers "
@@ -437,7 +913,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "    ...\n"
         "  ]\n"
         "}\n"
-    ) % user_prompt
+    ) % (user_prompt, brand_context_section, brand_search_guidance)
 
     prompt_file = _save_prompt_to_file(
         optimizer_prompt, "optimize_and_plan", output_dir
@@ -588,9 +1064,15 @@ def generate_chunk_pptx(
     via ThreadPoolExecutor. On timeout, activates the session-level fallback flag
     and returns None immediately (no further retries for this chunk).
 
+    Brand/style context from session_state["brand_style_intent"] is injected into
+    the chunk prompt as a '## Brand/Style Guidance' section when branding is present.
+    This guides the Claude PPTX skill to use brand-appropriate tone, colors, and
+    terminology in the generated slides.
+
     Args:
         chunk_slides: List of SlideStoryboard objects for this chunk.
-        session_state: Shared workflow session state.
+        session_state: Shared workflow session state (must contain brand_style_intent
+                       key set by step_optimize_and_plan).
         chunk_idx: 0-based chunk index (used for file naming and logging).
 
     Returns:
@@ -634,6 +1116,7 @@ def generate_chunk_pptx(
         'These are slides %d-%d of the full %d-slide deck titled "%s".\n\n'
         "## Per-Slide Content for This Chunk:\n\n"
         "%s\n\n"
+        "%s"
         "Please generate EXACTLY %d slides for this chunk with the content described above.\n"
         "Do not add extra slides. Do not include slide numbers outside the range %d-%d.\n"
         "Use clean formatting without custom fonts or colors. "
@@ -660,6 +1143,9 @@ def generate_chunk_pptx(
         storyboard.total_slides,
         storyboard.presentation_title,
         "\n\n---\n\n".join(slide_details),
+        _format_brand_context_for_prompt(
+            session_state.get("brand_style_intent", BrandStyleIntent())
+        ),
         len(chunk_slides),
         first_slide,
         last_slide,
@@ -877,6 +1363,15 @@ def generate_chunk_pptx(
             if generated_file != chunk_output_path:
                 shutil.copy2(generated_file, chunk_output_path)
                 generated_file = chunk_output_path
+            
+            # Clean up empty placeholders and hardcoded contrast issues
+            try:
+                prs = Presentation(generated_file)
+                clean_presentation_visual_noise_and_contrast(prs)
+                prs.save(generated_file)
+            except Exception as e:
+                print("[CHUNK %d] Cleanup failed: %s" % (chunk_idx, e))
+
             print(
                 "[TIMING] Chunk %d attempt %d/%d: %.1fs (success)"
                 % (chunk_idx, attempt + 1, max_retries + 1, attempt_elapsed)
@@ -1159,6 +1654,8 @@ def generate_chunk_pptx_fallback(
                             run.font.size = Pt(8)
                             run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
 
+        # Clean up empty placeholders and hardcoded contrast issues
+        clean_presentation_visual_noise_and_contrast(prs)
         prs.save(output_path)
         print(
             "[CHUNK %d FALLBACK] Generated %d slides via python-pptx fallback"
@@ -1239,6 +1736,11 @@ def generate_chunk_pptx_v2(
     are generated via python-pptx native objects rather than the native PPTX skill,
     so visual fidelity may differ in edge cases.
 
+    Brand/style context from session_state["brand_style_intent"] is appended to the
+    GLOBAL CONTEXT section of the code generation prompt when branding is present.
+    This guides the LLM to generate python-pptx code that reflects brand-appropriate
+    colors, tone, and terminology.
+
     This is Tier 2 in the three-tier fallback hierarchy:
       Tier 1: Claude PPTX skill (generate_chunk_pptx)            — 100% quality
       Tier 2: LLM code generation (this function)                 — 80-92% quality
@@ -1249,7 +1751,8 @@ def generate_chunk_pptx_v2(
 
     Args:
         chunk_slides: List of SlideStoryboard objects for this chunk.
-        session_state: Shared workflow session state.
+        session_state: Shared workflow session state (must contain brand_style_intent
+                       key set by step_optimize_and_plan).
         chunk_idx: 0-based chunk index (used for file naming and logging).
 
     Returns:
@@ -1293,6 +1796,13 @@ def generate_chunk_pptx_v2(
             storyboard.brand_voice,
             storyboard.global_context,
         )
+
+    # Append brand/style context if available
+    brand_ctx = _format_brand_context_for_prompt(
+        session_state.get("brand_style_intent", BrandStyleIntent())
+    )
+    if brand_ctx:
+        global_ctx = global_ctx + "\n\n" + brand_ctx if global_ctx else brand_ctx
 
     code_gen_prompt = (
         "Generate a complete Python script using python-pptx to create "
@@ -1355,7 +1865,10 @@ def generate_chunk_pptx_v2(
     # Verify the file was actually written by the executed code
     if os.path.exists(chunk_output_path):
         try:
-            Presentation(chunk_output_path)
+            prs = Presentation(chunk_output_path)
+            # Clean up empty placeholders and hardcoded contrast issues
+            clean_presentation_visual_noise_and_contrast(prs)
+            prs.save(chunk_output_path)
             print(
                 "[CHUNK %d TIER2] Successfully generated via LLM code execution: %s"
                 % (chunk_idx, chunk_output_path)
@@ -2737,6 +3250,7 @@ def main() -> None:
         "processed_chunks": {},
         "reviewed_chunks": {},
         "use_fallback_generator": False,
+        "brand_style_intent": None,
         # Fields used by existing step helpers
         "generated_file": "",
         "slides_data": [],

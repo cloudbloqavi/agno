@@ -5,7 +5,7 @@
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Chunked pipeline for large presentations (8-15+ slides)
 
 **Date:** 2026-02-25
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-01
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
@@ -39,8 +39,12 @@ powerpoint_template_workflow.py
   │
   └──► powerpoint_chunked_workflow.py
          Adds on top:
+           - BrandStyleIntent Pydantic model
            - StoryboardPlan / SlideStoryboard Pydantic models
+           - brand_style_analyzer agent (Claude Sonnet + web_search)
            - query_optimizer agent
+           - parse_brand_style_intent() / extract_style_from_template()
+           - _format_brand_context_for_prompt() / _build_brand_override_log()
            - generate_chunk_pptx() helper
            - step_optimize_and_plan()
            - step_generate_chunks()
@@ -325,6 +329,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | [`ShapeIssue`](powerpoint_template_workflow.py) | Single visual defect on a slide: `issue_type`, `severity`, `description`, `programmatic_fix`, `shape_description` | Step 5 nested output |
 | [`SlideQualityReport`](powerpoint_template_workflow.py) | Per-slide quality report: `overall_quality`, `is_visually_bland`, `issues` | Step 5 `output_schema` per slide |
 | [`PresentationQualityReport`](powerpoint_template_workflow.py) | Full-deck quality summary: `slide_reports`, `overall_pass`, `total_critical_issues`, `recommendations` | Stored in `session_state["quality_report"]` |
+| [`BrandStyleIntent`](powerpoint_chunked_workflow.py) | Structured brand/style data: `has_branding`, `brand_name`, `style_keywords`, `color_palette`, `tone_override`, `typography_hints`, `content_query`, `source` ("query" or "template"), `source_detail` | Stored in `session_state["brand_style_intent"]`, injected into optimizer/chunk prompts |
 
 ### Dataclasses — Internal Content Representation
 
@@ -850,12 +855,15 @@ cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/
                                        #   via wildcard import; adds chunked orchestration
     agent_with_powerpoint_template_v1.py  # Earlier single-agent version
     file_download_helper.py            # Shared: downloads skill-generated files
+    test_pptx.py                       # Tests for visual cleanup (placeholder, contrast)
+    test_brand_style_parsing.py        # Tests for brand/style parsing (10 offline tests)
     my_template.pptx                   # Sample template
     my_template1.pptx                  # Alternate sample template
     DESIGN_visual_quality.md           # Design doc for visual quality improvements
     ARCHITECTURE_powerpoint_template_workflow.md  # This architecture doc
     README.md                          # Cookbook README
     TEST_LOG.md                        # Test results log
+    SCRATCHPAD.md                      # Feature request tracker
 ```
 
 ---
@@ -877,7 +885,11 @@ The chunked workflow uses an extended `session_state` that includes all the stan
     # Flags (forced off when no template)
     "visual_review": bool,      # Always False when template_path is empty
 
-    # Set by step_optimize_and_plan
+    # Set by step_optimize_and_plan (brand parsing)
+    "brand_style_intent": BrandStyleIntent | None,  # Effective brand/style intent (query or template)
+                                                      # None when no branding detected
+
+    # Set by step_optimize_and_plan (storyboard)
     "storyboard": StoryboardPlan,       # Full per-slide storyboard plan
     "storyboard_dir": str,              # Path to storyboard markdown files
     "total_slides": int,                # Planned total slide count
@@ -890,6 +902,9 @@ The chunked workflow uses an extended `session_state` that includes all the stan
 
     # Set by step_visual_review_chunks (only runs with template + visual_review)
     "reviewed_chunks": Dict[int, Optional[str]],   # Visually reviewed PPTX per chunk
+
+    # Fallback state
+    "use_fallback_generator": bool,     # True after Tier 1 failure; skips Tier 1 for remaining chunks
 }
 ```
 
@@ -972,3 +987,85 @@ for each chunk:
 
 - [`DESIGN_visual_quality.md`](DESIGN_visual_quality.md) — Detailed design for the visual quality improvements (Phase 1 deterministic fixes + Phase 2 visual review agent)
 - [`agent_with_powerpoint_template_v1.py`](agent_with_powerpoint_template_v1.py) — Earlier single-agent variant
+
+---
+
+## Brand/Style-Aware Query Parsing
+
+The chunked workflow includes an intelligent brand/style extraction subsystem that runs at the start of Step 1 (`step_optimize_and_plan`), before the query optimizer.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    A["User Query"] --> B["brand_style_analyzer Agent<br/>(Sonnet + web_search)"]
+    B --> C{"Brand Detected?"}
+    C -->|No| D["Empty BrandStyleIntent"]
+    C -->|Yes| E["BrandStyleIntent<br/>(name, colors, tone, fonts)"]
+    
+    F["Template File?"] --> G{"Template Provided?"}
+    G -->|No| H["Use Query Intent"]
+    G -->|Yes| I["extract_style_from_template()"]
+    I --> J["[BRAND OVERRIDE] Log"]
+    I --> K["Use Template Intent"]
+    
+    H --> L["Inject into Optimizer Prompt"]
+    K --> L
+    L --> M["Step 1: Storyboard"]
+    M --> N["Tier 1/2: Brand in Chunk Prompts"]
+    N --> O["Steps 3-5: Unchanged"]
+```
+
+### Components
+
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `BrandStyleIntent` | Pydantic model | Structured brand/style data (name, colors, tone, fonts, style keywords, source) |
+| `brand_style_analyzer` | Agno Agent (Claude Sonnet + `web_search`, max 2 uses) | Detects brand directives, autonomously decides whether to search for guidelines |
+| `parse_brand_style_intent()` | Function | Calls the agent, returns a `BrandStyleIntent` |
+| `extract_style_from_template()` | Function | Reads `.pptx` theme XML for colors, fonts, company name heuristics |
+| `_build_brand_override_log()` | Function | Structured `[BRAND OVERRIDE]` log when template overrides query branding |
+| `_format_brand_context_for_prompt()` | Function | Formats `BrandStyleIntent` as markdown `## Brand/Style Guidance` section |
+
+### Integration Points
+
+| Location | How Brand Context Is Used |
+|----------|---------------------------|
+| `step_optimize_and_plan()` | Injected into optimizer prompt + enriches search guidance |
+| `generate_chunk_pptx()` (Tier 1) | Appended to chunk prompt as `## Brand/Style Guidance` |
+| `generate_chunk_pptx_v2()` (Tier 2) | Appended to `GLOBAL CONTEXT` in code-gen prompt |
+| `generate_chunk_pptx_fallback()` (Tier 3) | No injection (no LLM call) |
+| Steps 3-5 | Unchanged — no brand context needed |
+
+### Template Override Precedence
+
+When both a user query contains branding directives **and** a template file is provided:
+
+1. Query-level branding is extracted via `parse_brand_style_intent()`
+2. Template styling is extracted via `extract_style_from_template()`
+3. Template intent **overrides** query intent
+4. A descriptive `[BRAND OVERRIDE]` log is printed explaining the decision
+5. The **content** portion of the query is fully preserved
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|----------|
+| Separate agent (not regex) | LLM decides if branding exists; no brittle patterns |
+| Claude Sonnet (not Opus) | Fast, cheap — this is a lightweight analysis task |
+| Web search (max 2 uses) | LLM decides whether to search for brand guidelines |
+| Template overrides query | Per spec; explicit template takes precedence |
+| Tier 3 unchanged | No LLM call, so brand context can't influence output |
+
+### Logging
+
+```
+[BRAND] Detected brand: Nike (source: query)
+[BRAND] Style keywords: bold, sporty, dynamic
+[BRAND] No branding detected in query
+[BRAND OVERRIDE] User specified 'Nike branding' in query, but a template file was provided (corporate.pptx).
+[BRAND OVERRIDE] Styling will be derived from the template file. Query-level branding intent has been disregarded.
+[BRAND OVERRIDE] Reason: Explicit template file takes precedence over natural language branding directives.
+[BRAND OVERRIDE] Template colors: #003366, #FF9900
+[BRAND OVERRIDE] Template fonts: Arial, Calibri
+```

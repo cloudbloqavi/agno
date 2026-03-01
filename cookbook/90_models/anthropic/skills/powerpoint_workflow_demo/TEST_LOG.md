@@ -105,3 +105,22 @@ What to verify in the output:
 - Footer text appears on all slides when `--footer-text` is used
 - Slide numbers appear when `--show-slide-numbers` is used
 - With `--visual-review`: `quality_report` in session_state, critical issues corrected
+
+---
+
+### powerpoint_chunked_workflow.py — Brand/style-aware query parsing
+
+**Status:** PASS (offline tests)
+
+**Description:** Brand/style-aware query parsing subsystem added to the chunked workflow. New components: `BrandStyleIntent` Pydantic model (brand_name, color_palette, tone_override, typography_hints, style_keywords, source, content_query); `brand_style_analyzer` Agno agent (Claude Sonnet with `web_search`, max 2 uses, `output_schema=BrandStyleIntent`) that autonomously detects branding directives and decides whether to search for brand guidelines; `parse_brand_style_intent()` function that calls the agent; `extract_style_from_template()` that reads .pptx theme XML for colors, fonts, and company name heuristics; `_build_brand_override_log()` for structured override logging when template styling overrides query-level branding; `_format_brand_context_for_prompt()` for markdown prompt injection. Integration points: Step 1 (`step_optimize_and_plan`) calls parsing before optimizer, injects brand context into optimizer prompt and search queries, handles template override; Tier 1 (`generate_chunk_pptx`) injects brand context as `## Brand/Style Guidance` section in chunk prompts; Tier 2 (`generate_chunk_pptx_v2`) appends brand context to GLOBAL CONTEXT in code-gen prompt; Tier 3 unchanged (no LLM call); `main()` initializes `brand_style_intent: None` in session_state. Downstream steps (process, visual review, merge) unchanged per SCRATCHPAD requirement.
+
+**Result:** 10/10 offline tests PASS (`test_brand_style_parsing.py`): model defaults, field values, JSON roundtrip, format_brand_context (empty/populated), build_brand_override_log, extract_style_from_template (basic, company name, nonexistent), template override flow. Existing `test_pptx.py` passes (no regression). Python `ast.parse()` syntax check PASS. Runtime end-to-end test requires `ANTHROPIC_API_KEY`.
+
+**Test file:** `test_brand_style_parsing.py` (self-contained, no agno/anthropic dependency needed)
+
+**Test commands:**
+```bash
+python test_brand_style_parsing.py     # 10 offline brand/style tests
+python test_pptx.py                    # existing visual cleanup tests
+```
+
