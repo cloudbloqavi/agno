@@ -1,0 +1,84 @@
+{
+    "skill_id": "training_data",
+    "version": "1.0.0",
+    "name": "Training Data & Quality Benchmarks",
+    "category": "meta",
+    "description": "Test cases, example prompts, quality benchmarks, and design guidelines.",
+    "test_suites": [
+        {
+            "name": "Brand Style Parsing Tests",
+            "file": "test_brand_style_parsing.py",
+            "tests": 10,
+            "type": "offline (no API calls)",
+            "coverage": [
+                "BrandStyleIntent defaults and field storage",
+                "JSON serialization roundtrip",
+                "Empty brand context formatting",
+                "Brand context with full data formatting",
+                "Brand override log generation",
+                "Template style extraction (basic + company name)",
+                "Nonexistent file handling",
+                "Full override flow (query brand + template → template wins)"
+            ]
+        },
+        {
+            "name": "Visual Cleanup Tests",
+            "file": "test_pptx.py",
+            "type": "offline (no API calls)",
+            "coverage": [
+                "Placeholder cleanup",
+                "Text contrast correction"
+            ]
+        }
+    ],
+    "example_prompts": [
+        "Create a presentation about AI in healthcare",
+        "Create a 10-slide presentation about AI trends in 2026",
+        "Startup pitch deck for SaaS product",
+        "Create a Nike-branded presentation about sustainable innovation",
+        "Create a presentation about quantum computing for enterprise IT leaders"
+    ],
+    "quality_benchmarks": {
+        "content_generation": {
+            "rules": [
+                "One clear title per slide",
+                "4-6 concise bullet points",
+                "Tables limited to 6 rows × 5 columns",
+                "No custom fonts, colors, SmartArt, or animations",
+                "Standard slide ordering: Title, Content, Closing"
+            ]
+        },
+        "visual_quality": {
+            "font_sizing": {
+                "line_spacing_factor": 1.8,
+                "body_max_pt": 16,
+                "title_max_pt": 28
+            },
+            "contrast": "WCAG ratio threshold",
+            "cleanup": [
+                "Ghost text removal",
+                "Empty placeholder removal",
+                "Unused textbox removal"
+            ]
+        },
+        "style_fidelity": {
+            "priority_cascade": [
+                "Priority 1: Reference template visual elements (highest)",
+                "Priority 2: Theme colors and fonts (secondary)",
+                "Priority 3: Hardcoded defaults (fallback)"
+            ]
+        }
+    },
+    "design_guidelines": {
+        "agent_instructions": {
+            "content": "Enforce standard structure, limit complexity for template compatibility",
+            "image_planning": "Title YES, data NO, existing images NEVER, closing NO",
+            "visual_review": "Senior UI/UX designer persona, severity-based assessment"
+        },
+        "template_assembly": {
+            "principle": "Deterministic — no LLM in the loop",
+            "knowledge_file": "Built once before any slide construction; single source of truth",
+            "content_area": "Derived from template placeholders, not hardcoded"
+        }
+    }
+}

@@ -1,0 +1,92 @@
+{
+    "skill_id": "validation",
+    "version": "1.0.0",
+    "name": "Input and Output Validation",
+    "category": "domain",
+    "description": "Verification, sanitization, and quality assurance operations.",
+    "input_validation": [
+        {
+            "name": "pptx_file_validation",
+            "function": "step_generate_content()",
+            "checks": [
+                "File exists",
+                "Valid .pptx extension",
+                "python-pptx can open it"
+            ]
+        },
+        {
+            "name": "template_validation",
+            "function": "step_assemble_template()",
+            "checks": [
+                "Template file exists",
+                "Has at least one slide layout",
+                "Has slide master with theme"
+            ]
+        },
+        {
+            "name": "magic_byte_detection",
+            "function": "detect_file_extension() in file_download_helper.py",
+            "checks": [
+                "PK header (ZIP/Office)",
+                "PDF header",
+                "OLE header",
+                "Fallback to .bin"
+            ]
+        }
+    ],
+    "output_validation": [
+        {
+            "name": "visual_quality_review",
+            "function": "step_visual_quality_review()",
+            "checks": [
+                "Text contrast (WCAG)",
+                "Ghost text detection",
+                "Text overflow",
+                "Element overlap",
+                "Visual blandness"
+            ],
+            "severity_levels": [
+                "critical",
+                "major",
+                "moderate",
+                "minor"
+            ],
+            "auto_fix": [
+                "critical severity only in v1"
+            ]
+        },
+        {
+            "name": "text_contrast",
+            "function": "_ensure_text_contrast()",
+            "standard": "WCAG contrast ratio",
+            "action": "Replace text color with dk1 or lt1 based on background luminance"
+        },
+        {
+            "name": "placeholder_cleanup",
+            "functions": [
+                "_clear_unused_placeholders()",
+                "_remove_empty_textboxes()"
+            ],
+            "action": "Remove unpopulated placeholders and empty text boxes (Click to add... stragglers)"
+        },
+        {
+            "name": "font_size_fitting",
+            "function": "_compute_max_font_size()",
+            "parameters": {
+                "line_spacing_factor": 1.8,
+                "body_clamp": "min(16, computed)",
+                "title_clamp": "min(28, computed)"
+            }
+        }
+    ],
+    "pydantic_schemas": [
+        "BrandStyleIntent",
+        "StoryboardPlan",
+        "SlideStoryboard",
+        "ImagePlan",
+        "SlideImageDecision",
+        "ShapeIssue",
+        "SlideQualityReport",
+        "PresentationQualityReport"
+    ]
+}

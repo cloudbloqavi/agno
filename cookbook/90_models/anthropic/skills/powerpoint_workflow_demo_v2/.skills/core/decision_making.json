@@ -1,0 +1,85 @@
+{
+    "skill_id": "decision_making",
+    "version": "1.0.0",
+    "name": "Decision Making",
+    "category": "core",
+    "description": "Rule-based and ML-enhanced decision logic used across the pipeline.",
+    "decisions": [
+        {
+            "name": "image_planning",
+            "agent": "image_planner (Gemini Flash)",
+            "type": "ml_enhanced",
+            "rules": [
+                "Title slides: usually YES",
+                "Data slides with tables/charts: usually NO",
+                "Slides with existing images: ALWAYS NO",
+                "Closing slides: usually NO"
+            ],
+            "output_model": "ImagePlan → List[SlideImageDecision]"
+        },
+        {
+            "name": "layout_selection",
+            "function": "_find_best_layout()",
+            "type": "rule_based",
+            "scoring": {
+                "chart_placeholder_match": "+90-120",
+                "table_placeholder_match": "+90-120",
+                "picture_placeholder_match": "+90-120",
+                "title_layout_penalty_on_non_title": "-80",
+                "text_only_favours": "_layout_richness_score()"
+            }
+        },
+        {
+            "name": "content_classification",
+            "function": "_classify_content_mix()",
+            "type": "rule_based",
+            "outputs": [
+                "TEXT_ONLY",
+                "TEXT_AND_IMAGE",
+                "TEXT_AND_TABLE",
+                "TEXT_AND_CHART",
+                "TEXT_AND_GENERATED_IMAGE",
+                "MIXED",
+                "VISUAL_ONLY"
+            ]
+        },
+        {
+            "name": "region_splitting",
+            "function": "_compute_region_map()",
+            "type": "rule_based",
+            "strategies": {
+                "native": "Layout has native placeholder separation (exact bounds)",
+                "top_bottom": "Text + table/chart → vertical split",
+                "left_right": "Text + image → horizontal split"
+            }
+        },
+        {
+            "name": "tier_selection",
+            "function": "step_generate_chunks()",
+            "type": "rule_based",
+            "logic": "Tier1 → timeout/failure → session flag → skip Tier1 → Tier2 → failure → Tier3"
+        },
+        {
+            "name": "brand_override",
+            "type": "rule_based",
+            "rule": "Template styling always overrides query-level brand directives when --template is provided"
+        },
+        {
+            "name": "visual_correction_scope",
+            "function": "_apply_visual_corrections()",
+            "type": "rule_based",
+            "auto_fix": [
+                "low_contrast",
+                "ghost_text",
+                "empty_placeholder",
+                "text_overflow"
+            ],
+            "detect_only": [
+                "visual_blandness"
+            ],
+            "deferred": [
+                "overlap (reposition_element)"
+            ]
+        }
+    ]
+}

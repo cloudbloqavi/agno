@@ -1,0 +1,124 @@
+{
+    "skill_id": "data_processing",
+    "version": "1.0.0",
+    "name": "Data Processing",
+    "category": "domain",
+    "description": "Content extraction, transformation, and assembly operations for PPTX slides.",
+    "extraction": {
+        "primary_function": "_extract_slide_content()",
+        "file": "powerpoint_template_workflow.py",
+        "shape_processing_order": [
+            "Tables → TableData (rows, position)",
+            "Charts → ChartExtract (type, categories, series, position)",
+            "Pictures → ImageData (blob, position, content_type)",
+            "Groups → XML clone + recursive image extraction",
+            "Text frames (placeholder) → title/subtitle/body classification by idx",
+            "Text frames (non-placeholder) → text_shapes_xml",
+            "Other shapes → shapes_xml (raw XML)"
+        ],
+        "placeholder_classification": {
+            "idx_0": "title",
+            "idx_1": "subtitle or body",
+            "idx_gt_1": "additional body content"
+        }
+    },
+    "transformation": {
+        "content_area_detection": {
+            "function": "_get_content_area()",
+            "strategy": "preferred_types → body placeholder idx=1 → any non-title → default safe margins (5%/25%/90%/65%)"
+        },
+        "region_mapping": {
+            "function": "_compute_region_map()",
+            "input": "layout + content_mix (ContentMix enum)",
+            "output": "RegionMap with text_region and visual_region in EMU"
+        },
+        "text_ratio_computation": {
+            "function": "_compute_text_ratio()",
+            "factors": [
+                "paragraph count",
+                "average character length (wrap factor)"
+            ]
+        },
+        "shape_rescaling": {
+            "function": "_rescale_shape_xml()",
+            "purpose": "Rescale xfrm/off and xfrm/ext from source EMU to target ContentArea"
+        }
+    },
+    "assembly": {
+        "knowledge_file": {
+            "function": "_build_assembly_knowledge_file()",
+            "inputs": [
+                "input_1_user_intent: original prompt",
+                "input_2_content_plan: full per-slide plan + content inventory",
+                "input_3_template_design_language: _analyze_template_in_depth() output",
+                "input_4_image_assets: per-image pixel dimensions, aspect ratios, target slides"
+            ],
+            "output": "assembly_knowledge dict (single source of truth for Step 4)"
+        }
+    },
+    "dataclasses": [
+        {
+            "name": "TableData",
+            "fields": [
+                "rows",
+                "left",
+                "top",
+                "width",
+                "height"
+            ]
+        },
+        {
+            "name": "ImageData",
+            "fields": [
+                "blob",
+                "left",
+                "top",
+                "width",
+                "height",
+                "content_type"
+            ]
+        },
+        {
+            "name": "ChartExtract",
+            "fields": [
+                "chart_type",
+                "categories",
+                "series",
+                "left",
+                "top",
+                "width",
+                "height"
+            ]
+        },
+        {
+            "name": "SlideContent",
+            "fields": [
+                "title",
+                "subtitle",
+                "body_paragraphs",
+                "tables",
+                "images",
+                "charts",
+                "shapes_xml",
+                "text_shapes_xml"
+            ]
+        },
+        {
+            "name": "ContentArea",
+            "fields": [
+                "left",
+                "top",
+                "width",
+                "height"
+            ]
+        },
+        {
+            "name": "RegionMap",
+            "fields": [
+                "text_region",
+                "visual_region",
+                "layout_type"
+            ]
+        }
+    ]
+}

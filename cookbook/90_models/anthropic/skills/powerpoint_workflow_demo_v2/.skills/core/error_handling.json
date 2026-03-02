@@ -1,0 +1,57 @@
+{
+    "skill_id": "error_handling",
+    "version": "1.0.0",
+    "name": "Error Handling",
+    "category": "core",
+    "description": "Recovery strategies, fallback chains, and graceful degradation patterns.",
+    "strategies": [
+        {
+            "name": "3_tier_fallback",
+            "scope": "per_chunk",
+            "tiers": [
+                {
+                    "tier": 1,
+                    "generator": "Claude PPTX Skill (generate_chunk_pptx)",
+                    "quality": "100%",
+                    "timeout_seconds": 300,
+                    "max_retries": "configurable (--max-retries, default 2)",
+                    "on_failure": "set use_fallback_generator=True, escalate to Tier 2"
+                },
+                {
+                    "tier": 2,
+                    "generator": "LLM Code Generation (generate_chunk_pptx_v2)",
+                    "quality": "80-92%",
+                    "retry": false,
+                    "on_failure": "escalate to Tier 3"
+                },
+                {
+                    "tier": 3,
+                    "generator": "Text-only python-pptx (generate_chunk_pptx_fallback)",
+                    "quality": "~100% reliable (structural only)",
+                    "speed": "<100ms, zero network I/O",
+                    "on_failure": "N/A (deterministic, always succeeds)"
+                }
+            ],
+            "session_flag": "use_fallback_generator bypasses Tier 1 for all remaining chunks after first failure"
+        },
+        {
+            "name": "non_blocking_visual_review",
+            "scope": "step_5",
+            "behavior": "Any failure (LibreOffice not found, API error, timeout) returns success=True with warning",
+            "result": "Output file left unchanged; pipeline completes normally"
+        },
+        {
+            "name": "graceful_image_skip",
+            "scope": "step_2_and_3",
+            "behavior": "Missing GOOGLE_API_KEY, unparseable plans, or individual image generation failures do not stop the workflow",
+            "result": "Pipeline continues with text-only slides"
+        },
+        {
+            "name": "interim_file_preservation",
+            "scope": "chunked_workflow",
+            "behavior": "No os.remove() or shutil.rmtree() on chunk files",
+            "directory": "output_chunked/chunked_workflow_work/",
+            "purpose": "Debugging failed chunks; files persist across runs"
+        }
+    ]
+}

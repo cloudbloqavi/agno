@@ -1,0 +1,94 @@
+{
+    "skill_id": "database",
+    "version": "1.0.0",
+    "name": "Presentation Database",
+    "category": "tools",
+    "description": "PPTX file reading, writing, and XML-level manipulation via python-pptx and lxml.",
+    "operations": {
+        "read": [
+            {
+                "name": "Template Analysis",
+                "functions": [
+                    "_analyze_template_in_depth()",
+                    "_extract_template_styles()"
+                ],
+                "reads": [
+                    "Slide master",
+                    "Theme XML (clrScheme, fontScheme)",
+                    "Layout placeholders",
+                    "Decorative shapes",
+                    "Reference tables/charts"
+                ]
+            },
+            {
+                "name": "Content Extraction",
+                "function": "_extract_slide_content()",
+                "reads": [
+                    "Shape types",
+                    "Placeholder text by idx",
+                    "Table data",
+                    "Chart data",
+                    "Image blobs",
+                    "Raw shape XML"
+                ]
+            },
+            {
+                "name": "Template Markdown Export",
+                "file": "template_to_markdown.py",
+                "reads": [
+                    "Slide dimensions",
+                    "Theme colors",
+                    "Font scheme",
+                    "Layout info",
+                    "Placeholder fonts"
+                ]
+            }
+        ],
+        "write": [
+            {
+                "name": "Slide Population",
+                "function": "_populate_slide()",
+                "writes": [
+                    "Placeholder text with preserved formatting",
+                    "Fallback textboxes",
+                    "Tables with template styling",
+                    "Charts with template styling",
+                    "Images (aspect-ratio preserved)",
+                    "Raw shapes (rescaled)"
+                ]
+            },
+            {
+                "name": "Slide Removal",
+                "method": "lxml XML manipulation",
+                "purpose": "Remove all existing slides from template copy before populating"
+            },
+            {
+                "name": "Footer Standardization",
+                "function": "_populate_footer_placeholders()",
+                "placeholders": {
+                    "idx_10": "date",
+                    "idx_11": "footer text",
+                    "idx_12": "slide number"
+                }
+            },
+            {
+                "name": "Quality Corrections",
+                "functions": [
+                    "_ensure_text_contrast()",
+                    "_clear_unused_placeholders()",
+                    "_remove_empty_textboxes()",
+                    "_ensure_text_on_top()"
+                ]
+            }
+        ],
+        "merge": {
+            "function": "merge_pptx_files() + _clone_slide()",
+            "purpose": "Merge multiple chunk PPTX files into final presentation"
+        }
+    },
+    "dependencies": {
+        "python-pptx": "Presentation reading/writing, shapes, charts, placeholders",
+        "lxml": "XML manipulation for slide removal and shape ID management",
+        "pillow": "Image dimension extraction for knowledge file"
+    }
+}
