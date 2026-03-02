@@ -3074,8 +3074,11 @@ def main() -> None:
 
     Validates required environment variables and the optional template path, creates
     output working directories under output_chunked/, runs the workflow end-to-end,
-    and writes the final PPTX to the path specified by --output. Step-level progress
-    and timing diagnostics are printed to stdout.
+    and writes the final PPTX to the path specified by --output.
+
+    All output (print statements, agno framework logging, and stderr) is redirected
+    to OUTPUT.md in the script directory when run via __main__. The console stays
+    silent. OUTPUT.md is cleared at the start of each run.
     """
     parser = argparse.ArgumentParser(
         description="Chunked PPTX generation workflow — overcomes Claude API limits for large presentations."
@@ -3315,4 +3318,62 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import logging
+
+    # --- Output redirect: all output goes to OUTPUT.md instead of console ---
+    # Captures print() (stdout), warnings/errors (stderr), and Python logging
+    # (agno framework logs WARNING/ERROR/INFO via the logging module).
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _output_md_path = os.path.join(_script_dir, "OUTPUT.md")
+
+    class _FileWriter:
+        """Redirect a stream (stdout/stderr) to a file.
+
+        Writes go exclusively to the file — nothing is printed to the console.
+        The file is opened in append mode so both stdout and stderr can share it.
+        """
+
+        def __init__(self, filepath: str):
+            self._file = open(filepath, "a", encoding="utf-8")
+
+        def write(self, text: str) -> int:
+            self._file.write(text)
+            self._file.flush()
+            return len(text)
+
+        def flush(self) -> None:
+            self._file.flush()
+
+        def fileno(self) -> int:
+            return self._file.fileno()
+
+        def close(self) -> None:
+            self._file.close()
+
+    # Clear the file at the start of each run
+    with open(_output_md_path, "w", encoding="utf-8") as f:
+        f.write("")
+
+    _file_writer = _FileWriter(_output_md_path)
+
+    # Redirect stdout and stderr
+    sys.stdout = _file_writer  # type: ignore[assignment]
+    sys.stderr = _file_writer  # type: ignore[assignment]
+
+    # Redirect Python logging (captures agno WARNING/ERROR/INFO messages)
+    _file_handler = logging.FileHandler(_output_md_path, mode="a", encoding="utf-8")
+    _file_handler.setLevel(logging.DEBUG)
+    logging.root.addHandler(_file_handler)
+    # Remove any existing console (stream) handlers so logs don't try to write
+    # to the original stderr which is now redirected
+    for _h in logging.root.handlers[:]:
+        if isinstance(_h, logging.StreamHandler) and not isinstance(_h, logging.FileHandler):
+            logging.root.removeHandler(_h)
+
+    try:
+        main()
+    finally:
+        # Restore original streams on exit
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        _file_writer.close()

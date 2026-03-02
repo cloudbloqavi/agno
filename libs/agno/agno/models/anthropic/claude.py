@@ -179,8 +179,18 @@ class Claude(Model):
         """
         Check if the current model supports native structured outputs.
 
+        Uses a blacklist + date-detection heuristic to distinguish between
+        dated versions of non-supporting base models (e.g. claude-sonnet-4-20250514)
+        and newer sub-versions that DO support structured outputs (e.g. claude-sonnet-4-6).
+
+        The old pattern-based exclusion (startswith("claude-sonnet-4-") and not
+        startswith("claude-sonnet-4-5")) incorrectly blocked newer models like
+        claude-sonnet-4-6 that support structured outputs.
+
         Returns:
             bool: True if model supports structured outputs
+
+        Modified by: cloudbloqavi
         """
         # If model is in blacklist, it doesn't support structured outputs
         if self.id in self.NON_STRUCTURED_OUTPUT_MODELS:
@@ -189,12 +199,17 @@ class Claude(Model):
         # Check for legacy model patterns which don't support structured outputs
         if self.id.startswith("claude-3-"):
             return False
-        if self.id.startswith("claude-sonnet-4-") and not self.id.startswith("claude-sonnet-4-5"):
-            return False
-        if self.id.startswith("claude-opus-4-") and not (
-            self.id.startswith("claude-opus-4-1") or self.id.startswith("claude-opus-4-5")
-        ):
-            return False
+
+        # For claude-sonnet-4 and claude-opus-4 families, only exclude dated versions
+        # of the base model (e.g., claude-sonnet-4-20250514) which are pinned releases
+        # of the original model without structured output support.
+        # Sub-versions like claude-sonnet-4-5, claude-sonnet-4-6 DO support structured outputs.
+        for prefix in ("claude-sonnet-4-", "claude-opus-4-"):
+            if self.id.startswith(prefix):
+                suffix = self.id[len(prefix):]
+                # Dated versions have 8-digit YYYYMMDD suffixes (e.g., "20250514")
+                if suffix and len(suffix) >= 8 and suffix[:8].isdigit() and suffix[:2] == "20":
+                    return False
 
         return True
 
