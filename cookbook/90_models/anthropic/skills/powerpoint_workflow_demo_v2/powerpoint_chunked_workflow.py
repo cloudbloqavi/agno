@@ -172,7 +172,7 @@ from agno.run.agent import RunOutput
 # and all _helper functions.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from lib_patches.anthropic.claude import Claude
 from agno.tools.python import PythonTools
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -309,7 +309,7 @@ class BrandStyleIntent(BaseModel):
 # output_schema enforces structured BrandStyleIntent output.
 brand_style_analyzer = Agent(
     name="Brand Style Analyzer",
-    model=Claude(id="claude-sonnet-4-6", max_tokens=8192),
+    model=Claude(id="claude-sonnet-4-6", max_tokens=8192, betas=["structured-outputs-2025-11-13"]),
     description=(
         "You analyze user presentation requests to detect and extract branding "
         "or styling intent.  When a brand is mentioned, you decide whether you "
@@ -1698,6 +1698,16 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "If a visual cannot be implemented exactly, keep the slide and add a concise native textbox note. Do not skip slides.",
     "Do not add speaker notes, animations, or transitions.",
     "Do not print to stdout or write any files other than the final prs.save() call.",
+    "COLOR AND CONTRAST RULES:",
+    "- Default slide background: white (#FFFFFF) or very light colors (luminance > 0.9).",
+    "- Default body text: dark colors (#333333 or #000000) for readability.",
+    "- If using a dark background (luminance < 0.3), use white (#FFFFFF) or very light text.",
+    "- If using colored shape fills for headers/accents, ensure text color has sufficient contrast.",
+    "- For charts: use medium-to-dark accent colors; data labels should contrast against their background.",
+    "- For tables: header rows with dark fills should have white text; body rows with light fills should have dark text.",
+    "- NEVER use dark text (#000000-#666666) on dark backgrounds (#000000-#555555).",
+    "- NEVER use light text (#AAAAAA-#FFFFFF) on light backgrounds (#CCCCCC-#FFFFFF).",
+    "- When in doubt, use white background with black text — readability is paramount.",
 ]
 
 # Tier 2 fallback agent: generates python-pptx code with native charts and executes it.
@@ -3026,10 +3036,10 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
     - Step 1: Optimize & Plan   (always)
     - Step 2: Generate Chunks   (always)
     - Step 3: Process Chunks    (only when template_path is set)
-    - Step 4: Visual Review     (only when template_path AND visual_review are both set)
+    - Step 4: Visual Review     (when visual_review is set; works with or without template)
     - Step 5: Merge Chunks      (always)
 
-    No-template pipeline: Step 1 -> Step 2 -> Step 5
+    No-template pipeline: Step 1 -> Step 2 [-> Step 4] -> Step 5
     Template pipeline:    Step 1 -> Step 2 -> Step 3 [-> Step 4] -> Step 5
 
     Args:
@@ -3040,7 +3050,7 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
         Configured Workflow instance with the appropriate step sequence.
     """
     has_template = bool(session_state.get("template_path"))
-    do_visual_review = has_template and bool(session_state.get("visual_review"))
+    do_visual_review = bool(session_state.get("visual_review"))
 
     steps = [
         Step(name="Optimize and Plan", executor=step_optimize_and_plan),
@@ -3051,7 +3061,7 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
     if has_template:
         steps.append(Step(name="Process Chunks", executor=step_process_chunks))
 
-    # Visual review requires both --visual-review flag AND a template
+    # Visual review: runs with or without template (template-independent contrast checks available)
     if do_visual_review:
         steps.append(
             Step(name="Visual Review Chunks", executor=step_visual_review_chunks)
@@ -3199,15 +3209,15 @@ def main() -> None:
             print("Error: Template file must be a .pptx file.")
             sys.exit(1)
 
-    # Warn when visual flags are passed without a template (they will be ignored)
+    # Inform when visual flags are passed without a template (template-independent mode)
     if not args.template and args.visual_review:
-        print("[WARNING] --visual-review is ignored when --template is not provided")
+        print("[INFO] --visual-review will use template-independent contrast checks (no template provided)")
     if not args.template and args.visual_passes != 3:
-        print("[WARNING] --visual-passes is ignored when --template is not provided")
+        print("[INFO] --visual-passes applies in template-independent mode")
 
-    # Effective values: visual review and passes are forced off when no template
-    effective_visual_review = bool(args.visual_review) and bool(args.template)
-    effective_visual_passes = args.visual_passes if args.template else 0
+    # Effective values: visual review and passes work with or without template
+    effective_visual_review = bool(args.visual_review)
+    effective_visual_passes = args.visual_passes
 
     # Setup output directory with unique session ID + timestamp per run
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -3242,7 +3252,7 @@ def main() -> None:
         "stream": not args.no_stream,
         "no_images": args.no_images,
         "min_images": args.min_images,
-        # visual_review and visual_passes are forced False/0 when no template
+        # visual_review and visual_passes (work with or without template)
         "visual_review": effective_visual_review,
         "footer_text": args.footer_text,
         "date_text": args.date_text,
@@ -3290,7 +3300,10 @@ def main() -> None:
             print("Visual review: disabled")
     else:
         print("Mode:       raw generation (no template)")
-        print("Visual review: skipped (no template)")
+        if effective_visual_review:
+            print("Visual review: enabled, template-independent (%d passes max)" % args.visual_passes)
+        else:
+            print("Visual review: disabled")
     print("Chunk size: %d slides per API call" % args.chunk_size)
     print("Max retries per chunk: %d" % args.max_retries)
     print(
@@ -3309,6 +3322,10 @@ def main() -> None:
     start_time = time.time()
 
     workflow.run()
+
+    # Post-merge contrast enforcement (template-independent safety net)
+    if os.path.isfile(output_path):
+        enforce_final_contrast(output_path)  # noqa: F405
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 60)
@@ -3377,3 +3394,11 @@ if __name__ == "__main__":
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
         _file_writer.close()
+
+        # Clean up temporary python scripts generated by PythonTools
+        import glob
+        for tmp_file in glob.glob("create_chunk_*.py"):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass

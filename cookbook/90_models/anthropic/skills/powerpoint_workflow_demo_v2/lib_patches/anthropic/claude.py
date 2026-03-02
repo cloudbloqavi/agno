@@ -232,11 +232,15 @@ class Claude(Model):
         if response_format is not None:
             if self._supports_structured_outputs():
                 return True
-            else:
-                log_warning(
-                    f"Model '{self.id}' does not support structured outputs. "
-                    "Structured output features will not be available for this model."
-                )
+            # Trust explicit beta opt-in from user: if the user explicitly
+            # set betas=["structured-outputs-2025-11-13"], honor that even if
+            # the model isn't in our known-supported list.
+            if self.betas and "structured-outputs-2025-11-13" in self.betas:
+                return True
+            log_warning(
+                f"Model '{self.id}' does not support structured outputs. "
+                "Structured output features will not be available for this model."
+            )
 
         # Check for strict tools
         if tools:
@@ -316,7 +320,9 @@ class Claude(Model):
             return None
 
         if not self._supports_structured_outputs():
-            return None
+            # Trust explicit beta opt-in from user
+            if not (self.betas and "structured-outputs-2025-11-13" in self.betas):
+                return None
 
         # Handle Pydantic BaseModel
         if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -361,6 +367,9 @@ class Claude(Model):
             return
 
         if not self._supports_structured_outputs():
+            # Trust explicit beta opt-in from user
+            if self.betas and "structured-outputs-2025-11-13" in self.betas:
+                return
             raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
 
     def _has_beta_features(
