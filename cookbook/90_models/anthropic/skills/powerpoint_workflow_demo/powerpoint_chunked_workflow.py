@@ -144,6 +144,7 @@ import concurrent.futures
 import copy
 import json
 import os
+import uuid
 
 try:
     from dotenv import load_dotenv
@@ -157,6 +158,7 @@ import sys
 import time
 import traceback
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -307,7 +309,7 @@ class BrandStyleIntent(BaseModel):
 # output_schema enforces structured BrandStyleIntent output.
 brand_style_analyzer = Agent(
     name="Brand Style Analyzer",
-    model=Claude(id="claude-sonnet-4-20250514", max_tokens=4096),
+    model=Claude(id="claude-sonnet-4-6", max_tokens=8192),
     description=(
         "You analyze user presentation requests to detect and extract branding "
         "or styling intent.  When a brand is mentioned, you decide whether you "
@@ -3204,19 +3206,25 @@ def main() -> None:
     effective_visual_review = bool(args.visual_review) and bool(args.template)
     effective_visual_passes = args.visual_passes if args.template else 0
 
-    # Setup output directory
+    # Setup output directory with unique session ID + timestamp per run
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_base = os.path.join(script_dir, "output_chunked")
     os.makedirs(output_base, exist_ok=True)
 
-    # Resolve output path
+    # Generate unique session identifier: short uuid + timestamp
+    session_id = uuid.uuid4().hex[:8]
+    session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_name = "session_%s_%s" % (session_id, session_timestamp)
+
+    # Chunked workflow uses a session-specific working directory
+    session_dir = os.path.join(output_base, "chunked_workflow_work", session_name)
+    os.makedirs(session_dir, exist_ok=True)
+    output_dir = session_dir
+
+    # Resolve output path — place the final .pptx inside the session directory
     output_path = args.output
     if not os.path.isabs(output_path):
-        output_path = os.path.join(output_base, output_path)
-
-    # Chunked workflow uses its own working directory
-    output_dir = os.path.join(output_base, "chunked_workflow_work")
-    os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(session_dir, output_path)
 
     default_prompt = "Create a professional business presentation about AI transformation in enterprise companies"
 
@@ -3266,6 +3274,8 @@ def main() -> None:
     print("=" * 60)
     print("Chunked PPTX Workflow")
     print("=" * 60)
+    print("Session:    %s" % session_name)
+    print("Session dir: %s" % session_dir)
     print("Prompt:     %s" % (args.prompt or default_prompt)[:80])
     print("Output:     %s" % output_path)
     if args.template:
