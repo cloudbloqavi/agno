@@ -10,8 +10,9 @@ brand-aware styling, and a 3-tier fallback for production reliability.
 uv pip install agno anthropic python-pptx google-genai pillow lxml python-dotenv
 
 # Set API keys (or use .env file)
-export ANTHROPIC_API_KEY="your_key"
-export GOOGLE_API_KEY="your_google_key"   # for image generation
+export ANTHROPIC_API_KEY="your_anthropic_key" # Required for Claude PPTX generator
+export OPENAI_API_KEY="your_openai_key"       # Required if using --llm-provider openai
+export GOOGLE_API_KEY="your_google_key"       # Required if using --llm-provider gemini
 
 # Run
 python powerpoint_chunked_workflow.py \
@@ -28,6 +29,7 @@ powerpoint_chunked_workflow.py   ← Run this (orchestration + chunking, ~3,380 
     ↓ wildcard import
 powerpoint_template_workflow.py  ← Core pipeline (content gen, images, template assembly, ~7,218 lines)
     ↓ import
+agents/                          ← Provider-specific swappable agents (Claude, OpenAI, Gemini)
 file_download_helper.py          ← Claude skill file download utility (~160 lines)
 ```
 
@@ -58,6 +60,11 @@ python powerpoint_chunked_workflow.py \
 python powerpoint_chunked_workflow.py \
     -p "Startup pitch deck for SaaS product" --no-images
 
+# Switch LLM Provider for swappable agents (OpenAI gpt-5.2 or Gemini 3 Pro):
+# Note: Content Generator always uses Claude to retain native PPTX skills
+python powerpoint_chunked_workflow.py \
+    -p "Quarterly review deck" --llm-provider openai
+
 # Start at Tier 2 (skip Claude PPTX skill, use LLM code gen directly):
 python powerpoint_chunked_workflow.py \
     -p "Quarterly review deck" --start-tier 2
@@ -71,16 +78,17 @@ python powerpoint_chunked_workflow.py \
 | `--template, -t` | Path to .pptx template file | None |
 | `--output, -o` | Output filename | `presentation_chunked.pptx` |
 | `--chunk-size` | Slides per Claude API call | 3 |
+| `--llm-provider` | LLM provider for swappable agents (claude, openai, gemini) | claude |
 | `--max-retries` | Retries per chunk on failure | 2 |
 | `--start-tier` | Starting tier (1=PPTX skill, 2=LLM code, 3=text-only) | 1 |
 | `--no-images` | Skip AI image generation | disabled |
 | `--min-images` | Min slides with AI images | 1 |
-| `--visual-review` | Enable Gemini vision QA per chunk | disabled |
+| `--visual-review` | Enable vision QA per chunk | disabled |
 | `--visual-passes` | Max visual review passes per chunk | 3 |
 | `--footer-text` | Footer text for all slides | None |
 | `--date-text` | Date text for footer date placeholder | None |
 | `--show-slide-numbers` | Show slide number placeholders | disabled |
-| `--no-stream` | Disable streaming for Claude agent | disabled |
+| `--no-stream` | Disable streaming for agents | disabled |
 | `--verbose, -v` | Enable verbose/debug logging | disabled |
 
 ## Workflow Steps
@@ -126,6 +134,7 @@ Console output is redirected to `OUTPUT.md` in the script directory.
 |------|---------|
 | `powerpoint_chunked_workflow.py` | **Main entry point** — chunked orchestration |
 | `powerpoint_template_workflow.py` | Core pipeline (imported by chunked workflow) |
+| `agents/` | Package containing provider agents (Claude, OpenAI, Gemini) and shared schemas |
 | `file_download_helper.py` | Claude skill file download utility |
 | `test_brand_style_parsing.py` | Unit tests for brand/style parsing |
 | `.env` | API keys (ANTHROPIC_API_KEY, GOOGLE_API_KEY) |
@@ -142,9 +151,10 @@ Console output is redirected to `OUTPUT.md` in the script directory.
 ## Prerequisites
 
 - Python 3.8+
-- `uv pip install agno anthropic python-pptx google-genai pillow lxml python-dotenv`
-- `ANTHROPIC_API_KEY` with Claude access
-- `GOOGLE_API_KEY` (for Gemini image planning and visual review)
+- `uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv`
+- `ANTHROPIC_API_KEY` (Always required for Claude's PPTX generator)
+- `OPENAI_API_KEY` (Required if using `--llm-provider openai`)
+- `GOOGLE_API_KEY` (Required if using `--llm-provider gemini`)
 - LibreOffice (optional, for `--visual-review` slide rendering)
 
 ## External Library Patches

@@ -41,8 +41,7 @@ powerpoint_template_workflow.py
          Adds on top:
            - BrandStyleIntent Pydantic model
            - StoryboardPlan / SlideStoryboard Pydantic models
-           - brand_style_analyzer agent (Claude Sonnet + web_search)
-           - query_optimizer agent
+           - agents/ package (dynamically provides brand_style_analyzer, query_optimizer, etc.)
            - parse_brand_style_intent() / extract_style_from_template()
            - _format_brand_context_for_prompt() / _build_brand_override_log()
            - generate_chunk_pptx() helper
@@ -253,6 +252,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--template` / `-t` | Your company's .pptx template | None (optional) |
 | `--prompt` / `-p` | What the presentation should be about | Built-in demo |
 | `--output` / `-o` | Where to save the result | `presentation_from_template.pptx` |
+| `--llm-provider` | LLM provider for swappable agents (claude, openai, gemini) | `claude` |
 | `--no-images` | Skip Steps 2 and 3 (faster, text-only) | Images enabled |
 | `--no-stream` | Use simpler API mode (more reliable for short prompts) | Streaming enabled |
 | `--visual-review` | Enable Step 5 visual QA (requires LibreOffice) | Off |
@@ -269,6 +269,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--prompt` / `-p` | Presentation topic | Built-in demo | |
 | `--output` / `-o` | Output filename | `presentation_chunked.pptx` | |
 | `--chunk-size` | Slides per Claude API call | 3 | Tune for quality vs. speed |
+| `--llm-provider`| LLM provider (claude, openai, gemini) | `claude` | Content gen remains fixed to Claude |
 | `--max-retries` | Retries per chunk on failure | 2 | |
 | `--no-images` | Skip image generation | Off | Only applies when `--template` is set |
 | `--visual-review` | Enable per-chunk visual QA | Off | **Ignored** when `--template` is not set |
@@ -303,8 +304,9 @@ python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoin
 
 | Package | Purpose |
 |---------|---------|
-| `agno` | Agent, Workflow, Step, Claude model, Gemini model, NanoBananaTools |
+| `agno` | Agent, Workflow, Step, Model wrappers (Claude, OpenAIResponses, Gemini) |
 | `anthropic` | Anthropic API client for downloading skill-generated files |
+| `openai` | OpenAI API client for GPT models |
 | `python-pptx` | Presentation reading/writing, shapes, charts, placeholders |
 | `lxml` | XML manipulation for removing template slides and shape ID management |
 | `pydantic` | Structured output schemas for image planning and visual QA |

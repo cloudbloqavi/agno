@@ -2,12 +2,13 @@
 Agno Workflow: PowerPoint Template Generation Pipeline.
 
 A sequential workflow that generates presentations using Claude's pptx skill,
-intelligently adds AI-generated images via NanoBanana (powered by Gemini), and
-applies a custom .pptx template for professional styling.
+intelligently adds AI-generated images via NanoBanana, and
+applies a custom .pptx template for professional styling. Auxiliary agents
+like image planning and visual review are swappable (Claude, OpenAI, Gemini).
 
 Workflow steps:
   Step 1  Content Generation  - Claude + pptx skill -> raw .pptx
-  Step 2  Image Planning      - Gemini decides which slides need images
+  Step 2  Image Planning      - Swappable Agent decides which slides need images
   Step 3  Image Generation    - NanoBanana generates slide images
   Step 4  Template Assembly   - The most critical step. Before constructing any slide,
                                 consolidates all context into a comprehensive knowledge
@@ -19,7 +20,7 @@ Workflow steps:
                                 image assets with dimensions and target layouts. Only then
                                 does the actual PPTX construction begin, governed entirely
                                 by this knowledge file as the single source of truth.
-  Step 5  Visual Quality Review (optional) - Gemini vision inspects rendered slides
+  Step 5  Visual Quality Review (optional) - Swappable Vision Agent inspects rendered slides
 
 Operating modes:
   With template (--template / -t):
@@ -36,10 +37,12 @@ Operating modes:
     template is available.
 
 Prerequisites:
-- uv pip install agno anthropic python-pptx google-genai pillow
-- export ANTHROPIC_API_KEY="your_api_key_here"
-- export GOOGLE_API_KEY="your_google_api_key_here"
+- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+- export ANTHROPIC_API_KEY="your_api_key_here" (always required)
+- export OPENAI_API_KEY="your_openai_api_key_here" (for --llm-provider openai)
+- export GOOGLE_API_KEY="your_google_api_key_here" (for --llm-provider gemini)
 - A .pptx template file (optional — omit to get raw Claude output)
+- LibreOffice (optional, required for the --visual-review step: `sudo apt-get install -y libreoffice`)
 
 Usage:
     # Basic usage with a template:
@@ -3835,6 +3838,24 @@ def _populate_slide(
     _transfer_charts(
         new_slide, content.charts, visual_area, template_style=template_style
     )
+    # Check if layout has actual content placeholders (body/object)
+    # If it's a Blank or Title-only layout, transferring LLM shapes into
+    # the restricted safe-margin box squashes them. Use the full slide dimensions.
+    from pptx.enum.shapes import PP_PLACEHOLDER
+    _has_content_ph = any(
+        getattr(ph, "placeholder_format", None)
+        and ph.placeholder_format.type
+        in {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE}
+        for ph in new_slide.slide_layout.placeholders
+    )
+
+    if _has_content_ph:
+        shapes_target_area = region_map.visual_region
+        text_shapes_target_area = region_map.text_region
+    else:
+        shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
+        text_shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
+
     # P1-1: Pass source slide dimensions and target area so shapes are rescaled
     # proportionally to the template's content region instead of being copied
     # at Claude's original absolute EMU coordinates.
@@ -3845,7 +3866,7 @@ def _populate_slide(
         content.shapes_xml,
         src_width=src_slide_width,
         src_height=src_slide_height,
-        target_area=region_map.visual_region,
+        target_area=shapes_target_area,
         template_style=template_style,
     )
     if content_mix == ContentMix.TEXT_ONLY:
@@ -3854,7 +3875,7 @@ def _populate_slide(
             content.text_shapes_xml,
             src_width=src_slide_width,
             src_height=src_slide_height,
-            target_area=region_map.text_region,
+            target_area=text_shapes_target_area,
             template_style=template_style,
         )
 
@@ -4466,43 +4487,9 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
 # ---------------------------------------------------------------------------
 
 # This agent decides which slides need AI-generated images
-image_planner = Agent(
-    name="Image Planner",
-    model=Gemini(id="gemini-3-flash-preview"),
-    instructions=[
-        "You are an image planning specialist for PowerPoint presentations.",
-        "You will receive slide metadata AND the user's presentation topic/request.",
-        "",
-        "RULES (follow strictly):",
-        "- If has_image_placeholder is true: ALWAYS set needs_image to true.",
-        "- Title slides (index 0): ALWAYS generate an image — first impressions matter.",
-        "- Slides with existing images: NEVER generate (already have visuals).",
-        "- Data slides (has_table, has_chart, or has_data_vis is true): NEVER generate an image.",
-        "  These slides already contain native data visualizations (charts, tables, or infographics).",
-        "  Adding an external AI-generated image would collide with the native visual and degrade clarity.",
-        "- Slides where visual_suggestion contains 'chart', 'table', 'infographic', 'diagram', or 'graph':",
-        "  NEVER generate an image. These slides will have native data visualizations from python-pptx,",
-        "  not external images. Setting needs_image=true here would insert an unrelated photo/illustration",
-        "  that clashes with the chart or table.",
-        "- All other content slides: Default to YES. Visuals enhance every presentation.",
-        "- If the user explicitly requested 'visuals', 'images', or 'with pictures',",
-        "  generate images for at LEAST half of ELIGIBLE (non-data-vis) slides.",
-        "",
-        "IMPORTANT: When in doubt about non-data-vis slides, generate an image. It is better",
-        "to have too many images than too few. Empty picture placeholders look unprofessional.",
-        "But NEVER add images to data-vis slides (charts, tables, infographics, diagrams).",
-        "",
-        "When writing image prompts:",
-        "- Use the PRESENTATION TOPIC to create relevant imagery.",
-        "- Describe professional, clean, modern illustrations.",
-        "- Use abstract or metaphorical imagery, not literal text depictions.",
-        "- Specify style: 'minimalist corporate illustration', 'flat design', etc.",
-        "- Keep prompts under 100 words.",
-        "- Make images suitable for a professional business presentation.",
-    ],
-    output_schema=ImagePlan,
-    markdown=False,
-)
+# image_planner agent is now loaded from the agents/ package via get_agents().
+# Stored in session_state["agents"]["image_planner"].
+# See agents/claude_agents.py (or openai/gemini variants) for the definition.
 
 
 def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
@@ -4543,9 +4530,10 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
             % combined_message[:500]
         )
 
-    # Run the image_planner agent directly with the combined message
+    # Run the image_planner agent from session_state
+    _image_planner = session_state.get("agents", {}).get("image_planner")
     try:
-        response = image_planner.run(combined_message, stream=False)
+        response = _image_planner.run(combined_message, stream=False)
     except Exception as e:
         print("[ERROR] Image planner failed: %s" % str(e))
         if VERBOSE:
@@ -5801,132 +5789,9 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
 # Slide quality review agent — acts as a senior UI/UX designer with deep knowledge
 # of presentation design, visual hierarchy, typography, and brand consistency.
 # Instantiated at module level; only invoked when --visual-review is enabled.
-slide_quality_reviewer = Agent(
-    name="Senior UI/UX Presentation Designer",
-    model=Gemini(id="gemini-2.5-flash"),
-    instructions=[
-        "You are a world-class senior UI/UX designer and presentation design expert",
-        "with 15+ years of experience creating award-winning corporate presentations.",
-        "You combine the precision of a quality inspector with the creative eye of a",
-        "professional designer who understands visual hierarchy, typography, color theory,",
-        "whitespace, and the importance of brand consistency.",
-        "",
-        "Analyze the provided slide screenshot from BOTH a structural AND aesthetic",
-        "design quality perspective. Your goal is to elevate every slide to the",
-        "standard of a professionally designed McKinsey or Apple-quality presentation.",
-        "",
-        "=== STRUCTURAL DEFECTS (always report if present) ===",
-        "text_overflow      - Text extends beyond its container or is cut off.",
-        "overlap            - Two elements visibly overlap in a way that hurts readability.",
-        "ghost_text         - 'Click to add' placeholder text is still visible.",
-        "low_contrast       - Text is nearly indistinguishable from background.",
-        "element_clipped    - Content is cut off by the slide boundary.",
-        "empty_placeholder  - Visible empty frame with no content.",
-        "footer_inconsistent - Footer text missing, truncated, or misaligned.",
-        "",
-        "=== DESIGN QUALITY ISSUES (report when they significantly impact visual quality) ===",
-        "poor_spacing       - Insufficient whitespace, cramped layout, or unbalanced margins.",
-        "alignment_off      - Elements are visibly misaligned (not on a consistent grid).",
-        "typography_hierarchy - Title and body have similar weight/size, lacking visual hierarchy.",
-        "color_underutilized - Template accent colors are not used; everything looks monochrome.",
-        "visual_enrichment_needed - Slide uses only plain text when the template's design",
-        "                           vocabulary (colored shapes, accent bars, icons) could",
-        "                           dramatically improve visual interest.",
-        "font_inconsistency - Inconsistent font sizes or weights across similar content types.",
-        "",
-        "=== SEVERITY GUIDE ===",
-        "critical  - Broken or unreadable: text cut off, ghost text, major overlap.",
-        "moderate  - Clearly suboptimal: a professional would notice and want to fix it.",
-        "minor     - A refinement that would polish the slide.",
-        "",
-        "=== PROGRAMMATIC FIX SELECTION ===",
-        "For structural issues:",
-        "  reduce_font_size      -> text_overflow",
-        "  increase_contrast     -> low_contrast",
-        "  remove_element        -> overlap (remove the offending element)",
-        "  clear_placeholder     -> ghost_text, empty_placeholder",
-        "",
-        "For spacing/alignment (safe, failsafe implementations):",
-        "  fix_spacing                  -> poor_spacing: clamps shapes that overflow safe",
-        "                                  margins back within 5% edge boundary.",
-        "  fix_alignment                -> alignment_off: snaps outlier shapes to the",
-        "                                  majority left edge (max 2% slide width).",
-        "  fix_body_paragraph_alignment -> alignment_off / poor_spacing: sets all body",
-        "                                  text paragraphs to left alignment.",
-        "",
-        "For typography hierarchy (ensures title is visually dominant):",
-        "  enforce_typography_hierarchy -> typography_hierarchy: ensures title font is at",
-        "                                  least 6pt larger than body. Increases title if",
-        "                                  needed (cap: 36pt).",
-        "  increase_title_font_size     -> typography_hierarchy: forces title to 28pt.",
-        "",
-        "For color scheme (applies template accent colors):",
-        "  apply_accent_color_title -> color_underutilized / typography_hierarchy:",
-        "                              applies primary accent color to title text runs.",
-        "  apply_accent_color_body  -> color_underutilized: applies primary accent color",
-        "                              to the first (lead) paragraph of body text.",
-        "",
-        "For visual enrichment (native PPTX shapes, NO image generation):",
-        "  apply_body_accent_border  -> mild enrichment: thin vertical accent bar left of body.",
-        "  enrich_header_bar    -> prominent: full-width accent bar across top 8% of slide.",
-        "  enrich_title_card    -> structured: lightly tinted card behind title area.",
-        "  enrich_divider       -> separator: thin horizontal accent rule at 25% height.",
-        "  enrich_accent_strip  -> minimal: thin vertical accent strip on far left edge.",
-        "",
-        "SELECTION GUIDE:",
-        "  poor_spacing                   -> fix_spacing",
-        "  alignment_off (shapes)         -> fix_alignment",
-        "  alignment_off (text)           -> fix_body_paragraph_alignment",
-        "  typography_hierarchy (severe)  -> enforce_typography_hierarchy",
-        "  typography_hierarchy (mild)    -> increase_title_font_size",
-        "  color_underutilized (title)    -> apply_accent_color_title",
-        "  color_underutilized (overall)  -> apply_accent_color_body + enrich_*",
-        "  visual_enrichment_needed       -> choose the best enrich_* type",
-        "",
-        "Use 'none' ONLY when the issue requires AI-generated images, human content",
-        "editing, or a completely different slide layout.",
-        "",
-        "=== DATA VISUALIZATION SLIDES (charts, tables, infographics) ===",
-        "If the rendered slide clearly contains a native chart, table, or infographic",
-        "(a data visualization element that fills the visual region), do NOT penalize it",
-        "for lacking a photo or illustration. The data visual IS the intended element —",
-        "it occupies the visual region on purpose. Specifically:",
-        "- Do NOT set is_visually_bland=True purely because no AI-generated image is present.",
-        "- Do NOT report visual_enrichment_needed with programmatic_fix='none' citing absence",
-        "  of a photo/illustration on a slide that already has a chart or table.",
-        "- Do NOT suggest adding an AI-generated photo to a slide that already has data visuals.",
-        "You SHOULD still report genuine structural defects on these slides (text_overflow,",
-        "ghost_text, overlap, low_contrast, element_clipped) and design issues unrelated to",
-        "image absence (e.g. typography_hierarchy, poor_spacing, color_underutilized in text",
-        "regions). When the prompt includes '[Data vis: chart/table/infographic present]',",
-        "apply this rule strictly — the slide is intentionally structured around its data visual.",
-        "",
-        "=== VISUAL BLANDNESS ===",
-        "A slide is visually bland (is_visually_bland=True) when it fails to use",
-        "the template's visual vocabulary — for example: all text in one plain color,",
-        "no accent colors applied anywhere, no visual hierarchy, large empty whitespace",
-        "regions, or it looks like an unformatted draft document.",
-        "Be generous with this flag: flag it if a professional designer would look at",
-        "the slide and immediately want to add some visual structure or color accent.",
-        "",
-        "=== DESIGN SCORE (design_score field, 1-10) ===",
-        "10: Stunning. Could appear in a top-tier consulting pitch deck.",
-        "8-9: Strong design with minor polish opportunities.",
-        "6-7: Functional and readable, could use visual enrichment.",
-        "4-5: Plain / generic; lacks visual identity or hierarchy.",
-        "2-3: Noticeably poorly designed or has significant issues.",
-        "1: Broken or completely unusable.",
-        "",
-        "=== IMPORTANT ===",
-        "- The template_context field in the prompt tells you the available accent",
-        "  colors and fonts from the template. Reference these when suggesting fixes.",
-        "- Be specific in descriptions: not 'title could be bigger' but 'title is 20pt,",
-        "  indistinguishable from body text at 18pt; increase to 28pt for hierarchy'.",
-        "- Always return design_score even if the slide looks perfect.",
-    ],
-    output_schema=SlideQualityReport,
-    markdown=False,
-)
+# slide_quality_reviewer agent is now loaded from the agents/ package via get_agents().
+# Stored in session_state["agents"]["slide_quality_reviewer"].
+# See agents/claude_agents.py (or openai/gemini variants) for the definition.
 
 
 def _apply_accent_color_to_title(slide, accent_color_hex: str) -> bool:
@@ -6765,7 +6630,8 @@ def step_visual_quality_review(
                     mime_type="image/png",
                     format="png",
                 )
-                response = slide_quality_reviewer.run(
+                _slide_reviewer = session_state.get("agents", {}).get("slide_quality_reviewer")
+                response = _slide_reviewer.run(
                     prompt,
                     images=[slide_image_obj],
                     stream=False,
@@ -7006,6 +6872,15 @@ def parse_args():
         "Requires LibreOffice (install: apt-get install libreoffice). "
         "Non-blocking: skips silently if LibreOffice or the vision API is unavailable.",
     )
+    parser.add_argument(
+        "--llm-provider",
+        choices=["claude", "openai", "gemini"],
+        default="claude",
+        help=(
+            "LLM provider for swappable agents (image planner, visual reviewer). "
+            "The Content Generator always uses Claude (PPTX skill). Default: claude."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -7023,7 +6898,20 @@ if __name__ == "__main__":
             sys.exit(1)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+        raise ValueError(
+            "ANTHROPIC_API_KEY environment variable not set "
+            "(required: Content Generator agent always uses Claude)"
+        )
+    if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY environment variable not set (required for --llm-provider openai)")
+    if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
+        raise ValueError("GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)")
+
+    # Load provider-specific agents
+    from agents import get_agents
+
+    _agents = get_agents(args.llm_provider)
+    print("[PROVIDER] Loaded %s agents: %s" % (args.llm_provider, ", ".join(_agents.keys())))
 
     # Setup output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -7075,6 +6963,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("PowerPoint Template Workflow")
     print("=" * 60)
+    print("Provider: %s" % args.llm_provider)
     print("Template: %s" % (args.template or "none (raw output)"))
     print("Output:   %s" % output_path)
     print("Images:   %s" % ("disabled" if args.no_images else "enabled"))
@@ -7148,6 +7037,8 @@ if __name__ == "__main__":
             "show_slide_numbers": args.show_slide_numbers,
             "assembly_knowledge": {},
             "quality_report": {},
+            # Provider-loaded agents (swappable per --llm-provider)
+            "agents": _agents,
         },
     )
 

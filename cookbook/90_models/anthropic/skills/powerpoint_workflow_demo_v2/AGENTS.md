@@ -30,10 +30,10 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_chunked_workflow.py` |
+| **File** | `agents/` package (e.g. `claude_agents.py`, `openai_agents.py`, `gemini_agents.py`) |
 | **Variable** | `brand_style_analyzer` |
-| **Model** | Claude Sonnet `claude-sonnet-4-6` (`max_tokens=8192`) |
-| **Tools** | `web_search` (max 2 invocations) |
+| **Model** | Swappable: Claude Sonnet (`claude-sonnet-4-6`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
+| **Tools** | Provider-native web search (`web_search_20250305`, `web_search_preview`, or `search=True`) |
 | **Output Schema** | `BrandStyleIntent` (Pydantic) |
 | **Purpose** | Detects brand/style directives in the user prompt (e.g. "using Nike branding", "in the style of Apple"). Autonomously decides whether to search for brand guidelines online. Returns structured intent: brand name, color palette, tone, typography hints, style keywords. |
 | **Trigger** | Start of `step_optimize_and_plan()`, before the query optimizer |
@@ -53,10 +53,10 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_chunked_workflow.py` |
+| **File** | `agents/` package |
 | **Variable** | `query_optimizer` |
-| **Model** | Claude Opus `claude-opus-4-6` + `context-1m-2025-08-07` beta (`max_tokens=128000`) |
-| **Tools** | `web_search` (max 5 invocations) |
+| **Model** | Swappable: Claude Opus (`claude-opus-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3-pro-preview`) |
+| **Tools** | Provider-native web search |
 | **Output** | `StoryboardPlan` (via prompt instructions + manual JSON parse) |
 | **Purpose** | Takes the user prompt + brand context and produces a researched, structured storyboard that guides all downstream chunk generation. Plans slide count, narrative flow, tone, brand voice, and per-slide content outline. |
 | **Note** | `output_schema` is intentionally omitted — `claude-opus-4-6` does not support structured outputs, which causes Agno to make an internal non-streaming extraction call that the `context-1m` beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
@@ -86,9 +86,9 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_chunked_workflow.py` |
+| **File** | `agents/` package |
 | **Variable** | `fallback_code_agent` |
-| **Model** | Claude Opus `claude-opus-4-6` (without `context-1m` beta) |
+| **Model** | Swappable: Claude Opus, OpenAI `gpt-5.2`, Gemini `gemini-3-pro-preview` |
 | **Tools** | `PythonTools` (code execution — `save_and_run_python_code`) |
 | **Output** | `.pptx` file generated via python-pptx + matplotlib code |
 | **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. No internal retry — escalates to Tier 3 on failure. |
@@ -99,9 +99,9 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_template_workflow.py` |
+| **File** | `agents/` package |
 | **Variable** | `image_planner` |
-| **Model** | Gemini `gemini-3-flash-preview` (Google) |
+| **Model** | Swappable: Gemini `gemini-3-flash-preview`, OpenAI `gpt-5-mini` |
 | **Output Schema** | `ImagePlan` → list of `SlideImageDecision` (Pydantic structured output) |
 | **Purpose** | Reviews each slide's content summary and decides which slides benefit from AI-generated images. Outputs per-slide yes/no + image prompt + reasoning. |
 | **Decision rules** | Title slides: usually YES · Data slides (tables/charts): usually NO · Slides with existing images: ALWAYS NO · Closing slides: usually NO |
@@ -110,9 +110,9 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_template_workflow.py` |
+| **File** | `agents/` package |
 | **Variable** | `slide_quality_reviewer` |
-| **Model** | Gemini 2.5 Flash (vision) |
+| **Model** | Swappable: Gemini `gemini-2.5-flash`, OpenAI `gpt-5-mini` (vision) |
 | **Output Schema** | `SlideQualityReport` → per-slide assessment with `ShapeIssue` list |
 | **Purpose** | Inspects rendered slide PNGs for visual defects. Reports issues with severity (critical/moderate/minor) and suggests programmatic fixes. |
 | **Correction scope** | Auto-fixes: `low_contrast`, `ghost_text`, `empty_placeholder`, `text_overflow` · Detect-only: visual blandness · Deferred: `overlap` repositioning |
@@ -139,11 +139,11 @@ Agents communicate **indirectly** via `session_state`, a shared dictionary:
 | Agent | Skill / Tool | Provider | Purpose |
 |-------|-------------|----------|---------|
 | Content Agent (Tier 1) | `pptx` skill | Anthropic | Native PowerPoint creation in sandbox |
-| Fallback Agent (Tier 2) | `PythonTools` | Agno | Execute generated python-pptx + matplotlib |
-| Brand Analyzer | `web_search` | Anthropic | Research brand guidelines (max 2 uses) |
-| Query Optimizer | `web_search` | Anthropic | Research topic for storyboard (max 5 uses) |
-| Image Planner | (structured output only) | Google | No tools — uses Pydantic output schema |
-| Quality Reviewer | (vision input only) | Google | No tools — processes PNG images |
+| Fallback Agent (Tier 2) | `PythonTools` | Swappable | Execute generated python-pptx + matplotlib |
+| Brand Analyzer | `web_search` or `search=True` | Swappable | Research brand guidelines (max 2 uses) |
+| Query Optimizer | `web_search` or `search=True` | Swappable | Research topic for storyboard (max 5 uses) |
+| Image Planner | (structured output only) | Swappable | No tools — uses Pydantic output schema |
+| Quality Reviewer | (vision input only) | Swappable | No tools — processes PNG images |
 
 ---
 

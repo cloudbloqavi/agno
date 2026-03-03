@@ -28,8 +28,8 @@ Chunk generation uses a 3-tier fallback hierarchy per chunk:
 
 Brand/Style-Aware Query Parsing:
   Before the optimizer step, the workflow analyzes the user prompt for branding
-  or styling intent using a dedicated brand_style_analyzer agent (Claude Sonnet
-  with web_search). This agent:
+  or styling intent using a dedicated brand_style_analyzer agent (default Claude Sonnet
+  but swappable to OpenAI or Gemini via --llm-provider). This agent:
     - Detects brand directives (e.g. "using Nike branding", "in the style of Apple")
     - Decides autonomously whether to search for brand guidelines (colors, tone, fonts)
     - Returns structured BrandStyleIntent (brand_name, color_palette, tone, typography)
@@ -74,6 +74,7 @@ Prerequisites:
 - export ANTHROPIC_API_KEY="your_api_key_here"
 - export GOOGLE_API_KEY="your_google_api_key_here" (for image generation)
 - A .pptx template file (optional)
+- LibreOffice (optional, required for the --visual-review step: `sudo apt-get install -y libreoffice`)
 
 Usage:
     # Basic usage (auto-decide slide count, 3 slides per chunk):
@@ -301,89 +302,31 @@ class BrandStyleIntent(BaseModel):
 
 
 # === MODULE-LEVEL AGENTS ===
-# Do NOT create agents in loops — define them here at module level.
-
-# Brand/style analyzer: lightweight agent that decides whether the user query
-# contains branding intent and optionally searches for brand guidelines.
-# Uses Claude Sonnet (fast, cheap) with web_search (max 2 uses).
-# output_schema enforces structured BrandStyleIntent output.
-brand_style_analyzer = Agent(
-    name="Brand Style Analyzer",
-    model=Claude(id="claude-sonnet-4-6", max_tokens=8192, betas=["structured-outputs-2025-11-13"]),
-    description=(
-        "You analyze user presentation requests to detect and extract branding "
-        "or styling intent.  When a brand is mentioned, you decide whether you "
-        "already know enough about the brand's visual identity (colors, tone, "
-        "typography) or whether you need to search for brand guidelines."
-    ),
-    instructions=[
-        "Analyze the user's presentation request for branding or styling directives.",
-        "Look for patterns like: 'using X branding', 'X-branded', 'in the style of X', "
-        "'with X theme', 'X corporate style', 'like X would present it'.",
-        "If NO branding intent is found, return has_branding=false with all other fields empty.",
-        "If branding IS found, extract the brand_name and decide:",
-        "  - For well-known global brands (Nike, Apple, Google, etc.) where you are "
-        "    confident about colors and tone, you MAY skip web_search.",
-        "  - For less familiar brands, regional brands, or when you are unsure about "
-        "    specific hex colors or typography, USE web_search to look up "
-        "    '<brand_name> brand guidelines colors typography'.",
-        "Fill in color_palette with specific hex codes when possible.",
-        "Fill in content_query with the user's query MINUS the branding clause.",
-        "Keep style_keywords to 3-5 concise descriptors.",
-        "Keep typography_hints to 1-3 font families.",
-        "Set source='query' and source_detail='user query'.",
-    ],
-    tools=[
-        {
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": 2,
-        }
-    ],
-    output_schema=BrandStyleIntent,
-    markdown=False,
-)
-
-# output_schema is intentionally omitted: claude-opus-4-6 does not support structured
-# outputs, which causes Agno to make an internal non-streaming extraction call that the
-# context-1m beta rejects ("Streaming is required for operations that may take longer
-# than 10 minutes").  The storyboard JSON is instead requested via prompt instructions
-# and parsed manually below.
-query_optimizer = Agent(
-    name="Presentation Strategist",
-    model=Claude(
-        id="claude-opus-4-6", betas=["context-1m-2025-08-07"], max_tokens=128000
-    ),
-    description=(
-        "You are a presentation strategist who first searches the web for current, "
-        "relevant facts and data about the topic, then creates an optimized presentation "
-        "plan with a per-slide storyboard grounded in that research."
-    ),
-    tools=[
-        {
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": 5,
-        }
-    ],
-    markdown=False,
-)
+# Swappable agents (brand_style_analyzer, query_optimizer, fallback_code_agent,
+# image_planner, slide_quality_reviewer) are now loaded from the agents/ package
+# via get_agents(provider) in main().  They are stored in session_state["agents"]
+# and passed to step functions.  See agents/__init__.py for the factory.
+#
+# The Content Generator (chunk_agent) remains defined locally because it has a
+# hard dependency on Claude's PPTX skill and cannot be swapped.
 
 
 # === BRAND/STYLE HELPER FUNCTIONS ===
 
 
-def parse_brand_style_intent(user_prompt: str) -> "BrandStyleIntent":
+def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "BrandStyleIntent":
     """Extract branding/styling intent from the user query via the brand_style_analyzer agent.
 
-    Uses an LLM (Claude Sonnet) with optional web_search to detect brand names,
-    research brand colors/tone/typography, and return a structured BrandStyleIntent.
+    Uses the provider-selected brand_style_analyzer agent with optional web search
+    to detect brand names, research brand colors/tone/typography, and return a
+    structured BrandStyleIntent.
 
     When the user query contains no branding directive, returns a BrandStyleIntent
     with has_branding=False and all other fields empty.
 
     Args:
         user_prompt: The raw user prompt string.
+        brand_agent: The brand_style_analyzer Agent instance (from session_state["agents"]).
 
     Returns:
         BrandStyleIntent with extracted brand data (may have empty fields if no
@@ -392,7 +335,7 @@ def parse_brand_style_intent(user_prompt: str) -> "BrandStyleIntent":
     print("[BRAND] Analyzing query for branding/styling intent...")
 
     try:
-        response = brand_style_analyzer.run(user_prompt, stream=False)
+        response = brand_agent.run(user_prompt, stream=False)
 
         if response and response.content:
             content = response.content
@@ -815,7 +758,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # Parse branding intent from user query via the brand_style_analyzer agent.
     # If a template file is provided, extract template styling and override query branding.
     brand_parse_start = time.time()
-    query_brand_intent = parse_brand_style_intent(user_prompt)
+    agents = session_state.get("agents", {})
+    query_brand_intent = parse_brand_style_intent(user_prompt, brand_agent=agents.get("brand_style_analyzer"))
     brand_intent = query_brand_intent  # default: use query-derived intent
 
     if template_path and os.path.isfile(template_path):
@@ -925,7 +869,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     try:
         response = None
-        for event in query_optimizer.run(
+        _query_optimizer = session_state.get("agents", {}).get("query_optimizer")
+        for event in _query_optimizer.run(
             optimizer_prompt, stream=True, yield_run_output=True
         ):
             if isinstance(event, RunOutput):
@@ -1710,26 +1655,9 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "- When in doubt, use white background with black text — readability is paramount.",
 ]
 
-# Tier 2 fallback agent: generates python-pptx code with native charts and executes it.
-# Created at module level — NOT inside any function or loop (per project rules).
-# Uses Claude without the PPTX skill, with PythonTools for code execution.
-# PythonTools base_dir is set to current directory; the generated script saves
-# to the absolute output path passed in the prompt.
-# NOTE: betas=["context-1m-2025-08-07"] is intentionally omitted because this agent
-# is invoked with stream=False (see generate_chunk_pptx_v2), and the context-1m beta
-# mandates streaming for every call — using it with stream=False raises:
-# "Streaming is required for operations that may take longer than 10 minutes."
-fallback_code_agent = Agent(
-    name="PPTX Code Generator",
-    model=Claude(id="claude-opus-4-6", max_tokens=128000),
-    instructions=PPTX_CODE_GEN_INSTRUCTIONS,
-    tools=[
-        PythonTools(
-            base_dir=Path("."),
-        )
-    ],
-    markdown=False,
-)
+# Tier 2 fallback agent is now loaded from the agents/ package via get_agents().
+# Stored in session_state["agents"]["fallback_code_agent"].
+# See agents/claude_agents.py (or openai/gemini variants) for the definition.
 
 
 def generate_chunk_pptx_v2(
@@ -1858,8 +1786,9 @@ def generate_chunk_pptx_v2(
     # Tier 2 only cares whether the file was created on disk, not about the response
     # content, so we iterate through the stream and discard events.
     t2_start = time.time()
+    _fallback_agent = session_state.get("agents", {}).get("fallback_code_agent")
     try:
-        for _ in fallback_code_agent.run(code_gen_prompt, stream=True):
+        for _ in _fallback_agent.run(code_gen_prompt, stream=True):
             pass
         t2_elapsed = time.time() - t2_start
         print(
@@ -2219,7 +2148,8 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                     "Consider the presentation topic when writing image prompts."
                 ) % (user_prompt, slides_json)
 
-                img_plan_response = image_planner.run(combined_message, stream=False)  # noqa: F405
+                _image_planner = session_state.get("agents", {}).get("image_planner")
+                img_plan_response = _image_planner.run(combined_message, stream=False)
 
                 if img_plan_response and img_plan_response.content:
                     content = img_plan_response.content
@@ -3156,6 +3086,18 @@ def main() -> None:
         help="Enable verbose/debug logging.",
     )
 
+    # LLM provider selection
+    parser.add_argument(
+        "--llm-provider",
+        choices=["claude", "openai", "gemini"],
+        default="claude",
+        help=(
+            "LLM provider for swappable agents (brand analyzer, query optimizer, "
+            "fallback code gen, image planner, visual reviewer). "
+            "The Content Generator always uses Claude (PPTX skill). Default: claude."
+        ),
+    )
+
     # New args for chunked workflow
     parser.add_argument(
         "--chunk-size",
@@ -3195,9 +3137,17 @@ def main() -> None:
     global VERBOSE  # noqa: F405
     VERBOSE = args.verbose  # noqa: F405
 
-    # Validate API key
+    # Validate API keys — ANTHROPIC_API_KEY is always required (Content Generator
+    # is locked to Claude).  Provider-specific key checked when not claude.
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("Error: ANTHROPIC_API_KEY environment variable not set.")
+        print("  (Required: Content Generator agent always uses Claude.)")
+        sys.exit(1)
+    if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+        print("Error: OPENAI_API_KEY environment variable not set (required for --llm-provider openai).")
+        sys.exit(1)
+    if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
+        print("Error: GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini).")
         sys.exit(1)
 
     # Validate template if provided
@@ -3228,6 +3178,12 @@ def main() -> None:
     session_id = uuid.uuid4().hex[:8]
     session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_name = "session_%s_%s" % (session_id, session_timestamp)
+
+    # Load provider-specific agents
+    from agents import get_agents
+
+    _agents = get_agents(args.llm_provider)
+    print("[PROVIDER] Loaded %s agents: %s" % (args.llm_provider, ", ".join(_agents.keys())))
 
     # Chunked workflow uses a session-specific working directory
     session_dir = os.path.join(output_base, "chunked_workflow_work", session_name)
@@ -3272,6 +3228,8 @@ def main() -> None:
         "reviewed_chunks": {},
         "use_fallback_generator": False,
         "brand_style_intent": None,
+        # Provider-loaded agents (swappable per --llm-provider)
+        "agents": _agents,
         # Fields used by existing step helpers
         "generated_file": "",
         "slides_data": [],
@@ -3287,6 +3245,7 @@ def main() -> None:
     print("=" * 60)
     print("Chunked PPTX Workflow")
     print("=" * 60)
+    print("Provider:   %s" % args.llm_provider)
     print("Session:    %s" % session_name)
     print("Session dir: %s" % session_dir)
     print("Prompt:     %s" % (args.prompt or default_prompt)[:80])
@@ -3397,8 +3356,9 @@ if __name__ == "__main__":
 
         # Clean up temporary python scripts generated by PythonTools
         import glob
-        for tmp_file in glob.glob("create_chunk_*.py"):
-            try:
-                os.remove(tmp_file)
-            except Exception:
-                pass
+        for pattern in ["create_chunk_*.py", "chunk_*_gen.py"]:
+            for tmp_file in glob.glob(pattern):
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
