@@ -32,8 +32,8 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package (e.g. `claude_agents.py`, `openai_agents.py`, `gemini_agents.py`) |
 | **Variable** | `brand_style_analyzer` |
-| **Model** | Swappable: Claude Sonnet (`claude-sonnet-4-6`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
-| **Tools** | Provider-native web search (`web_search_20250305`, `web_search_preview`, or `search=True`) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
+| **Tools** | Provider-native web search (`web_search_20250305`, `web_search_preview`, or native `search=True`) |
 | **Output Schema** | `BrandStyleIntent` (Pydantic) |
 | **Purpose** | Detects brand/style directives in the user prompt (e.g. "using Nike branding", "in the style of Apple"). Autonomously decides whether to search for brand guidelines online. Returns structured intent: brand name, color palette, tone, typography hints, style keywords. |
 | **Trigger** | Start of `step_optimize_and_plan()`, before the query optimizer |
@@ -55,8 +55,8 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package |
 | **Variable** | `query_optimizer` |
-| **Model** | Swappable: Claude Opus (`claude-opus-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3-pro-preview`) |
-| **Tools** | Provider-native web search |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-opus-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3-pro-preview`) |
+| **Tools** | Provider-native web search (`web_search_20250305`, `web_search_preview`, or native `search=True`) |
 | **Output** | `StoryboardPlan` (via prompt instructions + manual JSON parse) |
 | **Purpose** | Takes the user prompt + brand context and produces a researched, structured storyboard that guides all downstream chunk generation. Plans slide count, narrative flow, tone, brand voice, and per-slide content outline. |
 | **Note** | `output_schema` is intentionally omitted — `claude-opus-4-6` does not support structured outputs, which causes Agno to make an internal non-streaming extraction call that the `context-1m` beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
@@ -88,7 +88,7 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package |
 | **Variable** | `fallback_code_agent` |
-| **Model** | Swappable: Claude Opus, OpenAI `gpt-5.2`, Gemini `gemini-3-pro-preview` |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-haiku-4-5`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
 | **Tools** | `PythonTools` (code execution — `save_and_run_python_code`) |
 | **Output** | `.pptx` file generated via python-pptx + matplotlib code |
 | **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. No internal retry — escalates to Tier 3 on failure. |

@@ -1,8 +1,8 @@
 # Design: Visual Quality Improvements for PowerPoint Template Assembly
 
 **Date:** 2026-02-19
-**Last Updated:** 2026-02-27
-**Status:** Implemented (Phase 1 + Phase 2)
+**Last Updated:** 2026-03-04
+**Status:** Implemented (Phase 1 + Phase 2 + Phase 3)
 **Files affected:**
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`; also adds a 3-tier chunk generation fallback — see below)
@@ -60,6 +60,203 @@ The optional Step 5 visual quality review agent has been implemented (2026-02-25
 | CLI flag | `--visual-review` | ✅ Implemented |
 
 See [`ARCHITECTURE_powerpoint_template_workflow.md`](ARCHITECTURE_powerpoint_template_workflow.md) for full details on all implementations, including the chunked workflow architecture, pipeline modes, and session state schema.
+
+### Phase 3: Template Quality Safeguards — COMPLETE ✅
+
+Five interconnected fixes targeting template-specific styling failures (2026-03-04). These bugs only manifest when `--template` is provided because the template introduces dark backgrounds, restricted content areas, and inherited styling that the original code did not account for.
+
+| Fix | Function(s) | Problem Solved | Status |
+|-----|------------|----------------|--------|
+| Per-slide PNG rendering | `_render_pptx_to_images()` | Visual review only saw slide 1 | ✅ Implemented |
+| Background color detection | `_get_shape_background_color()` | Dark backgrounds defaulted to white | ✅ Implemented |
+| Minimum font size guard | `_populate_placeholder_with_format()`, `_populate_slide()` | Text shrunk to 4pt | ✅ Implemented |
+| Shape overlap reflow | `_fix_overlapping_shapes()` | Content shapes overlap after resize | ✅ Implemented |
+| Template-aware LLM prompts | `generate_chunk_pptx_v2()` | LLM unaware of template constraints | ✅ Implemented |
+
+---
+
+#### Fix 1: Per-Slide PNG Rendering — Technical Deep-Dive
+
+**Root cause:** LibreOffice's `--convert-to png` converts an entire PPTX file into a single PNG image (first slide only). The visual review loop iterated over the returned image list (always length 1) and reported "No corrections needed" because the only slide it inspected (slide 1, typically a title slide) had no defects. Slides 2-N — where all the contrast, overlap, and font issues lived — were never inspected.
+
+**Evidence from logs:** `Rendered 1 slide(s)` for a 3-slide chunk, followed by `Reviewing slide 1 / 1`.
+
+**Solution approach — PPTX→PDF→PNG pipeline:**
+
+```
+PPTX ──LibreOffice──► PDF ──pdftoppm──► slide-001.png, slide-002.png, ...
+         (headless)         (poppler)
+```
+
+1. **PPTX→PDF:** `libreoffice --headless --convert-to pdf <file>.pptx` produces a multi-page PDF where each page = one slide. This is reliable across LibreOffice versions.
+2. **PDF→PNG:** `pdftoppm -png -r 150 <file>.pdf <prefix>` renders each PDF page as a separate PNG file at 150 DPI. This produces files named `<prefix>-01.png`, `<prefix>-02.png`, etc.
+3. **Fallback:** If `pdftoppm` is not found (`shutil.which("pdftoppm") is None`), falls back to the old `--convert-to png` single-image approach with a `[RENDER WARNING]` log.
+
+**System dependency:** `poppler-utils` (`sudo apt-get install -y poppler-utils`) provides `pdftoppm`.
+
+**Logging:** `[RENDER] Successfully rendered N per-slide PNG(s) via PDF pipeline.`
+
+**Test result:** 10-slide template correctly rendered 10 PNG files.
+
+---
+
+#### Fix 2: Background Color Detection — Technical Deep-Dive
+
+**Root cause:** `_get_shape_background_color()` only checked for `solidFill` XML elements on the slide background. Templates like `Career-Path-Template.pptx` use dark backgrounds defined via:
+- Image fills (`blipFill`) — a dark photo/gradient image
+- Gradient fills (`gradFill`) — dark-to-light gradient
+- Background references (`bgRef`) pointing to theme colors
+- Master slide backgrounds inherited by all layouts/slides
+
+When none of these matched the `solidFill` check, the function returned `"FFFFFF"` (white). This caused the contrast checker to allow dark text colors (e.g., `#44546A` dark blue) which are invisible on the actual dark background.
+
+**Solution — 6-layer detection cascade:**
+
+```
+Layer 1: Shape's own solidFill → direct color
+Layer 2: Slide background solidFill → direct color
+Layer 3: Slide background blipFill/gradFill/bgRef → heuristic dark detection
+Layer 4: Slide layout background → same checks as layers 2-3
+Layer 5: Slide master background → same checks as layers 2-3
+Layer 6: Large background-covering shapes → shapes ≥80% of slide area
+Fallback: Theme dk1 color if luminance < 0.3, else "FFFFFF"
+```
+
+**Key implementation details:**
+- **Image fills (`blipFill`):** If the slide background contains an embedded image, we assume dark (most corporate templates use dark hero images).
+- **Gradient fills (`gradFill`):** We extract the first gradient stop color and compute its luminance. If luminance < 0.4, the background is dark.
+- **Background references (`bgRef`):** These reference theme `fillStyleLst` entries. We check if the reference index points to a dark fill.
+- **Theme heuristic:** If the template's `dk1` theme color has luminance < 0.3, it's a strong signal that the template uses a dark color scheme. We use `dk1` as the background color.
+- **Luminance formula:** Standard relative luminance: `0.2126*R + 0.7152*G + 0.0722*B` (after sRGB linearization).
+
+**Logging:** `[BG DETECT] Slide N: bg=#333333, lum=0.033, dark=True`
+
+**Test result:** Career-Path-Template slide 1 → `#333333` (dark, correct), slides 2-9 → `#FFFFFF` (light, correct), slide 10 → `#333333` (dark, correct). Previously all returned `#FFFFFF`.
+
+---
+
+#### Fix 3: Minimum Font Size Guard — Technical Deep-Dive
+
+**Root cause:** python-pptx's `fit_text()` calculates the largest font size that fits text within a bounding box, but it has no minimum — it will shrink to 4pt, 3pt, even 1pt to make everything fit. Combined with the template's small content areas (Fix 4), this produced unreadable microscopic text.
+
+The chain: LLM generates 8 bullet points → template's body area is small (~40% of slide) → `fit_text()` shrinks to 4pt to fit all 8 bullets → text is invisible.
+
+**Solution — Post-`fit_text()` enforcement:**
+
+```python
+# Module-level constants
+_MIN_BODY_FONT_PT = 10   # Minimum body text
+_MIN_TITLE_FONT_PT = 14  # Minimum title text
+
+# After fit_text() runs:
+for paragraph in text_frame.paragraphs:
+    for run in paragraph.runs:
+        if run.font.size and run.font.size < Pt(min_pt):
+            run.font.size = Pt(min_pt)  # Enforce floor
+```
+
+**Applied in two locations:**
+1. `_populate_placeholder_with_format()` — after the primary `fit_text()` call
+2. `_populate_slide()` — after the fallback textbox `fit_text()` call
+
+**Trade-off:** At the minimum font size, text may overflow its bounding box. The visual review (if enabled) can catch and report this. We chose legibility over containment — 10pt text that overflows is better than 4pt text that fits but can't be read.
+
+**Logging:** `[FONT GUARD] Font size was below 10pt minimum — enforced 10pt.`
+
+**Known limitation:** Text truncation with "…" (planned) was not implemented — overflow at minimum size is handled by the visual review step instead.
+
+---
+
+#### Fix 4: Shape Overlap Detection & Reflow — Technical Deep-Dive
+
+**Root cause:** When `_transfer_shapes()` copies LLM-generated shapes from the generated PPTX into the template, it rescales based on `src_width/height → target_area`. But the LLM generates shapes positioned for a **full 10×7.5 inch slide**, while the template's usable content area may be much smaller (e.g., only 40% of the right side, because the left side is a decorative element). Rescaling preserves relative positions, but shapes that were spaced apart on the full slide end up overlapping in the compressed area.
+
+**Solution — 3-phase post-transfer overlap resolution:**
+
+```
+Phase 1: Enforce minimum shape dimensions
+    - Min width = 8% of slide width
+    - Min height = 4% of slide height
+    - Prevents microscopic shapes that survived rescaling
+
+Phase 2: Detect & reflow overlaps
+    - Sort all non-placeholder shapes by vertical position (top coordinate)
+    - For each pair of vertically adjacent shapes:
+      - Check if they overlap (considering both X and Y coordinates)
+      - If overlap found: push the lower shape down below the upper shape + 2% gap
+    - This effectively "stacks" overlapping shapes vertically
+
+Phase 3: Scale-down if off-slide
+    - After reflow, some shapes may be pushed beyond slide bottom
+    - If so, compute a uniform scale factor to bring all shapes back on-slide
+    - Maximum reduction: 50% (prevents shapes from becoming too small)
+    - Apply uniform scaling to all shapes for visual consistency
+```
+
+**Called in `_populate_slide()`** immediately after `_transfer_shapes()` completes.
+
+**Logging:** `[OVERLAP FIX] Resolved N overlapping shape(s) via vertical reflow.`
+
+**Known limitation:** Max shape count enforcement (planned: skip shapes if >5 in small area) was not implemented — reflow handles most cases, but extremely dense slides may still look crowded.
+
+---
+
+#### Fix 5: Template Context in Tier 2 LLM Prompt — Technical Deep-Dive
+
+**Root cause:** The Tier 2 code generation prompt tells the LLM to write `python-pptx` code that creates a full PPTX from scratch. The LLM has no awareness of:
+- The template's dark/light background
+- The template's restricted content area
+- The template's existing decorative elements
+- The template's theme colors
+
+This means the LLM generates dark text (standard `#000000`) for a template with a `#333333` dark background, creating invisible text. The template assembly step later transplants this content, but the damage is done at the code generation level.
+
+**Solution — conditional prompt injection in `generate_chunk_pptx_v2()`:**
+
+```python
+# Only when template_path is set:
+if session_state.get("template_path"):
+    bg_is_dark = _get_shape_background_color(...) → luminance < 0.5
+    
+    template_context = f"""
+TEMPLATE CONSTRAINTS (CRITICAL):
+- The template has a {'DARK' if bg_is_dark else 'LIGHT'} background ({bg_hex}).
+- You MUST use {'WHITE' if bg_is_dark else 'DARK'} text for ALL text elements.
+- Keep each slide SIMPLE: maximum 4-5 content shapes per slide.
+- Do NOT add background shapes or gradient fills — the template provides these.
+- Use large, readable font sizes (titles ≥ 24pt, body ≥ 14pt).
+"""
+    code_gen_prompt = template_context + code_gen_prompt
+```
+
+**Key design decisions:**
+- **Conditional activation:** Only injects constraints when `template_path` is present — non-template runs are completely unaffected.
+- **Background detection reuse:** Uses the same `_get_shape_background_color()` function from Fix 2 to determine dark/light.
+- **Prevention over cure:** Fix 5 prevents the problem at source (LLM generates compatible code), while Fixes 2-4 handle the symptoms during assembly.
+
+**Logging:** `[TEMPLATE CTX] Injected template constraints into Tier 2 prompt: bg=#333333 (dark), text=WHITE`
+
+---
+
+#### New Constants & Logging Tags
+
+**Module-level constants:**
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `_MIN_BODY_FONT_PT` | 10 | Floor for body text — `fit_text()` cannot shrink below this |
+| `_MIN_TITLE_FONT_PT` | 14 | Floor for title text — `fit_text()` cannot shrink below this |
+
+**New logging tags (always printed, no `--verbose` needed):**
+
+| Tag | When Emitted | Example Output |
+|-----|-------------|---------------|
+| `[RENDER]` | After slide→PNG rendering | `[RENDER] Successfully rendered 10 per-slide PNG(s) via PDF pipeline.` |
+| `[RENDER WARNING]` | `pdftoppm` not available | `[RENDER WARNING] pdftoppm not found. Falling back to single-image mode.` |
+| `[BG DETECT]` | During background analysis | `[BG DETECT] Slide 1: bg=#333333, lum=0.033, dark=True` |
+| `[FONT GUARD]` | When min font enforced | `[FONT GUARD] Font size was below 10pt minimum — enforced 10pt.` |
+| `[OVERLAP FIX]` | After overlap resolution | `[OVERLAP FIX] Resolved 2 overlapping shape(s) via vertical reflow.` |
+| `[TEMPLATE CTX]` | Prompt injection | `[TEMPLATE CTX] Injected template constraints: bg=#333333 (dark)` |
 
 ---
 

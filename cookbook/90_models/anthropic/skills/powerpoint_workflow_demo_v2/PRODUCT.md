@@ -53,20 +53,27 @@ AI-powered pipeline that transforms a text prompt into a polished, template-styl
 Splits large presentations (8-15+ slides) into configurable chunks (default: 3 slides/chunk), generates each independently, then merges with OPC-aware relationship management.
 
 ### 2. Brand-Aware Generation
-Autonomous `brand_style_analyzer` agent (Sonnet + web search) detects brand directives, researches guidelines online, and injects structured `BrandStyleIntent` into every downstream LLM call. Template styling overrides query-level branding when a template is provided.
+Autonomous `brand_style_analyzer` agent uses a two-stage approach: a zero-cost Regex keyword pre-check to log explicit intent, followed by an OpenAI `gpt-4o-mini` extraction that runs *on every prompt* to catch any implicit styling directives the pre-check might miss (preserving Anthropic token budget). It discovers brand directives, researches guidelines online, and injects structured `BrandStyleIntent` into downstream calls. Template styling overrides query-level branding when a template is provided.
 
 ### 3. Multi-Provider Architecture
-Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`:
-- **Claude (Default):** Native `web_search_20250305`, `claude-opus-4-6`, `claude-sonnet-4-6`
-- **OpenAI:** Native `web_search_preview`, `gpt-5.2`, `gpt-5-mini` using `OpenAIResponses`
-- **Gemini:** Native `search=True`, `gemini-3-pro-preview`, `gemini-3-flash-preview`
-*Note: The core Content Generator is hard-locked to Claude to utilize its native PPTX skill capabilities.*
+Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. The workflow dynamically routes to different model variants depending on the selected provider mode:
+
+| Agent Role | Claude (Default) | OpenAI | Gemini |
+|------------|------------------|--------|--------|
+| **Brand Analysis** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Storyboard / Plan** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Fallback (Tier 2)** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
+| **Search Tool** | `web_search_20250305` | `web_search_preview`| `search=True` |
+
+*(Note: The core Content Generator (Tier 1) is hard-locked to **Claude Opus** to utilize its native PPTX skill capabilities. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
 
 ### 4. 3-Tier Fallback System
 | Tier | Generator | Quality | Speed |
 |------|-----------|---------|-------|
-| 1 | Claude PPTX skill | 100% | 30s–5min/chunk |
-| 2 | LLM code gen (Swappable) | 80–92% | 10–30s/chunk |
+| 1 | Claude PPTX skill (`opus`) | 100% | 30s–5min/chunk |
+| 2 | LLM code gen (`haiku` fallback) | 80–92% | 10–30s/chunk |
 | 3 | Text-only (deterministic) | Structural | <1s/chunk |
 
 ### 4. Template-Faithful Assembly
@@ -76,7 +83,20 @@ Fully deterministic Step 3 builds a comprehensive **assembly knowledge file** �
 Gemini-based planning decides which slides need visuals. NanoBanana generates 16:9 PNG images, scaled/centered within the template's content area preserving aspect ratio.
 
 ### 6. Vision-Based Quality Assurance
-Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), detects visual defects, and auto-corrects critical issues. Fully non-blocking.
+Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), detects visual defects, and auto-corrects critical issues. Includes upfront missing key validation to prevent crash blocks. Fully non-blocking.
+
+### 7. Global API Rate Limit Tracker
+An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random `60–120s`) inter-chunk sleeps with live countdowns.
+
+### 8. Template Quality Safeguards
+When using `--template`, five automatic safeguards protect presentation quality:
+- **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually (not just slide 1) so the visual review inspects all slides
+- **Background detection** — 6-layer cascade (shape→slide→layout→master→theme→large shapes) correctly identifies dark template backgrounds for proper text contrast
+- **Minimum font size** — Enforces 10pt body / 14pt title floor to prevent `fit_text()` from shrinking text to unreadable sizes
+- **Overlap reflow** — Post-transfer detection resolves shape collisions by vertical stacking with minimum dimension enforcement
+- **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, and layout constraints
+
+Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 
 ---
 
@@ -101,8 +121,9 @@ Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), 
 | **Orchestration** | Agno Workflow (sequential Steps + shared `session_state`) |
 | **Provider Factory** | `agents/` package dynamically loads Swappable Agent Modules |
 | **Content LLM** | **Claude** `claude-opus-4-6` + `pptx` skill + `context-1m` beta (Locked) |
-| **Brand Analysis** | Swappable (Claude Sonnet / GPT-5 Mini / Gemini 3 Flash) |
-| **Storyboard** | Swappable (Claude Opus / GPT-5.2 / Gemini 3 Pro) |
+| **Brand Analysis** | Two-Stage (Regex Fast-Check + OpenAI `gpt-4o-mini`) |
+| **Storyboard** | Swappable (Claude Sonnet / GPT-5.2 / Gemini 3 Pro) |
+| **Code Fallback** | Swappable (Claude Haiku / GPT-5 Mini) |
 | **Image Planning** | Swappable (Gemini 3 Flash / GPT-5 Mini) |
 | **Image Gen** | NanoBanana (Gemini, 16:9 aspect ratio) |
 | **Vision QA** | Swappable (Gemini 2.5 Flash / GPT-5 Mini) + LibreOffice headless |
@@ -132,8 +153,9 @@ Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), 
 | **Capacity** | 8-15+ slides (chunked), ≤7 slides (single-call via template workflow) |
 | **Steps** | 6 (Step 4 optional, Step 5 visual review optional) |
 | **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
-| **Tests** | Brand parsing: 10 offline unit tests |
-| **Last Updated** | 2026-03-02 |
+| **Template Safeguards** | 5 (rendering, background detection, font guard, overlap reflow, prompt constraints) |
+| **Tests** | Brand parsing: 10 unit tests, template fixes: 14 integration tests |
+| **Last Updated** | 2026-03-04 |
 
 ---
 
@@ -143,6 +165,6 @@ Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), 
 |--------|--------|
 | **Reliability** | 3-tier fallback → ~100% completion rate per chunk |
 | **Template Fidelity** | Knowledge-file-driven assembly matches template fonts, colors, layouts |
-| **Visual Quality** | WCAG contrast ≥3.0, ghost-text removal, fit-text auto-sizing |
+| **Visual Quality** | WCAG contrast ≥3.0, ghost-text removal, fit-text auto-sizing, 10pt/14pt font guard, overlap reflow |
 | **Performance** | Tier 1: 2-5 min/chunk; Tier 2: 10-30s; Tier 3: <100ms |
 | **Brand Accuracy** | Autonomous web search + structured `BrandStyleIntent` |

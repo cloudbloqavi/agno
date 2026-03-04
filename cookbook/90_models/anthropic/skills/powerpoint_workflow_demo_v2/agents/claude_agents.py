@@ -5,12 +5,21 @@ Provides the 5 swappable agents using Anthropic Claude models and native tools.
 The Content Generator agent (with PPTX skill) is NOT included — it stays
 in the main workflow files because it is always Claude regardless of provider.
 
-Models used:
-    brand_style_analyzer    -> claude-sonnet-4-6  (fast, cheap, structured output)
-    query_optimizer         -> claude-opus-4-6    (powerful, long context, research)
-    fallback_code_agent     -> claude-opus-4-6    (code gen + execution)
+Models used (optimised to preserve the claude-opus-4-6 30K input-token/min budget):
+    brand_style_analyzer    -> gpt-4o-mini  (OpenAI; completely separate rate-limit pool)
+    query_optimizer         -> claude-sonnet-4-6   (was Opus; Sonnet is sufficient for
+                                                    storyboarding and shares the same pool
+                                                    but is much more token-efficient)
+    fallback_code_agent     -> claude-haiku-4-5    (50K input tokens/min pool; Haiku is
+                                                    more than capable of python-pptx codegen)
     image_planner           -> gemini-3-flash-preview (unchanged — already uses Gemini)
-    slide_quality_reviewer  -> gemini-2.5-flash   (unchanged — already uses Gemini)
+    slide_quality_reviewer  -> gemini-2.5-flash       (unchanged — already uses Gemini)
+
+Rate limit reference (Tier 1 as of 2026-03):
+    claude-sonnet-4-6  : 50 RPM | 30K input tokens/min | 8K output tokens/min
+    claude-opus-4-6    : 50 RPM | 30K input tokens/min | 8K output tokens/min
+    claude-haiku-4-5   : 50 RPM | 50K input tokens/min | 10K output tokens/min
+    gpt-4o-mini        : OpenAI limits (separate company — no impact on Anthropic quota)
 """
 
 import os
@@ -20,6 +29,7 @@ from typing import Dict
 
 from agno.agent import Agent
 from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.tools.python import PythonTools
 
 # Import Claude from local patch (same as main workflow files)
@@ -39,14 +49,19 @@ from agents._shared import (
 
 
 def create_agents() -> Dict[str, Agent]:
-    """Create and return all 5 swappable agents using Claude models."""
+    """Create and return all 5 swappable agents using Claude models.
 
+    Brand style analyzer uses OpenAI gpt-4o-mini to keep brand analysis completely
+    off the Anthropic token-per-minute quota, preserving it for chunk generation.
+    """
+
+    # Brand analysis runs on gpt-4o-mini (OpenAI) so it doesn't consume Anthropic
+    # input tokens.  The rate-limit pool for gpt-4o-mini is entirely separate.
     brand_style_analyzer = Agent(
         name="Brand Style Analyzer",
-        model=Claude(
-            id="claude-sonnet-4-6",
-            max_tokens=8192,
-            betas=["structured-outputs-2025-11-13"],
+        model=OpenAIChat(
+            id="gpt-4o-mini",
+            max_tokens=2048,
         ),
         description=(
             "You analyze user presentation requests to detect and extract branding "
@@ -55,28 +70,24 @@ def create_agents() -> Dict[str, Agent]:
             "typography) or whether you need to search for brand guidelines."
         ),
         instructions=BRAND_STYLE_ANALYZER_INSTRUCTIONS,
-        tools=[
-            {
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 2,
-            }
-        ],
         output_schema=BrandStyleIntent,
         markdown=False,
     )
 
-    # output_schema is intentionally omitted: claude-opus-4-6 does not support structured
-    # outputs, which causes Agno to make an internal non-streaming extraction call that the
-    # context-1m beta rejects ("Streaming is required for operations that may take longer
-    # than 10 minutes").  The storyboard JSON is instead requested via prompt instructions
-    # and parsed manually.
+    # Downgraded from claude-opus-4-6 → claude-sonnet-4-6.
+    # Sonnet is fully capable of building a structured storyboard JSON; Opus-level
+    # reasoning is not needed here.  Both share the 30K input-token/min pool but
+    # Sonnet uses significantly fewer tokens per call.
+    # max_tokens capped at 4096: a 15-slide storyboard JSON is ~2,000-3,000 tokens.
+    # output_schema omitted intentionally (same reason as before — Opus note still
+    # applies in reverse: Sonnet with context-1m also requires streaming for large
+    # outputs, so we parse JSON from prompt-instructed plain-text response).
     query_optimizer = Agent(
         name="Presentation Strategist",
         model=Claude(
-            id="claude-opus-4-6",
+            id="claude-sonnet-4-6",
             betas=["context-1m-2025-08-07"],
-            max_tokens=128000,
+            max_tokens=4096,
         ),
         description=(
             "You are a presentation strategist who first searches the web for current, "
@@ -87,17 +98,23 @@ def create_agents() -> Dict[str, Agent]:
             {
                 "type": "web_search_20250305",
                 "name": "web_search",
-                "max_uses": 5,
+                # Reduced from 5 → 2: limits web-search overhead in Step 1.
+                # Each web search call adds latency and input tokens; 2 focused
+                # searches provide sufficient grounding for a storyboard.
+                "max_uses": 2,
             }
         ],
         markdown=False,
     )
 
-    # betas=[\"context-1m-2025-08-07\"] intentionally omitted because this agent
-    # is invoked with stream=False, and context-1m beta mandates streaming.
+    # Downgraded from claude-opus-4-6 → claude-haiku-4-5.
+    # Haiku has a SEPARATE 50K input-token/min budget — it doesn't compete with the
+    # 30K pool used by the Tier-1 chunk agent (Opus + PPTX skill).
+    # max_tokens capped at 16384: python-pptx scripts for 3 slides are ~500-1500 lines.
+    # context-1m beta intentionally omitted; haiku doesn't need it for code-gen prompts.
     fallback_code_agent = Agent(
         name="PPTX Code Generator",
-        model=Claude(id="claude-opus-4-6", max_tokens=128000),
+        model=Claude(id="claude-haiku-4-5", max_tokens=16384),
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
             PythonTools(

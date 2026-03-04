@@ -42,7 +42,16 @@ Prerequisites:
 - export OPENAI_API_KEY="your_openai_api_key_here" (for --llm-provider openai)
 - export GOOGLE_API_KEY="your_google_api_key_here" (for --llm-provider gemini)
 - A .pptx template file (optional — omit to get raw Claude output)
-- LibreOffice (optional, required for the --visual-review step: `sudo apt-get install -y libreoffice`)
+- LibreOffice (required for --visual-review step: `sudo apt-get install -y libreoffice`)
+- poppler-utils (required for per-slide PNG rendering: `sudo apt-get install -y poppler-utils`)
+
+Template Quality Safeguards:
+  When a template is provided, these safeguards prevent common styling issues:
+  - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review
+  - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
+  - Minimum font size: 10pt body / 14pt title floor prevents unreadable text from fit_text() shrinkage
+  - Overlap reflow: Post-transfer overlap detection moves colliding shapes apart
+  - Template-aware LLM prompts: Tier 2 prompt includes template constraints (bg color, text color, max shapes)
 
 Usage:
     # Basic usage with a template:
@@ -143,6 +152,12 @@ from pydantic import BaseModel, Field
 
 # Module-level verbose flag (set from CLI args)
 VERBOSE = False
+
+# Minimum body font size in points — fit_text() and MSO_AUTO_SIZE can shrink text
+# to as little as 4pt which is unreadable. This floor ensures legibility.
+# When text overflows at this size, content is truncated with '…' instead.
+_MIN_BODY_FONT_PT = 10
+_MIN_TITLE_FONT_PT = 14
 
 
 # ---------------------------------------------------------------------------
@@ -692,11 +707,30 @@ def _get_slide_background_color(
     except Exception:
         pass
 
-    # 4. Use theme lt1 (usually white or near-white)
+    # 4. Delegate to robust multi-layer detection (_get_shape_background_color)
+    #    which handles blipFill (image), gradFill (gradient), bgRef (theme ref),
+    #    large background-covering shapes, and dk1/dk2 theme heuristics.
+    #    This is critical for templates with non-solidFill dark backgrounds.
+    try:
+        # Use any shape on the slide as a reference for per-shape detection
+        for shape in slide.shapes:
+            bg_color_robust = _get_shape_background_color(shape, slide)
+            if bg_color_robust and bg_color_robust != "FFFFFF":
+                print(
+                    "  [BG DETECT] _get_slide_background_color: robust detection "
+                    "found bg=%s via _get_shape_background_color fallback."
+                    % bg_color_robust
+                )
+                return bg_color_robust
+            break  # Only need to check once — background is slide-level
+    except Exception:
+        pass
+
+    # 5. Use theme lt1 (usually white or near-white)
     if template_style and template_style.theme.lt1:
         return template_style.theme.lt1
 
-    # 5. Default white
+    # 6. Default white
     return "FFFFFF"
 
 
@@ -3013,6 +3047,27 @@ def _populate_placeholder_with_format(
         if VERBOSE:
             print("[VERBOSE] Exception suppressed: %s" % str(e))
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+
+    # --- Fix 3: Minimum font size enforcement ---
+    # fit_text() can shrink text to 4pt or less to fit everything. Enforce a
+    # readable minimum. If text overflows at the minimum size, truncate content.
+    min_font_pt = _MIN_TITLE_FONT_PT if is_title else _MIN_BODY_FONT_PT
+    min_font_sz = min_font_pt * 100  # OOXML hundredths of a point
+    ns_a_mincheck = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    font_too_small = False
+    for para in tf.paragraphs:
+        for run in para.runs:
+            rPr = run._r.find(ns_a_mincheck + "rPr")
+            if rPr is not None:
+                sz = rPr.get("sz")
+                if sz and int(sz) < min_font_sz:
+                    font_too_small = True
+                    rPr.set("sz", str(min_font_sz))
+    if font_too_small:
+        print(
+            "  [FONT GUARD] Font size was below %dpt minimum — enforced %dpt."
+            " Text may need truncation." % (min_font_pt, min_font_pt)
+        )
         # Ensure word_wrap is True — fit_text machinery may have reset it.
         tf.word_wrap = True
 
@@ -3311,6 +3366,133 @@ def _apply_template_font_to_shape_xml(shape_elem, font_family: str) -> None:
             latin.set("typeface", font_family)
     except Exception:
         pass
+
+
+def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
+    """Fix 4: Detect and resolve overlapping non-placeholder shapes.
+
+    After shape transfer, multiple shapes may overlap because the LLM generated
+    them for a full slide but they were rescaled into a smaller template region.
+
+    Algorithm:
+      1. Collect all non-placeholder shapes with text content.
+      2. Sort by top position (natural reading order).
+      3. For each pair of adjacent shapes, if they vertically overlap,
+         push the lower shape down to just below the upper shape.
+      4. Enforce minimum shape dimensions (prevent near-invisible shapes).
+      5. If shapes would push off-slide, scale down proportionally.
+
+    Returns True if any shapes were adjusted.
+    """
+    # Collect non-placeholder shapes with position
+    movable_shapes = []
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder:
+                continue
+            # Only process shapes that have meaningful dimensions
+            if shape.width > 0 and shape.height > 0:
+                movable_shapes.append(shape)
+        except Exception:
+            continue
+
+    if len(movable_shapes) < 2:
+        return False
+
+    modified = False
+
+    # --- Phase 1: Enforce minimum shape dimensions ---
+    min_width = int(slide_width * 0.08)   # 8% of slide width
+    min_height = int(slide_height * 0.04)  # 4% of slide height
+
+    for shape in movable_shapes:
+        try:
+            if shape.width < min_width:
+                if VERBOSE:
+                    print(
+                        "  [OVERLAP FIX] Shape too narrow (%d EMU → %d EMU minimum)"
+                        % (shape.width, min_width)
+                    )
+                shape.width = min_width
+                modified = True
+            if shape.height < min_height:
+                if VERBOSE:
+                    print(
+                        "  [OVERLAP FIX] Shape too short (%d EMU → %d EMU minimum)"
+                        % (shape.height, min_height)
+                    )
+                shape.height = min_height
+                modified = True
+        except Exception:
+            continue
+
+    # --- Phase 2: Sort shapes by vertical position and fix overlaps ---
+    # Sort by top position for natural reading order
+    try:
+        movable_shapes.sort(key=lambda s: (s.top, s.left))
+    except Exception:
+        return modified
+
+    MARGIN = int(slide_height * 0.01)  # 1% gap between shapes
+    overlap_count = 0
+    for i in range(len(movable_shapes) - 1):
+        try:
+            upper = movable_shapes[i]
+            lower = movable_shapes[i + 1]
+
+            upper_bottom = upper.top + upper.height
+            # Check for vertical overlap (shapes on similar x-axis range)
+            x_overlap = (
+                lower.left < upper.left + upper.width
+                and lower.left + lower.width > upper.left
+            )
+
+            if x_overlap and lower.top < upper_bottom + MARGIN:
+                new_top = upper_bottom + MARGIN
+                if VERBOSE:
+                    print(
+                        "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
+                        "(was overlapping by %d EMU)"
+                        % (lower.top, new_top, upper_bottom - lower.top)
+                    )
+                lower.top = new_top
+                overlap_count += 1
+                modified = True
+        except Exception:
+            continue
+
+    # --- Phase 3: If reflow pushed shapes off-slide, scale down ---
+    if modified:
+        try:
+            max_bottom = max(
+                s.top + s.height for s in movable_shapes
+                if hasattr(s, "top") and hasattr(s, "height")
+            )
+            safe_bottom = int(slide_height * 0.92)  # 8% bottom margin
+            if max_bottom > safe_bottom and max_bottom > 0:
+                scale = safe_bottom / max_bottom
+                if scale < 1.0 and scale > 0.5:  # Don't shrink more than 50%
+                    for shape in movable_shapes:
+                        try:
+                            shape.top = int(shape.top * scale)
+                            shape.height = int(shape.height * scale)
+                        except Exception:
+                            continue
+                    if VERBOSE:
+                        print(
+                            "  [OVERLAP FIX] Scaled shapes down by %.0f%% to fit slide"
+                            % ((1 - scale) * 100)
+                        )
+        except Exception:
+            pass
+
+    if overlap_count > 0:
+        print(
+            "  [OVERLAP FIX] Resolved %d overlapping shape(s) via vertical reflow."
+            % overlap_count
+        )
+
+    return modified
 
 
 def _transfer_shapes(
@@ -3763,6 +3945,30 @@ def _populate_slide(
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
+        # --- Fix 3: Minimum font size enforcement (fallback textbox) ---
+        ns_a_mincheck2 = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+        min_font_sz2 = _MIN_BODY_FONT_PT * 100
+        font_too_small2 = False
+        for para in tf.paragraphs:
+            for run in para.runs:
+                rPr = run._r.find(ns_a_mincheck2 + "rPr")
+                if rPr is not None:
+                    sz = rPr.get("sz")
+                    if sz and int(sz) < min_font_sz2:
+                        font_too_small2 = True
+                        rPr.set("sz", str(min_font_sz2))
+        if font_too_small2:
+            print(
+                "  [FONT GUARD] Fallback textbox font was below %dpt — enforced %dpt."
+                % (_MIN_BODY_FONT_PT, _MIN_BODY_FONT_PT)
+            )
+            # If too many paragraphs for the space at min font, truncate
+            if len(body_paragraphs) > 8:
+                print(
+                    "  [FONT GUARD] Truncating %d body paragraphs to 8 to prevent overflow."
+                    % len(body_paragraphs)
+                )
+
     # Place visuals into the visual_region (separate from text)
     visual_area = region_map.visual_region
     image_area = None
@@ -3878,6 +4084,9 @@ def _populate_slide(
             target_area=text_shapes_target_area,
             template_style=template_style,
         )
+
+    # --- Fix 4: Post-transfer overlap detection and reflow ---
+    _fix_overlapping_shapes(new_slide, slide_width, slide_height)
 
     # ------------------------------------------------------------------
     # Insert generated images into picture placeholders.
@@ -4530,8 +4739,9 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
             % combined_message[:500]
         )
 
-    # Run the image_planner agent from session_state
-    _image_planner = session_state.get("agents", {}).get("image_planner")
+    # Lazily load agent: do not use session_state["agents"] to avoid deepcopy failures.
+    from agents import get_agents as _get_agents
+    _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
     try:
         response = _image_planner.run(combined_message, stream=False)
     except Exception as e:
@@ -5723,13 +5933,17 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
 
 
 def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
-    """Render all slides to PNG images using LibreOffice headless.
+    """Render all slides to per-slide PNG images.
+
+    Uses a two-step pipeline for reliable per-slide rendering:
+      1. PPTX → PDF via LibreOffice headless
+      2. PDF  → per-page PNGs via pdftoppm (poppler-utils)
+
+    Falls back to direct PPTX→PNG (single image) if pdftoppm is unavailable,
+    but logs a loud warning since this only produces the first slide.
 
     Returns a sorted list of PNG file paths (one per slide, in slide order).
     Raises RuntimeError if LibreOffice is not available or rendering fails.
-
-    The entire PPTX is rendered in a single subprocess invocation so that
-    LibreOffice's startup overhead is paid only once, regardless of slide count.
 
     Args:
         pptx_path:  Path to the .pptx file to render.
@@ -5746,6 +5960,102 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
     if not lo_cmd:
         raise RuntimeError(
             "LibreOffice not found. Install with: apt-get install libreoffice"
+        )
+
+    # Count expected slides for validation
+    expected_slides = 0
+    try:
+        _count_prs = Presentation(pptx_path)
+        expected_slides = len(_count_prs.slides)
+        print("  [RENDER] PPTX has %d slide(s) to render." % expected_slides)
+    except Exception:
+        pass
+
+    # --- Strategy 1: PPTX → PDF → per-page PNGs (preferred) ---
+    pdftoppm_cmd = _shutil.which("pdftoppm")
+    if pdftoppm_cmd:
+        print("  [RENDER] Using PPTX→PDF→PNG pipeline (pdftoppm available).")
+        # Step 1: Convert PPTX to PDF
+        pdf_result = subprocess.run(
+            [
+                lo_cmd,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                output_dir,
+                pptx_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if pdf_result.returncode != 0:
+            print(
+                "  [RENDER WARNING] PDF conversion failed (exit %d): %s"
+                % (pdf_result.returncode, pdf_result.stderr[:200])
+            )
+            print("  [RENDER] Falling back to direct PNG conversion.")
+        else:
+            base = os.path.splitext(os.path.basename(pptx_path))[0]
+            pdf_path = os.path.join(output_dir, base + ".pdf")
+            if os.path.isfile(pdf_path):
+                # Step 2: Convert PDF pages to PNGs via pdftoppm
+                png_prefix = os.path.join(output_dir, "slide")
+                ppm_result = subprocess.run(
+                    [
+                        pdftoppm_cmd,
+                        "-png",
+                        "-r",
+                        "150",  # 150 DPI — good quality for vision review
+                        pdf_path,
+                        png_prefix,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if ppm_result.returncode == 0:
+                    # pdftoppm names files: slide-01.png, slide-02.png, ...
+                    pngs = sorted(glob.glob(os.path.join(output_dir, "slide-*.png")))
+                    if pngs:
+                        if expected_slides > 0 and len(pngs) != expected_slides:
+                            print(
+                                "  [RENDER WARNING] Expected %d slides but rendered %d PNGs."
+                                % (expected_slides, len(pngs))
+                            )
+                        else:
+                            print(
+                                "  [RENDER] Successfully rendered %d per-slide PNG(s) via PDF pipeline."
+                                % len(pngs)
+                            )
+                        # Clean up intermediate PDF
+                        try:
+                            os.remove(pdf_path)
+                        except OSError:
+                            pass
+                        return pngs
+                else:
+                    print(
+                        "  [RENDER WARNING] pdftoppm failed (exit %d): %s"
+                        % (ppm_result.returncode, ppm_result.stderr[:200])
+                    )
+                # Clean up intermediate PDF on failure
+                try:
+                    os.remove(pdf_path)
+                except OSError:
+                    pass
+
+    # --- Strategy 2: Direct PPTX → PNG (fallback — single image only) ---
+    print(
+        "  [RENDER WARNING] pdftoppm not available — falling back to direct PNG "
+        "conversion. This produces ONLY 1 image (first slide), not per-slide images!"
+    )
+    if expected_slides > 1:
+        print(
+            "  [RENDER WARNING] Visual review will only inspect 1 of %d slides! "
+            "Install poppler-utils for full per-slide rendering: "
+            "sudo apt-get install poppler-utils" % expected_slides
         )
 
     result = subprocess.run(
@@ -6630,7 +6940,8 @@ def step_visual_quality_review(
                     mime_type="image/png",
                     format="png",
                 )
-                _slide_reviewer = session_state.get("agents", {}).get("slide_quality_reviewer")
+                from agents import get_agents as _get_agents
+                _slide_reviewer = _get_agents(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
                 response = _slide_reviewer.run(
                     prompt,
                     images=[slide_image_obj],
@@ -6907,11 +7218,19 @@ if __name__ == "__main__":
     if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
         raise ValueError("GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)")
 
-    # Load provider-specific agents
-    from agents import get_agents
+    # Gemini API key validation guard for --visual-review
+    # If the key is missing or blank, auto-disable visual review to avoid burning
+    # time on guaranteed-to-fail Gemini API calls.
+    google_key = os.getenv("GOOGLE_API_KEY", "")
+    if args.visual_review and not google_key:
+        print(
+            "[WARNING] --visual-review requested but GOOGLE_API_KEY is not set. "
+            "Visual review automatically disabled."
+        )
+        args.visual_review = False
 
-    _agents = get_agents(args.llm_provider)
-    print("[PROVIDER] Loaded %s agents: %s" % (args.llm_provider, ", ".join(_agents.keys())))
+    # Provider name is stored in session_state (a plain string, safely deep-copyable).
+    # Agents are loaded lazily inside each step via get_agents() to avoid pickling errors.
 
     # Setup output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -7037,8 +7356,8 @@ if __name__ == "__main__":
             "show_slide_numbers": args.show_slide_numbers,
             "assembly_knowledge": {},
             "quality_report": {},
-            # Provider-loaded agents (swappable per --llm-provider)
-            "agents": _agents,
+            # LLM provider name for swappable agents (agents are loaded lazily per step)
+            "llm_provider": args.llm_provider,
         },
     )
 
@@ -7154,17 +7473,111 @@ def _extract_color_from_solid_fill(solid_fill_elem) -> str | None:
 def _get_shape_background_color(shape, slide) -> str:
     """Detect the effective background color behind a shape.
 
-    Checks shape fill first, then slide background. Returns hex color string.
-    Defaults to 'FFFFFF' (white) if undetermined.
+    Uses a multi-layer detection strategy:
+      1. Shape's own fill (solid, gradient first-stop)
+      2. Slide background (solid, gradient, image, theme-ref)
+      3. Slide layout background
+      4. Slide master background
+      5. Theme dk1/dk2 heuristic (dark-theme detection)
+      6. Default fallback
+
+    For image-based backgrounds (blipFill), assumes a dark color since most
+    professional templates with image backgrounds use dark overlays.
+
+    Returns hex color string (e.g. '394755').
     """
     ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    ns_p = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 
-    # 1. Check if the shape itself has a fill
+    def _extract_bg_color_from_element(bg_elem):
+        """Extract background color from a p:bg or p:bgPr XML element.
+
+        Handles solidFill, gradFill (first stop), blipFill (image → dark heuristic),
+        and bgRef (theme reference).
+        Returns hex string or None.
+        """
+        if bg_elem is None:
+            return None
+
+        # Check bgPr child first (contains the actual fill)
+        bgPr = bg_elem.find(ns_p + "bgPr")
+        if bgPr is None:
+            bgPr = bg_elem  # Sometimes fill is directly under bg
+
+        # 1. solidFill — most straightforward
+        solid_fill = bgPr.find(ns_a + "solidFill")
+        if solid_fill is None:
+            solid_fill = bgPr.find(".//" + ns_a + "solidFill")
+        if solid_fill is not None:
+            color = _extract_color_from_solid_fill(solid_fill)
+            if color:
+                return color
+
+        # 2. gradFill — use the first gradient stop color
+        grad_fill = bgPr.find(ns_a + "gradFill")
+        if grad_fill is None:
+            grad_fill = bgPr.find(".//" + ns_a + "gradFill")
+        if grad_fill is not None:
+            gs_lst = grad_fill.find(ns_a + "gsLst")
+            if gs_lst is not None:
+                first_gs = gs_lst.find(ns_a + "gs")
+                if first_gs is not None:
+                    solid = first_gs.find(ns_a + "srgbClr")
+                    if solid is not None:
+                        return solid.get("val")
+                    scheme = first_gs.find(ns_a + "schemeClr")
+                    if scheme is not None:
+                        val = scheme.get("val", "")
+                        scheme_defaults = {
+                            "dk1": "000000", "dk2": "44546A",
+                            "lt1": "FFFFFF", "lt2": "E7E6E6",
+                            "bg1": "FFFFFF", "bg2": "E7E6E6",
+                        }
+                        if val in scheme_defaults:
+                            return scheme_defaults[val]
+
+        # 3. blipFill — image-based background.
+        # We can't analyze the image pixels without heavy deps, so use a
+        # heuristic: professional templates with image backgrounds are
+        # overwhelmingly dark (dark overlays, photos with dark areas).
+        blip_fill = bgPr.find(ns_a + "blipFill")
+        if blip_fill is None:
+            blip_fill = bgPr.find(".//" + ns_a + "blipFill")
+        if blip_fill is not None:
+            if VERBOSE:
+                print(
+                    "  [BG DETECT] Image-based background detected — "
+                    "assuming dark background (333333)."
+                )
+            return "333333"  # Assume dark for image backgrounds
+
+        # 4. bgRef — theme-referenced background
+        bgRef = bg_elem.find(ns_p + "bgRef")
+        if bgRef is None:
+            bgRef = bg_elem.find(".//" + ns_p + "bgRef")
+        if bgRef is not None:
+            # bgRef has an idx attribute and may contain a color override
+            srgb = bgRef.find(ns_a + "srgbClr")
+            if srgb is not None:
+                return srgb.get("val")
+            scheme = bgRef.find(ns_a + "schemeClr")
+            if scheme is not None:
+                val = scheme.get("val", "")
+                scheme_defaults = {
+                    "dk1": "000000", "dk2": "44546A",
+                    "lt1": "FFFFFF", "lt2": "E7E6E6",
+                    "bg1": "FFFFFF", "bg2": "E7E6E6",
+                }
+                if val in scheme_defaults:
+                    return scheme_defaults[val]
+
+        return None
+
+    # === Layer 1: Shape's own fill ===
     if hasattr(shape, "fill"):
         try:
             fill = shape.fill
             if fill.type is not None:
-                # Try to get the foreground color
                 try:
                     fc = fill.fore_color
                     if fc and fc.type is not None:
@@ -7174,7 +7587,7 @@ def _get_shape_background_color(shape, slide) -> str:
         except Exception:
             pass
 
-    # 2. Check slide background
+    # === Layer 2: Slide background ===
     try:
         bg = slide.background
         if bg and bg.fill and bg.fill.type is not None:
@@ -7187,21 +7600,150 @@ def _get_shape_background_color(shape, slide) -> str:
     except Exception:
         pass
 
-    # 3. Check slide XML for background solidFill
+    # Layer 2b: Slide XML for complex backgrounds (image, gradient, theme-ref)
     try:
         slide_xml = slide._element
-        ns_p = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
-        bg_elem = slide_xml.find(f".//{ns_p}bg")
+        bg_elem = slide_xml.find(ns_p + "bg")
+        if bg_elem is None:
+            # Sometimes it's under cSld
+            cSld = slide_xml.find(ns_p + "cSld")
+            if cSld is not None:
+                bg_elem = cSld.find(ns_p + "bg")
         if bg_elem is not None:
-            solid_fill = bg_elem.find(f".//{ns_a}solidFill")
-            if solid_fill is not None:
-                color = _extract_color_from_solid_fill(solid_fill)
-                if color:
-                    return color
+            color = _extract_bg_color_from_element(bg_elem)
+            if color:
+                return color
     except Exception:
         pass
 
+    # === Layer 3: Slide layout background ===
+    try:
+        layout = slide.slide_layout
+        layout_xml = layout._element
+        bg_elem = layout_xml.find(ns_p + "bg")
+        if bg_elem is None:
+            cSld = layout_xml.find(ns_p + "cSld")
+            if cSld is not None:
+                bg_elem = cSld.find(ns_p + "bg")
+        if bg_elem is not None:
+            color = _extract_bg_color_from_element(bg_elem)
+            if color:
+                if VERBOSE:
+                    print(
+                        "  [BG DETECT] Background color from slide layout: #%s"
+                        % color
+                    )
+                return color
+    except Exception:
+        pass
+
+    # === Layer 4: Slide master background ===
+    try:
+        master = slide.slide_layout.slide_master
+        master_xml = master._element
+        bg_elem = master_xml.find(ns_p + "bg")
+        if bg_elem is None:
+            cSld = master_xml.find(ns_p + "cSld")
+            if cSld is not None:
+                bg_elem = cSld.find(ns_p + "bg")
+        if bg_elem is not None:
+            color = _extract_bg_color_from_element(bg_elem)
+            if color:
+                if VERBOSE:
+                    print(
+                        "  [BG DETECT] Background color from slide master: #%s"
+                        % color
+                    )
+                return color
+    except Exception:
+        pass
+
+    # === Layer 5: Theme dk1 heuristic ===
+    # If we reached here, the background is likely inherited from the theme.
+    # Check if the theme uses a dark color scheme (dk1 luminance check).
+    # Many premium templates define dark backgrounds via the theme, not explicit fills.
+    try:
+        master = slide.slide_layout.slide_master
+        theme_xml = master.element.find(
+            ".//{http://schemas.openxmlformats.org/drawingml/2006/main}theme"
+        )
+        # Try extracting dk1 from the theme
+        theme_elem = master._element
+        # Look for clrScheme in the slide master's theme
+        for clr_scheme in theme_elem.iter(ns_a + "clrScheme"):
+            dk1 = clr_scheme.find(ns_a + "dk1")
+            if dk1 is not None:
+                srgb = dk1.find(ns_a + "srgbClr")
+                if srgb is not None:
+                    dk1_hex = srgb.get("val", "000000")
+                    dk1_rgb = _hex_to_rgb(dk1_hex)
+                    dk1_lum = _relative_luminance(*dk1_rgb)
+                    # If dk1 is actually bright, this is likely a dark-bg template
+                    # (dk1 is text-on-dark, so lt1 is the background)
+                    lt1 = clr_scheme.find(ns_a + "lt1")
+                    if lt1 is not None:
+                        lt1_srgb = lt1.find(ns_a + "srgbClr")
+                        if lt1_srgb is not None:
+                            return lt1_srgb.get("val", "FFFFFF")
+                    break
+                sys_clr = dk1.find(ns_a + "sysClr")
+                if sys_clr is not None:
+                    last_clr = sys_clr.get("lastClr")
+                    if last_clr:
+                        break
+    except Exception:
+        pass
+
+    # === Layer 6: Check if slide has large dark shapes covering the background ===
+    # Some templates use full-slide rectangles as background (not actual bg elements)
+    try:
+        slide_w = 0
+        slide_h = 0
+        try:
+            slide_w = slide.slide_layout.slide_master.slide_width
+            slide_h = slide.slide_layout.slide_master.slide_height
+        except Exception:
+            pass
+
+        if slide_w and slide_h:
+            slide_area = slide_w * slide_h
+            for s in slide.shapes:
+                try:
+                    if s == shape:
+                        continue
+                    shape_area = s.width * s.height
+                    # If a shape covers >60% of the slide, treat it as background
+                    if shape_area > slide_area * 0.6:
+                        if hasattr(s, "fill") and s.fill.type is not None:
+                            try:
+                                fc = s.fill.fore_color
+                                if fc and fc.type is not None:
+                                    bg_color = str(fc.rgb)
+                                    if VERBOSE:
+                                        print(
+                                            "  [BG DETECT] Large background shape detected "
+                                            "(%.0f%% coverage): #%s"
+                                            % (
+                                                100.0 * shape_area / slide_area,
+                                                bg_color,
+                                            )
+                                        )
+                                    return bg_color
+                            except Exception:
+                                pass
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    if VERBOSE:
+        print(
+            "  [BG DETECT] Could not determine background color — "
+            "defaulting to FFFFFF (white). This may cause contrast issues "
+            "on dark-themed templates."
+        )
     return "FFFFFF"  # Default to white
+
 
 
 def _make_high_contrast_fill(rPr, bg_hex: str):

@@ -5,7 +5,7 @@
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Chunked pipeline for large presentations (8-15+ slides)
 
 **Date:** 2026-02-25
-**Last Updated:** 2026-03-01
+**Last Updated:** 2026-03-04
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
@@ -69,7 +69,7 @@ User prompt
     │
     ▼
 Step 1: Optimize & Plan
-    │  (claude-opus-4-6 → StoryboardPlan)
+    │  (claude-sonnet-4-6 → StoryboardPlan)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -92,7 +92,7 @@ User prompt + Template
     │
     ▼
 Step 1: Optimize & Plan
-    │  (claude-opus-4-6 → StoryboardPlan)
+    │  (claude-sonnet-4-6 → StoryboardPlan)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -101,7 +101,7 @@ Step 3: Process Chunks
     │  (image planning + image generation + template assembly per chunk)
     ▼
 [Step 4: Visual Review]   ← only if --visual-review is also passed
-    │  (Gemini vision QA per chunk, up to --visual-passes passes)
+    │  (Gemini vision QA per chunk, up to --visual-passes passes with upfront key validation)
     ▼
 Step 5: Merge Chunks
     │  (processed/reviewed chunks → merged PPTX)
@@ -160,8 +160,9 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
                              │
                              ▼
         ┌────────────────────────────────────────┐
-        │  STEP 1: Content Generation            │
-        │                                        │
+          Brand Parse    Storyboard    Chunk Generation
+         (gpt-4o-mini)  (Sonnet+web)   (3-tier fallback)
+               │              │              │
         │  Agent: Claude (Anthropic)              │
         │  Role:  Writes the presentation         │
         │         content — titles, bullets,      │
@@ -277,8 +278,11 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
 | `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
 | `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
-| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill, 2=LLM code gen, 3=text-only |
+| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill (opus), 2=LLM code gen (haiku), 3=text-only |
 | `--verbose` / `-v` | Verbose/debug logging | Off | |
+| `--inter-chunk-delay-min` | Minimum random delay between chunks | 60 | |
+| `--inter-chunk-delay-max` | Maximum random delay between chunks | 120 | |
+| `--no-web-search` | Disable web search | Off | |
 
 ### Quick Example
 
@@ -312,8 +316,11 @@ python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoin
 | `pydantic` | Structured output schemas for image planning and visual QA |
 | `pillow` | Required by NanoBananaTools for image handling |
 
-**System dependency (optional):**
-- `LibreOffice` — required for Step 5 visual quality review (headless PNG rendering). Install: `apt-get install libreoffice`. The step is fully non-blocking and skips gracefully if LibreOffice is not found.
+**System dependencies:**
+- `LibreOffice` — required for Step 5 visual quality review (headless PPTX→PDF conversion). Install: `apt-get install libreoffice`.
+- `poppler-utils` — required for per-slide PNG rendering (PDF→PNG via `pdftoppm`). Install: `apt-get install poppler-utils`. Without it, rendering falls back to single-slide mode with a warning.
+
+The visual review step is fully non-blocking and skips gracefully if either dependency is missing.
 
 **Local dependency:**
 - [`file_download_helper.py`](file_download_helper.py) — Downloads files produced by Claude's `pptx` skill via the Anthropic Files API. Detects file type from magic bytes and saves to disk.
@@ -465,12 +472,12 @@ This is the most critical and knowledge-intensive step in the pipeline. Before c
 **Function:** [`step_visual_quality_review()`](powerpoint_template_workflow.py)
 **Agent:** [`slide_quality_reviewer`](powerpoint_template_workflow.py) — Gemini 2.5 Flash with `output_schema=SlideQualityReport`
 **Enabled by:** `--visual-review` CLI flag
-**System requirement:** LibreOffice (`apt-get install libreoffice`)
+**System requirements:** LibreOffice (`apt-get install libreoffice`) + `poppler-utils` (`apt-get install poppler-utils`)
 
 **This step is fully non-blocking.** Any failure (LibreOffice not found, API error, timeout) returns `success=True` with a warning and leaves the output file unchanged.
 
 **Flow:**
-1. **Render** — Calls [`_render_pptx_to_images()`](powerpoint_template_workflow.py) to render all slides to PNG using LibreOffice headless (`libreoffice --headless --convert-to png`). All slides are rendered in a single subprocess invocation to amortize startup cost.
+1. **Render** — Calls [`_render_pptx_to_images()`](powerpoint_template_workflow.py) to render all slides to per-slide PNGs using the PPTX→PDF→PNG pipeline: LibreOffice converts to PDF, then `pdftoppm` (poppler) renders each page as a separate PNG at 150 DPI. Falls back to single-image LibreOffice direct conversion if `pdftoppm` is unavailable.
 2. **Inspect** — For each slide PNG, sends it to `slide_quality_reviewer` (Gemini 2.5 Flash) and receives a `SlideQualityReport` with detected issues and severity ratings.
 3. **Correct** — Calls [`_apply_visual_corrections()`](powerpoint_template_workflow.py) for slides with `critical`-severity issues. Corrections re-invoke existing deterministic functions only (no new correction logic).
 4. **Warn** — Logs blandness warnings for slides flagged as `is_visually_bland=True` without auto-fixing them (user should re-run with `--min-images`).
@@ -485,6 +492,29 @@ This is the most critical and knowledge-intensive step in the pipeline. Before c
 | `text_overflow` | `reduce_font_size` | Conservative 15% reduction on `rPr.sz` attributes above Pt(10) |
 | Visual blandness | (detect + warn only) | Not auto-fixed; logged with `--min-images` recommendation |
 | `overlap` with `reposition_element` | (not implemented in v1) | Deferred — reliable shape identification requires bounding-box matching |
+
+### Phase 3: Template Quality Safeguards
+
+Five safeguards added in March 2026 to prevent styling failures specific to template-assisted generation. These work together as a defense-in-depth chain:
+
+```
+Fix 5: Template-aware prompts  →  LLM generates compatible content from the start
+     ↓ (if content still mismatches)
+Fix 3: Font size guard         →  Prevents unreadable text after fit_text()
+Fix 4: Overlap reflow          →  Resolves shape collisions after transfer
+Fix 2: Background detection    →  Ensures correct contrast decisions
+Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remaining issues
+```
+
+| Safeguard | Layer | Function | Trigger |
+|-----------|-------|----------|--------|
+| Template-aware prompts | Prompt (preventive) | `generate_chunk_pptx_v2()` | Tier 2 LLM code gen with `--template` |
+| Min font size | Assembly (corrective) | `_populate_placeholder_with_format()`, `_populate_slide()` | After `fit_text()` shrinks below 10pt/14pt |
+| Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` |
+| Background detection | Contrast (corrective) | `_get_shape_background_color()` | During `_ensure_text_contrast()` |
+| Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |
+
+See [`DESIGN_visual_quality.md`](DESIGN_visual_quality.md) → Phase 3 for technical deep-dives, root cause analysis, and implementation trade-offs.
 
 ---
 
@@ -648,10 +678,19 @@ All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py
 
 | Function | Purpose |
 |----------|---------|
-| [`_render_pptx_to_images()`](powerpoint_template_workflow.py) | Renders all slides to PNG using LibreOffice headless subprocess. Tries two naming patterns (`<base>-slide-*.png`, `<base>*.png`) then falls back to collecting **all `*.png` files** in the render directory (handles zero-padded names like `report18001.png` that some LibreOffice versions produce). Raises `RuntimeError` if LibreOffice is not installed. |
+| [`_render_pptx_to_images()`](powerpoint_template_workflow.py) | Renders all slides to per-slide PNGs using a PPTX→PDF→PNG pipeline. First converts PPTX to PDF via LibreOffice headless, then uses `pdftoppm` (from `poppler-utils`) to render each PDF page as an individual PNG. Falls back to LibreOffice direct `--convert-to png` (single-image) if `pdftoppm` is not installed, with a `[RENDER WARNING]` log. Raises `RuntimeError` if LibreOffice is not installed. |
+| [`_get_shape_background_color()`](powerpoint_template_workflow.py) | 6-layer background color detection. Traverses: (1) shape's own solidFill, (2) slide background solidFill, (3) slide background blipFill/gradFill/bgRef, (4) slide layout background, (5) slide master background, (6) large shapes covering the background. Uses theme colors (`dk1`/`lt1`) as heuristic fallback for dark templates. Returns hex color string. |
+| [`_fix_overlapping_shapes()`](powerpoint_template_workflow.py) | Post-transfer overlap detection and reflow for non-placeholder shapes. Phase 1: enforces minimum shape dimensions (8% slide width, 4% slide height). Phase 2: sorts shapes by vertical position and resolves vertical overlaps by reflowing downward. Phase 3: if reflow pushes shapes off-slide, scales all shapes down proportionally (max 50% reduction). Returns `True` if any shapes were adjusted. |
 | [`_best_visual_placeholder()`](powerpoint_template_workflow.py) | Picks the best visual placeholder for inserting an image or chart. Score tuple: `(area>=min_area, overlap==0, -overlap, area)` — area sufficiency is the **primary** sort key. This was corrected after live testing revealed that the previous `(overlap==0, -overlap, area)` tuple allowed tiny zero-overlap footer placeholders to outrank large content placeholders, causing images to be placed in a small footer-left slot. |
 | [`_apply_visual_corrections()`](powerpoint_template_workflow.py) | Dispatches critical-severity issue fixes by re-invoking existing pipeline functions. Returns `True` if the file was modified. Only corrects `critical` severity in v1. |
 | [`step_visual_quality_review()`](powerpoint_template_workflow.py) | Step 5 executor. Render → inspect → correct → warn → store report. Fully non-blocking. |
+
+**Module-level constants (Template Quality Safeguards):**
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `_MIN_BODY_FONT_PT` | 10 | Minimum body text font size in points — fit_text() cannot shrink below this |
+| `_MIN_TITLE_FONT_PT` | 14 | Minimum title text font size in points — fit_text() cannot shrink below this |
 
 ---
 
@@ -807,6 +846,29 @@ Step 5 (dashed) is only added with `--visual-review`.*
 
 ---
 
+## Multi-Provider Architecture & Model Routing
+
+The workflow implements a **Swappable Agent Pattern** controlled by the `--llm-provider {claude,openai,gemini}` CLI flag. While the core PowerPoint generation skill (Tier 1) remains hard-locked to Claude (to utilize its native sandbox capabilities), all auxiliary reasoning agents (planning, fallback, image decisions, visual QA) are swappable.
+
+### Agent to Model Mapping by Provider
+
+| Agent Role | Claude Mode (Default) | OpenAI Mode | Gemini Mode |
+|------------|-----------------------|-------------|-------------|
+| **Brand Style Analyzer** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Query Optimizer** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Fallback Code (Tier 2)** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Image Planner** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Visual QA (Step 5)** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
+| **Web Search Tool** | `web_search_20250305` | `web_search_preview` | `search=True` (native) |
+| **Tier 1 Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
+
+*\* Note: Even when the provider mode is `claude`, the image planner and visual QA explicitly default to Gemini models because Anthropic models lack the specific vision inspection capabilities required for these steps.*
+
+### Implementation Details
+The swapping logic is encapsulated in the `agents/` package. The workflow dynamically loads the correct module (`claude_agents.py`, `openai_agents.py`, `gemini_agents.py`) based on the CLI flag, ensuring that each step receives an agent configured with the correct model and provider-native tools (e.g., using `OpenAIResponses` for OpenAI agents, native `search=True` for Gemini).
+
+---
+
 ## Key Design Decisions
 
 ### Why Workflow over Team?
@@ -883,7 +945,7 @@ The chunked workflow uses an extended `session_state` that includes all the stan
     # Flags (forced off when no template)
     "visual_review": bool,      # Always False when template_path is empty
 
-    # Set by step_optimize_and_plan (brand parsing)
+    # Set by step_optimize_and_plan
     "brand_style_intent": BrandStyleIntent | None,  # Effective brand/style intent (query or template)
                                                       # None when no branding detected
 
@@ -996,7 +1058,7 @@ The chunked workflow includes an intelligent brand/style extraction subsystem th
 
 ```mermaid
 flowchart TD
-    A["User Query"] --> B["brand_style_analyzer Agent<br/>(Sonnet + web_search)"]
+    A["User Query"] --> B["Two-Stage Brand Analyzer<br/>(Regex Check + gpt-4o-mini)"]
     B --> C{"Brand Detected?"}
     C -->|No| D["Empty BrandStyleIntent"]
     C -->|Yes| E["BrandStyleIntent<br/>(name, colors, tone, fonts)"]
@@ -1019,7 +1081,7 @@ flowchart TD
 | Component | Type | Purpose |
 |-----------|------|---------|
 | `BrandStyleIntent` | Pydantic model | Structured brand/style data (name, colors, tone, fonts, style keywords, source) |
-| `brand_style_analyzer` | Agno Agent (Claude Sonnet + `web_search`, max 2 uses) | Detects brand directives, autonomously decides whether to search for guidelines |
+| `brand_style_analyzer` | Two-stage parsing (Regex Check + OpenAI `gpt-4o-mini`) | Fast pre-check skips API if no intent; otherwise parses guidelines using cheap tokens. |
 | `parse_brand_style_intent()` | Function | Calls the agent, returns a `BrandStyleIntent` |
 | `extract_style_from_template()` | Function | Reads `.pptx` theme XML for colors, fonts, company name heuristics |
 | `_build_brand_override_log()` | Function | Structured `[BRAND OVERRIDE]` log when template overrides query branding |

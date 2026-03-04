@@ -64,17 +64,37 @@ Key Models:
   SlideStoryboard       - Per-slide storyboard entry (title, type, key points, visual)
   StoryboardPlan        - Complete storyboard plan with global context and per-slide entries
 
-Key Agents:
-  brand_style_analyzer  - Claude Sonnet + web_search (max 2); detects and enriches brand intent
-  query_optimizer       - Claude Opus + web_search (max 5); creates researched storyboard
-  fallback_code_agent   - Claude Opus + PythonTools; Tier 2 code generation fallback
+Key Agents (all except Content Generator are swappable via --llm-provider):
+  brand_style_analyzer  - Default: Claude Sonnet + web_search (max 2); detects and enriches brand intent.
+                          OpenAI: gpt-5-mini + web_search_preview
+                          Gemini: gemini-3-flash-preview + search=True
+  query_optimizer       - Default: Claude Opus + web_search (max 5); creates researched storyboard.
+                          OpenAI: gpt-5.2 + web_search_preview
+                          Gemini: gemini-3-pro-preview + search=True
+  fallback_code_agent   - Default: Claude Opus + PythonTools; Tier 2 code generation fallback.
+                          OpenAI: gpt-5.2 + PythonTools
+                          Gemini: gemini-3-pro-preview + PythonTools
+  image_planner         - Default: Gemini gemini-3-flash-preview; per-slide image decisions.
+                          OpenAI: gpt-5-mini
+  slide_quality_reviewer- Default: Gemini 2.5 Flash; visual defect detection + correction.
+                          OpenAI: gpt-5-mini
+  (LOCKED)              - chunk_agent + content_agent always use Claude (native PPTX skill dep.)
 
 Prerequisites:
-- uv pip install agno anthropic python-pptx google-genai pillow
-- export ANTHROPIC_API_KEY="your_api_key_here"
-- export GOOGLE_API_KEY="your_google_api_key_here" (for image generation)
+- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+- export ANTHROPIC_API_KEY="your_anthropic_key"    # ALWAYS required (Content Generator)
+- export OPENAI_API_KEY="your_openai_key"           # Required if --llm-provider openai
+- export GOOGLE_API_KEY="your_google_key"           # Required if --llm-provider gemini (also for image gen)
 - A .pptx template file (optional)
-- LibreOffice (optional, required for the --visual-review step: `sudo apt-get install -y libreoffice`)
+- LibreOffice (required for --visual-review step: `sudo apt-get install -y libreoffice`)
+- poppler-utils (required for per-slide PNG rendering: `sudo apt-get install -y poppler-utils`)
+
+Template Quality Safeguards (active when --template is provided):
+  - Per-slide rendering: PPTX→PDF→PNG pipeline via pdftoppm renders all slides for visual review
+  - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
+  - Minimum font size: 10pt body / 14pt title floor prevents unreadable 4pt text from fit_text()
+  - Overlap reflow: Post-transfer overlap detection moves colliding shapes and enforces min size
+  - Template-aware Tier 2 prompts: LLM code gen prompt includes template bg color/text color constraints
 
 Usage:
     # Basic usage (auto-decide slide count, 3 slides per chunk):
@@ -98,6 +118,19 @@ Usage:
     python powerpoint_chunked_workflow.py \\
         -p "Startup pitch deck for SaaS product" --no-images
 
+    # Use OpenAI for all swappable agents (Claude still runs the PPTX generator):
+    python powerpoint_chunked_workflow.py \\
+        -p "Create a 10-slide AI strategy deck" --llm-provider openai
+
+    # Use Gemini for all swappable agents + template:
+    python powerpoint_chunked_workflow.py \\
+        -t templates/my_template.pptx \\
+        -p "Create a 10-slide AI strategy deck" --llm-provider gemini
+
+    # Skip directly to Tier 2 LLM code-gen (useful when Claude skill is overloaded):
+    python powerpoint_chunked_workflow.py \\
+        -p "Quarterly review deck" --start-tier 2
+
 CLI Flags:
     --template, -t       Path to .pptx template (optional). Without it, skips
                          template assembly and visual review; just merges raw chunks.
@@ -107,10 +140,21 @@ CLI Flags:
     --prompt, -p         User prompt describing the presentation.
                          Supports brand directives like "using X branding" or
                          "in the style of X".
+    --llm-provider       LLM provider for all swappable agents (default: claude).
+                         Choices: claude | openai | gemini
+                         The Claude Content Generator agent is ALWAYS used regardless
+                         of this flag, as it depends on Claude's native PPTX skill.
+                         Requires the corresponding API key:
+                           claude  → ANTHROPIC_API_KEY (always needed)
+                           openai  → OPENAI_API_KEY
+                           gemini  → GOOGLE_API_KEY
+                         Examples:
+                           --llm-provider openai   # Swaps auxiliary agents to GPT-5.2/gpt-5-mini
+                           --llm-provider gemini   # Swaps auxiliary agents to gemini-3-pro/flash
     --no-images          Skip AI image generation.
     --no-stream          Disable streaming mode for Claude agent.
     --min-images         Minimum slides that must have images (default: 1).
-    --visual-review      Enable visual QA with Gemini vision per chunk.
+    --visual-review      Enable visual QA with swappable vision agent per chunk.
     --footer-text        Footer text for all slides.
     --date-text          Date text for footer date placeholder.
     --show-slide-numbers Preserve slide number placeholder on all slides.
@@ -126,6 +170,11 @@ CLI Flags:
                          2 = LLM code generation (80-92% quality, faster, python-pptx native charts)
                          3 = Text-only (structural only, instant, no API calls)
                          Fallback chain continues from selected tier (e.g., Tier 2 → Tier 3).
+    --inter-chunk-delay-min
+                         Minimum delay in seconds between chunks to avoid rate limits (default: 60.0).
+    --inter-chunk-delay-max
+                         Maximum delay in seconds between chunks to avoid rate limits (default: 120.0).
+    --no-web-search      Disable web search for query optimization.
 
 Logging conventions:
     Always printed:
@@ -148,14 +197,15 @@ import os
 import uuid
 
 try:
+    # Ensure environment variables are loaded and override existing exported variables
     from dotenv import load_dotenv
-
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     pass
 
 import shutil
 import sys
+import random
 import time
 import traceback
 import zipfile
@@ -187,6 +237,189 @@ from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
 
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
+
+
+# =============================================================================
+# RATE LIMIT TRACKER
+# Monitors all sequential Anthropic Claude API calls in this workflow run,
+# estimates cumulative token usage within the rolling 60-second window, and
+# auto-inserts cooldown sleeps before calls that would exceed the per-minute limit.
+#
+# Tier 1 rate limits (as of 2026-03, Anthropic):
+#   claude-sonnet-4-6  : 50 RPM | 30,000 input tokens/min | 8,000 output tokens/min
+#   claude-opus-4-6    : 50 RPM | 30,000 input tokens/min | 8,000 output tokens/min
+#   claude-haiku-4-5   : 50 RPM | 50,000 input tokens/min | 10,000 output tokens/min
+#   (gpt-4o-mini is OpenAI — entirely separate rate-limit pool, never tracked here)
+# =============================================================================
+
+# Per-model input-token-per-minute limits (Tier 1 defaults)
+_ANTHROPIC_TOKEN_LIMITS: Dict[str, int] = {
+    "claude-opus-4-6":    30_000,
+    "claude-sonnet-4-6":  30_000,
+    "claude-haiku-4-5":   50_000,
+    "claude-haiku-3-5":   50_000,
+    # fallback for unknown Claude models
+    "default":            30_000,
+}
+
+
+class _RateLimitTracker:
+    """Track sequential Anthropic Claude API calls and their estimated token usage.
+
+    Maintains a rolling list of (timestamp, model, tokens) entries.  Before
+    each registered call, ``check_and_wait`` removes entries older than 60 s
+    and checks if adding the new call would exceed the model's per-minute limit.
+    If so, it sleeps for the remaining time in the current window.
+
+    Token estimation: len(prompt_chars) // 4  (~4 chars per token — conservative).
+    The tracker is a module-level singleton initialised by ``_get_rate_tracker()``.
+    """
+
+    def __init__(self) -> None:
+        self._calls: List[Dict] = []   # list of {"ts": float, "model": str, "tokens": int}
+
+    def _prune(self) -> None:
+        """Remove entries older than 60 seconds from the rolling window."""
+        cutoff = time.time() - 60.0
+        self._calls = [c for c in self._calls if c["ts"] >= cutoff]
+
+    def _window_tokens(self, model: str) -> int:
+        """Sum tokens used by the given model in the current 60-second window."""
+        return sum(c["tokens"] for c in self._calls if c["model"] == model)
+
+    def _limit(self, model: str) -> int:
+        """Return the input-token-per-minute limit for a given model."""
+        for key, val in _ANTHROPIC_TOKEN_LIMITS.items():
+            if key in model:
+                return val
+        return _ANTHROPIC_TOKEN_LIMITS["default"]
+
+    def check_and_wait(self, model: str, prompt: str, caller: str = "") -> None:
+        """Check token budget and sleep if needed, then log the call registration.
+
+        Args:
+            model:   Claude model ID string (e.g. 'claude-opus-4-6').
+            prompt:  The full prompt string (used to estimate token count).
+            caller:  Human-readable name of the calling function (for logging).
+        """
+        self._prune()
+        estimated = max(1, len(prompt) // 4)
+        limit = self._limit(model)
+        window_used = self._window_tokens(model)
+
+        caller_tag = (" [%s]" % caller) if caller else ""
+        print(
+            "[RATE TRACKER]%s %s — ~%d estimated input tokens | "
+            "window so far: ~%d / %d tokens/min"
+            % (caller_tag, model, estimated, window_used, limit)
+        )
+
+        if window_used + estimated > limit:
+            # Find oldest call within the window to determine when the window resets
+            oldest_ts = min((c["ts"] for c in self._calls if c["model"] == model), default=time.time())
+            sleep_secs = max(1.0, 61.0 - (time.time() - oldest_ts))
+            print(
+                "[RATE TRACKER] Estimated token budget would be exceeded (%d + %d > %d). "
+                "Sleeping %.0fs to reset the 60s window..."
+                % (window_used, estimated, limit, sleep_secs)
+            )
+            _countdown_sleep(sleep_secs, label="[RATE TRACKER] Cooldown")
+            self._prune()  # prune again after sleep
+
+        # Register the call
+        self._calls.append({"ts": time.time(), "model": model, "tokens": estimated})
+
+    def record_done(self, model: str, prompt: str) -> None:
+        """Alias — call after the API call completes to update the tracker log.
+
+        In practice check_and_wait already registers the entry; this is a no-op
+        convenience hook for future use (e.g. recording actual token usage from
+        response headers).
+        """
+        pass  # Entry already recorded in check_and_wait
+
+
+# Module-level singleton — shared across all step functions
+_RATE_TRACKER: Optional["_RateLimitTracker"] = None
+
+
+def _get_rate_tracker() -> "_RateLimitTracker":
+    """Return (or create) the module-level rate-limit tracker singleton."""
+    global _RATE_TRACKER
+    if _RATE_TRACKER is None:
+        _RATE_TRACKER = _RateLimitTracker()
+    return _RATE_TRACKER
+
+
+def _reset_rate_tracker() -> None:
+    """Reset the rate tracker — call once at workflow start."""
+    global _RATE_TRACKER
+    _RATE_TRACKER = _RateLimitTracker()
+
+
+# =============================================================================
+# INTER-CHUNK DELAY HELPERS
+# =============================================================================
+
+
+def _countdown_sleep(seconds: float, label: str = "[GENERATE]") -> None:
+    """Sleep for `seconds` with periodic log messages every 15 seconds.
+
+    Args:
+        seconds: Total number of seconds to sleep.
+        label:   Prefix for log messages (default '[GENERATE]').
+    """
+    remaining = seconds
+    while remaining > 0:
+        tick = min(15.0, remaining)
+        if remaining > 15:
+            print(
+                "%s Waiting... %.0fs remaining (%.0fs total)" % (label, remaining, seconds)
+            )
+        else:
+            print("%s Final %.0fs..." % (label, remaining))
+        time.sleep(tick)
+        remaining -= tick
+
+
+def _inter_chunk_sleep(
+    chunk_idx: int,
+    total_chunks: int,
+    min_delay: float = 60.0,
+    max_delay: float = 120.0,
+    rate_limit_hit: bool = False,
+) -> None:
+    """Sleep a random delay between chunks to respect Anthropic rate limits.
+
+    Uses a random value in [min_delay, max_delay] seconds.  When a 429 rate-limit
+    error was encountered in the current chunk, forces `max_delay` immediately.
+
+    Logs a header line, a live countdown through `_countdown_sleep`, and a
+    completion line so the user knows the process is not stuck.
+
+    Args:
+        chunk_idx:       0-based index of the chunk just completed.
+        total_chunks:    Total number of chunks in the run.
+        min_delay:       Lower bound of random delay range (default 60s).
+        max_delay:       Upper bound of random delay range (default 120s).
+        rate_limit_hit:  If True, skip the random choice and use max_delay.
+    """
+    if rate_limit_hit:
+        delay = max_delay
+        reason = "(max delay — rate limit hit)"
+    else:
+        delay = random.uniform(min_delay, max_delay)
+        reason = "(rate limit safety jitter: %.0f–%.0fs range)" % (min_delay, max_delay)
+
+    print(
+        "[GENERATE] --- Inter-chunk delay before Chunk %d/%d: %.1fs %s ---"
+        % (chunk_idx + 2, total_chunks, delay, reason)
+    )
+    _countdown_sleep(delay, label="[GENERATE]")
+    print(
+        "[GENERATE] Inter-chunk delay complete. Resuming Chunk %d/%d."
+        % (chunk_idx + 2, total_chunks)
+    )
 
 
 class SlideStoryboard(BaseModel):
@@ -303,9 +536,13 @@ class BrandStyleIntent(BaseModel):
 
 # === MODULE-LEVEL AGENTS ===
 # Swappable agents (brand_style_analyzer, query_optimizer, fallback_code_agent,
-# image_planner, slide_quality_reviewer) are now loaded from the agents/ package
-# via get_agents(provider) in main().  They are stored in session_state["agents"]
-# and passed to step functions.  See agents/__init__.py for the factory.
+# image_planner, slide_quality_reviewer) are loaded from the agents/ package via
+# get_agents(provider) lazily inside each step function.
+# Agents are NOT stored in session_state to avoid deepcopy failures at workflow startup
+# (Agent objects contain PythonTools which hold Python module references that cannot
+# be pickled).  Instead session_state["llm_provider"] carries the provider name string,
+# and each step calls get_agents() on first use.
+# See agents/__init__.py for the factory.
 #
 # The Content Generator (chunk_agent) remains defined locally because it has a
 # hard dependency on Claude's PPTX skill and cannot be swapped.
@@ -315,24 +552,78 @@ class BrandStyleIntent(BaseModel):
 
 
 def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "BrandStyleIntent":
-    """Extract branding/styling intent from the user query via the brand_style_analyzer agent.
+    """Extract branding/styling intent from the user query via a two-stage approach.
 
-    Uses the provider-selected brand_style_analyzer agent with optional web search
-    to detect brand names, research brand colors/tone/typography, and return a
-    structured BrandStyleIntent.
+    Stage 1 — Keyword pre-check (zero cost, zero tokens):
+        Scans the prompt for explicit brand terms ('brand', 'logo', 'color scheme',
+        'style guide') AND implicit style signals ('corporate look', 'professional
+        feel', 'using X aesthetic', 'dark theme', 'minimalist', etc.).
+        This step logs whether explicit intent was found.
 
-    When the user query contains no branding directive, returns a BrandStyleIntent
-    with has_branding=False and all other fields empty.
+    Stage 2 — gpt-4o-mini classification and extraction (always runs):
+        Even if Stage 1 finds no explicit signals, the LLM is always invoked 
+        to catch implicit styling intent that keywords might have missed. 
+        Uses the brand_style_analyzer agent (configured as gpt-4o-mini) which 
+        runs on OpenAI's separate rate-limit pool and does NOT consume Anthropic
+        input tokens. This preserves the claude-opus-4-6 budget for chunk generation.
 
     Args:
         user_prompt: The raw user prompt string.
-        brand_agent: The brand_style_analyzer Agent instance (from session_state["agents"]).
+        brand_agent: The brand_style_analyzer Agent instance (gpt-4o-mini via OpenAI).
 
     Returns:
-        BrandStyleIntent with extracted brand data (may have empty fields if no
-        branding was detected or the agent call failed).
+        BrandStyleIntent with extracted brand data, or BrandStyleIntent() if no
+        branding intent was detected or the agent call failed).
     """
+    import re as _re
+
     print("[BRAND] Analyzing query for branding/styling intent...")
+
+    # === STAGE 1: KEYWORD PRE-CHECK (zero cost) ===
+    # Covers explicit brand terms AND implicit style/look-and-feel signals.
+    _BRAND_PATTERNS = [
+        # Explicit branding directives
+        r"\b(brand(?:ing)?)\b",
+        r"\b(style\s+guide\b|brand\s+guide\b|brand\s+identity\b)",
+        r"\b(logo|logotype|wordmark)\b",
+        r"\b(color\s+sch(?:eme|emes?)|colour\s+sch(?:eme|emes?))\b",
+        r"\b(corporate\s+(?:identity|colors?|colours?|palette|look))\b",
+        r"\b(color\s+palette|colour\s+palette|color\s+theme|colour\s+theme)\b",
+        r"\b(visual\s+identity|brand\s+voice|brand\s+tone)\b",
+        # Implicit style / look-and-feel signals
+        r"\b(corporate\s+(?:feel|design|style|aesthetic))\b",
+        r"\b(professional\s+(?:look|feel|design|theme|style))\b",
+        r"\b(minimalist|minimalistic|flat\s+design|clean\s+aesthetic)\b",
+        r"\b(dark\s+(?:mode|theme)|light\s+(?:mode|theme))\b",
+        r"\b(modern\s+(?:design|look|feel|style|aesthetic))\b",
+        r"\b(using\s+\w+(?:\s+\w+)?\s+(?:branding|style|colors?|colours?|identity|aesthetic|look))\b",
+        r"\b(in\s+(?:the\s+)?style\s+of\b)",
+        r"\b(following\s+\w+(?:\s+\w+)?\s+(?:brand\s+)?guidelines)\b",
+        r"\b(match(?:ing)?\s+(?:the|our|their|its)\s+(?:brand|style|identity|theme))\b",
+        r"\b(typography|typeface|font\s+(?:family|choice|style))\b",
+        r"\b(accent\s+color|primary\s+color|secondary\s+color|hex\s+code)\b",
+    ]
+
+    prompt_lower = user_prompt.lower()
+    has_brand_signal = any(
+        _re.search(pattern, prompt_lower) for pattern in _BRAND_PATTERNS
+    )
+
+    if not has_brand_signal:
+        print(
+            "[BRAND] No explicit branding keywords detected, but analyzing prompt "
+            "with LLM (gpt-4o-mini) to check for implicit styling intent..."
+        )
+    else:
+        print(
+            "[BRAND] Brand/style signal detected in query — "
+            "calling gpt-4o-mini (OpenAI, off Anthropic quota)..."
+        )
+
+    # === STAGE 2: LLM extraction via gpt-4o-mini (OpenAI rate-limit pool) ===
+    if brand_agent is None:
+        print("[WARNING] Brand agent not provided; skipping LLM brand analysis.")
+        return BrandStyleIntent()
 
     try:
         response = brand_agent.run(user_prompt, stream=False)
@@ -347,8 +638,6 @@ def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "
                 intent = BrandStyleIntent(**content.model_dump())
             else:
                 # Try JSON parse from string
-                import re as _re
-
                 text = str(content).strip()
                 fence = _re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
                 if fence:
@@ -370,7 +659,7 @@ def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "
                 if intent.tone_override:
                     print("[BRAND] Tone override: '%s'" % intent.tone_override)
             else:
-                print("[BRAND] No branding intent detected in query.")
+                print("[BRAND] No branding intent confirmed by gpt-4o-mini.")
 
             return intent
 
@@ -758,7 +1047,12 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # Parse branding intent from user query via the brand_style_analyzer agent.
     # If a template file is provided, extract template styling and override query branding.
     brand_parse_start = time.time()
-    agents = session_state.get("agents", {})
+    # Lazily load provider-specific agents inside the step (not in session_state)
+    # so that Agent objects never enter the deepcopy path at workflow startup.
+    from agents import get_agents as _get_agents
+
+    _provider = session_state.get("llm_provider", "claude")
+    agents = _get_agents(_provider)
     query_brand_intent = parse_brand_style_intent(user_prompt, brand_agent=agents.get("brand_style_analyzer"))
     brand_intent = query_brand_intent  # default: use query-derived intent
 
@@ -869,7 +1163,14 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     try:
         response = None
-        _query_optimizer = session_state.get("agents", {}).get("query_optimizer")
+        from agents import get_agents as _get_agents
+        _query_optimizer = _get_agents(session_state.get("llm_provider", "claude")).get("query_optimizer")
+        # Check rate limits before calling — claude-sonnet-4-6 shares the 30K token/min pool
+        _get_rate_tracker().check_and_wait(
+            model="claude-sonnet-4-6",
+            prompt=optimizer_prompt,
+            caller="step_optimize_and_plan/query_optimizer",
+        )
         for event in _query_optimizer.run(
             optimizer_prompt, stream=True, yield_run_output=True
         ):
@@ -881,6 +1182,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         return StepOutput(
             content="Query optimization failed: %s" % str(e), success=False
         )
+
 
     # Parse the StoryboardPlan from response.
     # Without output_schema the agent returns plain text; extract JSON from it.
@@ -1153,6 +1455,14 @@ def generate_chunk_pptx(
             % (chunk_idx, attempt + 1, max_retries + 1, first_slide, last_slide)
         )
 
+        # Register this call with the rate tracker before executing.
+        # check_and_wait will auto-sleep if the 30K token/min window would be exceeded.
+        _get_rate_tracker().check_and_wait(
+            model="claude-opus-4-6",
+            prompt=chunk_prompt,
+            caller="generate_chunk_pptx/Tier1",
+        )
+
         try:
             response = None
             event_count = 0
@@ -1211,14 +1521,32 @@ def generate_chunk_pptx(
                         )
 
         except Exception as e:
-            print(
-                "[CHUNK %d] Attempt %d/%d failed with error: %s"
-                % (chunk_idx, attempt + 1, max_retries + 1, e)
-            )
+            err_str = str(e)
             attempt_elapsed = time.time() - attempt_start
+            is_rate_limit = "rate_limit" in err_str or "429" in err_str or "rate limit" in err_str.lower()
+
+            if is_rate_limit:
+                # 429 is a transient rate-limit error — mark it on session_state but
+                # do NOT permanently activate use_fallback_generator.  The inter-chunk
+                # delay in step_generate_chunks will apply max_delay before the next chunk.
+                print(
+                    "[CHUNK %d] Attempt %d/%d hit 429 rate limit: %s"
+                    % (chunk_idx, attempt + 1, max_retries + 1, err_str[:200])
+                )
+                session_state["rate_limit_hit"] = True
+            else:
+                print(
+                    "[CHUNK %d] Attempt %d/%d failed with error: %s"
+                    % (chunk_idx, attempt + 1, max_retries + 1, err_str)
+                )
+
             print(
-                "[TIMING] Chunk %d attempt %d/%d: %.1fs (error)"
-                % (chunk_idx, attempt + 1, max_retries + 1, attempt_elapsed)
+                "[TIMING] Chunk %d attempt %d/%d: %.1fs (%s)"
+                % (
+                    chunk_idx, attempt + 1, max_retries + 1,
+                    attempt_elapsed,
+                    "rate limit" if is_rate_limit else "error",
+                )
             )
             if attempt == max_retries:
                 print(
@@ -1744,10 +2072,65 @@ def generate_chunk_pptx_v2(
     if brand_ctx:
         global_ctx = global_ctx + "\n\n" + brand_ctx if global_ctx else brand_ctx
 
+    # --- Fix 5: Build template constraints for LLM code gen ---
+    template_constraints = ""
+    template_path_t2 = session_state.get("template_path", "")
+    if template_path_t2 and os.path.isfile(template_path_t2):
+        try:
+            from powerpoint_template_workflow import (
+                _extract_template_styles,
+                _get_shape_background_color,
+                _hex_to_rgb,
+                _relative_luminance,
+            )
+            _tmpl_prs = Presentation(template_path_t2)
+            _tmpl_style = _extract_template_styles(_tmpl_prs)
+
+            # Detect if template has a dark background
+            bg_is_dark = False
+            bg_hex = "FFFFFF"
+            if _tmpl_prs.slides:
+                first_slide = _tmpl_prs.slides[0]
+                if first_slide.shapes:
+                    bg_hex = _get_shape_background_color(
+                        list(first_slide.shapes)[0], first_slide
+                    )
+                bg_rgb = _hex_to_rgb(bg_hex)
+                bg_lum = _relative_luminance(*bg_rgb)
+                bg_is_dark = bg_lum < 0.4
+
+            if bg_is_dark:
+                template_constraints = (
+                    "\nTEMPLATE CONSTRAINTS (CRITICAL — your content will be placed on a template):\n"
+                    "- The template has a DARK background (approx #%s). You MUST use WHITE or very "
+                    "light text colors (e.g. RGBColor(0xFF, 0xFF, 0xFF)) for ALL text elements.\n"
+                    "- Do NOT use dark blue, dark gray, or black text — it will be invisible.\n"
+                    "- Keep each slide SIMPLE: maximum 4-5 content shapes per slide.\n"
+                    "- Use large font sizes (minimum 14pt for body, 24pt for titles).\n"
+                    "- Avoid overlapping shapes — stack content vertically with clear spacing.\n"
+                    "- Do NOT add background shapes or colored rectangles — the template provides these.\n"
+                ) % bg_hex
+            else:
+                template_constraints = (
+                    "\nTEMPLATE CONSTRAINTS (your content will be placed on a template):\n"
+                    "- Keep each slide SIMPLE: maximum 4-5 content shapes per slide.\n"
+                    "- Use large font sizes (minimum 14pt for body, 24pt for titles).\n"
+                    "- Avoid overlapping shapes — stack content vertically with clear spacing.\n"
+                    "- Do NOT add background shapes — the template provides these.\n"
+                )
+            print(
+                "  [TEMPLATE CTX] Template context injected into Tier 2 prompt "
+                "(bg_dark=%s, bg_hex=#%s)." % (bg_is_dark, bg_hex)
+            )
+        except Exception as e:
+            print(
+                "  [TEMPLATE CTX WARNING] Could not extract template context: %s" % e
+            )
+
     code_gen_prompt = (
         "Generate a complete Python script using python-pptx to create "
         "a PowerPoint file at this EXACT path: %s\n\n"
-        "GLOBAL CONTEXT:\n%s\n\n"
+        "GLOBAL CONTEXT:\n%s\n%s\n\n"
         "SLIDES TO GENERATE (%d slides):\n%s\n\n"
         "REQUIREMENTS:\n"
         "- Create exactly %d slides in the exact order listed above.\n"
@@ -1769,6 +2152,7 @@ def generate_chunk_pptx_v2(
     ) % (
         chunk_output_path,
         global_ctx,
+        template_constraints,
         len(chunk_slides),
         "\n\n".join(slide_specs),
         len(chunk_slides),
@@ -1786,7 +2170,14 @@ def generate_chunk_pptx_v2(
     # Tier 2 only cares whether the file was created on disk, not about the response
     # content, so we iterate through the stream and discard events.
     t2_start = time.time()
-    _fallback_agent = session_state.get("agents", {}).get("fallback_code_agent")
+    from agents import get_agents as _get_agents
+    _fallback_agent = _get_agents(session_state.get("llm_provider", "claude")).get("fallback_code_agent")
+    # Register Tier 2 call with rate tracker — claude-haiku-4-5 has its own 50K token/min pool.
+    _get_rate_tracker().check_and_wait(
+        model="claude-haiku-4-5",
+        prompt=code_gen_prompt,
+        caller="generate_chunk_pptx_v2/Tier2",
+    )
     try:
         for _ in _fallback_agent.run(code_gen_prompt, stream=True):
             pass
@@ -1991,11 +2382,21 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
         if chunk_file:
             successful += 1
 
-        # Inter-chunk delay (not for last chunk) to avoid rate limits
+        # Inter-chunk delay (not for last chunk) — random 60-120s to respect the
+        # Anthropic 30K input-token/min rolling window.  When a 429 rate-limit was
+        # hit, force max_delay and reset the rate_limit_hit flag.
         if chunk_idx < total_chunks - 1:
-            inter_delay = 1.0
-            print("[GENERATE] Waiting %.1fs before next chunk..." % inter_delay)
-            time.sleep(inter_delay)
+            rate_limit_hit_this_chunk = bool(session_state.get("rate_limit_hit", False))
+            if rate_limit_hit_this_chunk:
+                # Reset for the next chunk; the inter-chunk delay will compensate.
+                session_state["rate_limit_hit"] = False
+            _inter_chunk_sleep(
+                chunk_idx=chunk_idx,
+                total_chunks=total_chunks,
+                min_delay=float(session_state.get("inter_chunk_delay_min", 60.0)),
+                max_delay=float(session_state.get("inter_chunk_delay_max", 120.0)),
+                rate_limit_hit=rate_limit_hit_this_chunk,
+            )
 
     session_state["chunk_files"] = chunk_files
     session_state["chunk_slide_groups"] = chunks
@@ -2148,7 +2549,8 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                     "Consider the presentation topic when writing image prompts."
                 ) % (user_prompt, slides_json)
 
-                _image_planner = session_state.get("agents", {}).get("image_planner")
+                from agents import get_agents as _get_agents
+                _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
                 img_plan_response = _image_planner.run(combined_message, stream=False)
 
                 if img_plan_response and img_plan_response.content:
@@ -3130,6 +3532,28 @@ def main() -> None:
             "Fallback continues from selected tier."
         ),
     )
+    parser.add_argument(
+        "--inter-chunk-delay-min",
+        type=float,
+        default=60.0,
+        metavar="SECS",
+        help=(
+            "Minimum inter-chunk delay in seconds (default: 60). "
+            "A random value in [min, max] is chosen between each chunk "
+            "to respect the Anthropic 30K input-token/minute rate limit."
+        ),
+    )
+    parser.add_argument(
+        "--inter-chunk-delay-max",
+        type=float,
+        default=120.0,
+        metavar="SECS",
+        help=(
+            "Maximum inter-chunk delay in seconds (default: 120). "
+            "When a 429 rate-limit error is detected, max_delay is used directly."
+        ),
+    )
+
 
     args = parser.parse_args()
 
@@ -3137,12 +3561,17 @@ def main() -> None:
     global VERBOSE  # noqa: F405
     VERBOSE = args.verbose  # noqa: F405
 
-    # Validate API keys — ANTHROPIC_API_KEY is always required (Content Generator
-    # is locked to Claude).  Provider-specific key checked when not claude.
+    # Validate API keys
+    # ANTHROPIC_API_KEY is always required (Content Generator is locked to Claude).
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("Error: ANTHROPIC_API_KEY environment variable not set.")
         print("  (Required: Content Generator agent always uses Claude.)")
         sys.exit(1)
+    # OPENAI_API_KEY is always required: brand_style_analyzer uses gpt-4o-mini (OpenAI)
+    # regardless of --llm-provider, to avoid consuming Anthropic token budget.
+    if not os.getenv("OPENAI_API_KEY"):
+        print("[WARNING] OPENAI_API_KEY not set — brand style analysis (gpt-4o-mini) will be skipped.")
+        print("[WARNING] Two-stage brand parsing will fall through to keyword-only detection.")
     if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
         print("Error: OPENAI_API_KEY environment variable not set (required for --llm-provider openai).")
         sys.exit(1)
@@ -3159,15 +3588,32 @@ def main() -> None:
             print("Error: Template file must be a .pptx file.")
             sys.exit(1)
 
-    # Inform when visual flags are passed without a template (template-independent mode)
-    if not args.template and args.visual_review:
-        print("[INFO] --visual-review will use template-independent contrast checks (no template provided)")
-    if not args.template and args.visual_passes != 3:
-        print("[INFO] --visual-passes applies in template-independent mode")
+    # Gemini API key validation guard for --visual-review
+    # If the key is missing or blank, auto-disable visual review to avoid burning
+    # time on guaranteed-to-fail Gemini API calls.
+    google_key = os.getenv("GOOGLE_API_KEY", "")
+    if args.visual_review and not google_key:
+        print(
+            "[WARNING] --visual-review requested but GOOGLE_API_KEY is not set. "
+            "Visual review automatically disabled."
+        )
+        args.visual_review = False
 
     # Effective values: visual review and passes work with or without template
     effective_visual_review = bool(args.visual_review)
     effective_visual_passes = args.visual_passes
+
+    # Reset the rate tracker singleton for this run
+    _reset_rate_tracker()
+    print(
+        "[RATE TRACKER] Rate limit tracker initialised. "
+        "Claude model limits: sonnet=30K, opus=30K, haiku=50K input tokens/min."
+    )
+    print(
+        "[RATE TRACKER] Inter-chunk delay: random %.0f–%.0fs "
+        "(override with --inter-chunk-delay-min / --inter-chunk-delay-max)."
+        % (args.inter_chunk_delay_min, args.inter_chunk_delay_max)
+    )
 
     # Setup output directory with unique session ID + timestamp per run
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -3179,11 +3625,8 @@ def main() -> None:
     session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_name = "session_%s_%s" % (session_id, session_timestamp)
 
-    # Load provider-specific agents
-    from agents import get_agents
-
-    _agents = get_agents(args.llm_provider)
-    print("[PROVIDER] Loaded %s agents: %s" % (args.llm_provider, ", ".join(_agents.keys())))
+    # Provider name is stored in session_state (a plain string, safely deep-copyable).
+    # Agents are loaded lazily inside each step via get_agents() to avoid pickling errors.
 
     # Chunked workflow uses a session-specific working directory
     session_dir = os.path.join(output_base, "chunked_workflow_work", session_name)
@@ -3218,6 +3661,9 @@ def main() -> None:
         "max_retries": args.max_retries,
         "visual_passes": effective_visual_passes,
         "start_tier": args.start_tier,
+        # Inter-chunk delay range (seconds) — read by _inter_chunk_sleep()
+        "inter_chunk_delay_min": args.inter_chunk_delay_min,
+        "inter_chunk_delay_max": args.inter_chunk_delay_max,
         # Fields populated by steps
         "storyboard": None,
         "storyboard_dir": None,
@@ -3227,9 +3673,12 @@ def main() -> None:
         "processed_chunks": {},
         "reviewed_chunks": {},
         "use_fallback_generator": False,
+        # Transient rate-limit flag — set when a 429 is caught in generate_chunk_pptx.
+        # Cleared after each inter-chunk delay. Does NOT permanently activate fallback.
+        "rate_limit_hit": False,
         "brand_style_intent": None,
-        # Provider-loaded agents (swappable per --llm-provider)
-        "agents": _agents,
+        # LLM provider name for swappable agents (agents are loaded lazily per step)
+        "llm_provider": args.llm_provider,
         # Fields used by existing step helpers
         "generated_file": "",
         "slides_data": [],
@@ -3356,7 +3805,14 @@ if __name__ == "__main__":
 
         # Clean up temporary python scripts generated by PythonTools
         import glob
-        for pattern in ["create_chunk_*.py", "chunk_*_gen.py"]:
+        patterns_to_clean = [
+            "create_chunk_*.py", 
+            "chunk_*_gen.py", 
+            "create_presentation*.py", 
+            "generate_presentation*.py", 
+            "generate_pptx*.py"
+        ]
+        for pattern in patterns_to_clean:
             for tmp_file in glob.glob(pattern):
                 try:
                     os.remove(tmp_file)

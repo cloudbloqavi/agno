@@ -91,6 +91,21 @@ python powerpoint_chunked_workflow.py \
 | `--no-stream` | Disable streaming for agents | disabled |
 | `--verbose, -v` | Enable verbose/debug logging | disabled |
 
+## Swappable LLM Providers
+
+The workflow uses a dynamic swappable agent architecture controlled by the `--llm-provider` flag. 
+
+| Agent Role | Claude Mode (`claude`) | OpenAI Mode (`openai`) | Gemini Mode (`gemini`) |
+|------------|------------------------|------------------------|------------------------|
+| **Brand Parse** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Storyboard** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Code Fallback** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Visual QA** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
+| **Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
+
+*\* Note: Even in `claude` mode, Image Planning and Visual QA explicitly default to Gemini models because Anthropic models lack the requisite API multimodal features.*
+
 ## Workflow Steps
 
 | Step | Name | Description |
@@ -128,46 +143,76 @@ All output goes to `output_chunked/chunked_workflow_work/session_<id>/` includin
 
 Console output is redirected to `OUTPUT.md` in the script directory.
 
-## File Inventory
+## Documentation Index
+
+### 📐 Architecture & Design
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](ARCHITECTURE_powerpoint_chunked_workflow.md) | Full system architecture — pipeline modes, data models, step-by-step flow, session state schema, CLI reference, template style extraction |
+| [Visual Quality Design](DESIGN_visual_quality.md) | Visual quality improvement design — Phase 1 (deterministic fixes), Phase 2 (visual review agent), Phase 3 (template quality safeguards) |
+| [Product Spec](PRODUCT.md) | Product specification and requirements |
+
+### 🤖 Agents & Skills
+
+| Document | Description |
+|----------|-------------|
+| [Agent Catalog](AGENTS.md) | All agents (brand parser, storyboard, code fallback, image planner, visual QA), their roles, models, and swappable provider configs |
+| [Skills](./skills/) | Skill definition files (core, domain, meta, tools) used by Claude agents |
+
+### 🔧 Operations & Debugging
+
+| Document | Description |
+|----------|-------------|
+| [Output Log](OUTPUT.md) | Latest console output from the most recent workflow run (auto-generated) |
+| [Test Log](TEST_LOG.md) | Test execution history and results |
+| [Scratchpad](SCRATCHPAD.md) | Notes, work-in-progress tracker, and development journal |
+| [Library Patches](lib_patches/PATCHES.md) | Required patches to `agno` library: `claude.py` (structured output fix) and `python.py` (PythonTools error logging) |
+
+### 📁 Source Files
 
 | File | Purpose |
 |------|---------|
-| `powerpoint_chunked_workflow.py` | **Main entry point** — chunked orchestration |
-| `powerpoint_template_workflow.py` | Core pipeline (imported by chunked workflow) |
-| `agents/` | Package containing provider agents (Claude, OpenAI, Gemini) and shared schemas |
-| `file_download_helper.py` | Claude skill file download utility |
+| `powerpoint_chunked_workflow.py` | **Main entry point** — chunked orchestration, storyboard planning, 3-tier fallback, chunk merging (~3,800 lines) |
+| `powerpoint_template_workflow.py` | Core pipeline — content gen, images, template assembly, visual review, all helpers (~8,000 lines) |
+| `agents/` | Swappable provider agents package (Claude, OpenAI, Gemini) and shared Pydantic schemas |
+| `file_download_helper.py` | Claude skill file download utility via Anthropic Files API (~160 lines) |
 | `test_brand_style_parsing.py` | Unit tests for brand/style parsing |
-| `.env` | API keys (ANTHROPIC_API_KEY, GOOGLE_API_KEY) |
-| `templates/` | 9 .pptx template files |
-| `lib_patches/` | External library patches documentation |
-| `.skills/` | Skill definition files (core, domain, meta, tools) |
-| `AGENTS.md` | Agent catalog and architecture |
-| `PRODUCT.md` | Product specification |
-| `SCRATCHPAD.md` | Notes and work-in-progress tracker |
-| `ARCHITECTURE_powerpoint_chunked_workflow.md` | Detailed architecture docs |
-| `DESIGN_visual_quality.md` | Visual quality review design docs |
-| `TEST_LOG.md` | Test execution log |
+| `.env` | API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`) |
+| `templates/` | 9 `.pptx` template files for template-assisted generation |
+
+---
 
 ## Prerequisites
 
-- Python 3.8+
-- `uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv`
-- `ANTHROPIC_API_KEY` (Always required for Claude's PPTX generator)
-- `OPENAI_API_KEY` (Required if using `--llm-provider openai`)
-- `GOOGLE_API_KEY` (Required if using `--llm-provider gemini`)
-- LibreOffice (optional, for `--visual-review` slide rendering)
+### Python Dependencies
 
-## External Library Patches
+```bash
+uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+```
 
-This project required modifications to two files in the `agno` library.
-See [`lib_patches/PATCHES.md`](lib_patches/PATCHES.md) for details:
-- `claude.py` — structured output detection fix for `claude-sonnet-4-6`
-- `python.py` — enhanced PythonTools error logging with tracebacks
+### API Keys
 
-## Additional Documentation
+```bash
+export ANTHROPIC_API_KEY="your_anthropic_key"   # ALWAYS required (Content Generator)
+export OPENAI_API_KEY="your_openai_key"          # Required if using --llm-provider openai
+export GOOGLE_API_KEY="your_google_key"          # Required if using --llm-provider gemini
+```
 
-- [Architecture](ARCHITECTURE_powerpoint_chunked_workflow.md) — detailed system design
-- [Visual Quality Design](DESIGN_visual_quality.md) — visual review step design
+Or create a `.env` file in this directory with the same key-value pairs.
+
+### System Dependencies
+
+```bash
+# Required for --visual-review (slide rendering)
+sudo apt-get install -y libreoffice
+
+# Required for per-slide PNG rendering (used by visual review)
+sudo apt-get install -y poppler-utils
+```
+
+> **Note:** Both system dependencies are only required when using `--visual-review` with `--template`. The workflow skips visual review gracefully if either is missing.
+
 
 ## Logging Conventions
 
@@ -177,5 +222,22 @@ See [`lib_patches/PATCHES.md`](lib_patches/PATCHES.md) for details:
 [WARNING] ...                          — Always printed
 [BRAND] ...                            — Always printed (brand detection)
 [BRAND OVERRIDE] ...                   — Always printed (template overrides query)
+[RENDER] ...                           — Always printed (slide PNG rendering pipeline)
+[BG DETECT] ...                        — Always printed (background color detection)
+[FONT GUARD] ...                       — Always printed (minimum font size enforcement)
+[OVERLAP FIX] ...                      — Always printed (shape overlap detection & reflow)
+[TEMPLATE CTX] ...                     — Always printed (template context injected into LLM prompt)
 [VERBOSE] ...                          — Only with --verbose / -v
 ```
+
+## Template Quality Safeguards
+
+When using `--template`, several automatic safeguards protect presentation quality:
+
+| Safeguard | What It Does |
+|-----------|-------------|
+| **Per-slide rendering** | Renders every slide to PNG via PPTX→PDF→PNG pipeline (`pdftoppm`) for visual review |
+| **Background detection** | 6-layer detection (shape → slide → layout → master → theme → large shapes) prevents wrong contrast |
+| **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
+| **Overlap reflow** | Post-transfer overlap detection moves colliding shapes apart and enforces minimum dimensions |
+| **Template-aware prompts** | Tier 2 LLM prompt includes template constraints (background color, max shapes, text color guidance) |
