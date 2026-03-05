@@ -150,7 +150,7 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | Metric | Value |
 |--------|-------|
 | **Phase** | Production (iterative improvement) |
-| **Capacity** | 8-15+ slides (chunked), ≤7 slides (single-call via template workflow) |
+| **Capacity** | Scalable (chunked architecture via `powerpoint_chunked_workflow.py`) |
 | **Steps** | 6 (Step 4 optional, Step 5 visual review optional) |
 | **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
 | **Template Safeguards** | 5 (rendering, background detection, font guard, overlap reflow, prompt constraints) |

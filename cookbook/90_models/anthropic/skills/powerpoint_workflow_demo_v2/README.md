@@ -23,6 +23,7 @@ python powerpoint_chunked_workflow.py \
 
 **`powerpoint_chunked_workflow.py`** is the single runnable script. It imports
 all core pipeline logic from `powerpoint_template_workflow.py` via wildcard import.
+*(Note: `powerpoint_template_workflow.py` acts strictly as a core library and cannot run independently).*
 
 ```
 powerpoint_chunked_workflow.py   ← Run this (orchestration + chunking, ~3,380 lines)

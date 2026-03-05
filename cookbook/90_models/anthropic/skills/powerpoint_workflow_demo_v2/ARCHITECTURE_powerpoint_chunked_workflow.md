@@ -1,27 +1,26 @@
 # Architecture: PowerPoint Workflow Suite
 
 **Files:**
-- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py` — Single-call pipeline (up to ~7 slides)
-- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Chunked pipeline for large presentations (8-15+ slides)
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py` — Core library and utilities (No longer runs independently)
+- `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Main chunked orchestrator for all presentations
 
 **Date:** 2026-02-25
-**Last Updated:** 2026-03-04
+**Last Updated:** 2026-03-05
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
 
 ## Two Complementary Approaches
 
-This cookbook provides **two workflow files** that solve the same problem (AI-generated PowerPoint presentations) at different scales:
+This cookbook relies on a two-file architecture that cleanly separates presentation compilation from workflow orchestration.
 
 | Aspect | `powerpoint_template_workflow.py` | `powerpoint_chunked_workflow.py` |
 |--------|----------------------------------|----------------------------------|
-| **Best for** | Short decks (up to ~7 slides) | Large decks (8-15+ slides) |
-| **Approach** | Single Claude API call for all content | Splits into N-slide chunks, merges result |
-| **Template** | Required | Optional |
-| **Visual review** | Optional (`--visual-review`) | Optional (`--visual-review`, template required) |
-| **Step count** | 4 steps (+ optional Step 5) | 2-5 steps depending on flags |
-| **Storyboard planning** | No — direct generation | Yes — query optimizer plans all slides first |
+| **Role** | Foundational Library (Not standalone) | Main Entrypoint Orchestrator |
+| **Approach** | Exposes core assembly step functions | Drives the chunking loop and fallback logic |
+| **Execution** | Cannot be run independently | Run from CLI to generate outputs |
+| **Visual review** | Defines `step_visual_quality_review` | Executes the step conditionally |
+| **Storyboard planning**| N/A | Exclusively implemented here |
 
 ### Relationship Between the Files
 
@@ -130,6 +129,115 @@ if not args.template and args.visual_review:
 if not args.template and args.visual_passes != 3:
     print("[WARNING] --visual-passes is ignored when --template is not provided")
 ```
+
+---
+
+## 3-Tier Fallback Architecture Details
+
+To ensure production reliability when generating individual presentation chunks, `powerpoint_chunked_workflow.py` implements a robust 3-tier fallback mechanism. This guarantees that if the primary high-quality method fails (due to API timeouts, rate limits, or skill errors), the system gracefully degrades to faster, more resilient methods to ensure the user always receives a complete presentation.
+
+### Tier 1: Claude PPTX Skill (Primary)
+
+**Approach:** This tier uses Anthropic's native `pptx` skill via Claude to generate highly structured, rich PowerPoint slides. The agent is explicitly instructed to produce native PowerPoint charts and tables rather than relying on image generation, ensuring the output is editable and professional. When Tier 1 is running, the full suite of agents is brought online sequentially to prepare, generate, and review the slide chunks.
+
+**Pros:** 
+- Produces the highest quality output with native, editable charts and tables.
+- Excellent at interpreting complex instructions and structuring data logically.
+
+**Cons:** 
+- Highly dependent on Anthropic API availability.
+- Can be prone to throttling and timeouts when processing large chunks or running under heavy API load.
+
+#### Tier 1 Provider Configurations
+
+**Table 1.1: Claude Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `search=True` | 200,000 max context |
+| 3 | **Chunk Generator** | `claude-opus-4-6` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+
+**Table 1.2: OpenAI Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gpt-5-mini` | OpenAI JSON Output | 128,000 max context (Standard Mini) |
+| 2 | **Query Optimizer** | `gpt-5.2` | `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 4 | **Image Planner** | `gpt-5-mini` | Structured Schema output | 128,000 max context |
+| 5 | **Slide Quality Reviewer** | `gpt-5-mini` | LibreOffice Vision QA | 128,000 max context |
+
+**Table 1.3: Gemini Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` | `search=True` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3-pro-preview` | `search=True` | 1,000,000 max context |
+| 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+
+*\* Note: The Chunk Generator for Tier 1 is locked to Anthropic's Claude even if the global provider is set to `openai` or `gemini`, because it strictly relies on Claude's exclusive native `pptx` skill.*
+
+### Tier 2: LLM Code Generation (Fallback)
+
+**Approach:** If Tier 1 fails after exhausting its retries, the workflow escalates to Tier 2. Here, the Chunk Generator agent is swapped with a Fallback Code agent. This agent generates Python code utilizing the `python-pptx` library to programmatically create the slides. The workflow framework executes this code locally to build the chunk, still utilizing the rest of the agent suite for styling, planning, and QA.
+
+**Pros:** 
+- Highly reliable and much faster execution compared to the native skill API.
+- Reaches ~80-92% quality parity with Tier 1 and successfully generates native `python-pptx` charts.
+
+**Cons:** 
+- Requires executing LLM-generated Python code locally (mitigated by sandboxing inside a secure execution environment).
+- Extremely complex layouts may not match Tier 1 elegance perfectly.
+
+#### Tier 2 Provider Configurations
+
+**Table 2.1: Claude Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `search=True` | 200,000 max context |
+| 3 | **PPTX Code Generator** | `claude-haiku-4-5` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
+| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+
+**Table 2.2: OpenAI Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gpt-5-mini` | OpenAI JSON Output | 128,000 max context |
+| 2 | **Query Optimizer** | `gpt-5.2` | `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 3 | **PPTX Code Generator** | `gpt-5.2` | `PythonTools` | 400,000 max context |
+| 4 | **Image Planner** | `gpt-5-mini` | Structured Schema output | 128,000 max context |
+| 5 | **Slide Quality Reviewer** | `gpt-5-mini` | LibreOffice Vision QA | 128,000 max context |
+
+**Table 2.3: Gemini Global Provider Setting Active**
+| Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` | `search=True` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3-pro-preview` | `search=True` | 1,000,000 max context |
+| 3 | **PPTX Code Generator** | `gemini-3-pro-preview` | `PythonTools` | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+
+### Tier 3: python-pptx Direct (Last Resort)
+
+**Approach:** If both the native skill (Tier 1) and the code generation (Tier 2) fail, the workflow falls back to an entirely deterministic Tier 3. This step bypasses LLM slide generation completely and uses a hardcoded Python loop inside the orchestration logic to instantiate slides directly via `python-pptx`, pulling content purely from the `StoryboardPlan` generated during Step 1. The auxiliary agents (image planning, visual review) still operate, but chunk generation is hardcoded.
+
+**Pros:** 
+- 100% reliable execution with essentially zero chance of chunk-stage failure.
+- Instantaneous creation requiring zero additional API generation calls.
+
+**Cons:** 
+- Strictly generates text-only slides (titles and basic bullet points).
+- Hard-constrained to basic slide layouts with no charts, native infographics, or structurally advanced setups.
+
+#### Tier 3 Configurations (All Providers)
+
+**Table 3.1: Deterministic Fallback Active (Any Provider)**
+| Execution Order | Component Name | LLM Model | Specific Skills / Tools / Capabilities | Token Limitation |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **python-pptx loop (Internal Module)** | N/A (Deterministic code execution) | Programmatic slide assembly | N/A (No API limits) |
 
 ---
 
