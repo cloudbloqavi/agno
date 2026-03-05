@@ -513,6 +513,9 @@ Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remai
 | Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` |
 | Background detection | Contrast (corrective) | `_get_shape_background_color()` | During `_ensure_text_contrast()` |
 | Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |
+| OOXML Indexing strictness | Assembly (corrective) | `_make_high_contrast_fill()` | Resolves invisible structural color edits |
+| Duck-Typing Pydantic | System (preventative) | `step_visual_quality_review()` | Resolves framework-level module loading failures |
+| Spatial Overflow Offset | Assembly (corrective) | `enforce_final_contrast()` | Staggers sequentially upscaled bounding boxes |
 
 See [`DESIGN_visual_quality.md`](DESIGN_visual_quality.md) → Phase 3 for technical deep-dives, root cause analysis, and implementation trade-offs.
 

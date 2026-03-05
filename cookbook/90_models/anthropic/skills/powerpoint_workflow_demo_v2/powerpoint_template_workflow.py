@@ -6804,6 +6804,13 @@ def step_visual_quality_review(
 
     This step is non-blocking: any failure (LibreOffice unavailable, API error,
     timeout) silently returns success=True without modifying the output file.
+    
+    NOTE ON Pydantic Schema Parsing (Duck-Typing):
+    Agent output validation utilizes duck-typing on `SlideQualityReport` rather 
+    than strict `isinstance` checks. This resilient design resolves a Python 
+    namespacing quirk where Pydantic models generated dynamically by the LLM 
+    framework might not mathematically equate to `__main__.SlideQualityReport`, 
+    preventing False-Negative review dropouts.
 
     Workflow:
     1. Render the final .pptx to PNGs using LibreOffice headless.
@@ -7515,11 +7522,14 @@ def _get_shape_background_color(shape, slide) -> str:
       1. Shape's own fill (solid, gradient first-stop)
       2. Slide background (solid, gradient, image, theme-ref)
       3. Slide layout background
+      3.5 Slide master shape traversal (crucial for full-background wrapper shapes 
+          often used by templates without explicitly declaring a `<p:bg>` background)
       4. Slide master background
       5. Theme dk1/dk2 heuristic (dark-theme detection)
       6. Default fallback
 
     For image-based backgrounds (blipFill), assumes a dark color since most
+    professional templates with image backgrounds use dark overlays.
     professional templates with image backgrounds use dark overlays.
 
     Returns hex color string (e.g. '394755').
@@ -7957,7 +7967,17 @@ def _get_shape_background_color(shape, slide) -> str:
 
 
 def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
-    """Set text color to black or white for maximum contrast against background."""
+    """Set text color to black or white for maximum contrast against background.
+    
+    IMPORTANT OOXML SEQUENCE ENFORCEMENT:
+    Microsoft PowerPoint strictly enforces OpenXML schema sequencing within 
+    the `<a:rPr>` element. The `<a:solidFill>` tag MUST logically precede structural
+    font styling tags such as `<a:latin>`, `<a:ea>`, `<a:cs>`, or `<a:sym>`. 
+    If appended to the end of the element group, PowerPoint's engine will silently
+    declare the tag invalid and discard the high-contrast color modification.
+    Therefore, this function removes any misordered pre-existing solidFills and 
+    programmatically calculates the correct schema index to ensure compliant insertion.
+    """
     ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     bg_rgb = _hex_to_rgb(bg_hex)
     bg_lum = _relative_luminance(*bg_rgb)
@@ -7986,7 +8006,13 @@ def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
 
 
 def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
-    """Set or replace solidFill color on a chart rPr/defRPr element."""
+    """Set or replace solidFill color on a chart rPr/defRPr element.
+    
+    Mirrors the strict OOPXML Sequence Enforcement implemented in 
+    `_make_high_contrast_fill()`. Ensures `<a:solidFill>` appears before 
+    `<a:latin>` elements so PowerPoint successfully parses and renders 
+    axis labels, legends, and data labels in high contrast.
+    """
     existing = rPr_elem.find(ns_a + "solidFill")
     if existing is not None:
         rPr_elem.remove(existing)
@@ -8053,6 +8079,13 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
 
     Opens the PPTX, checks every text run against its effective background,
     and fixes any low-contrast text. Works without a template.
+    
+    Additional QA Enhancements:
+    1. Iterates over Chart elements to repair internal sub-element text visibility (defRPr).
+    2. Overrides AI compression side-effects by enforcing minimum shape bounds (3.0" x 4.0")
+       specifically on undersized Charts.
+    3. Avoids post-resize overlap by caching bounding box properties and pushing adjacent
+       rescaled geometries hierarchically downwards.
 
     Args:
         pptx_path: Path to the PPTX file to process.
@@ -8209,7 +8242,10 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
 
     1. Removes any text shapes containing default MS PowerPoint placeholder ghost text or empty text.
     2. Strips <a:solidFill> from text runs so text inherits the high-contrast
-       theme color from the slide master.
+       theme color from the slide master. 
+       Handles OOXML `a:rPr` property omissions gracefully by creating properties dynamically
+       to enforce contrast baselines if natively absent.
+    3. Extends contrast remediation logic deep into OOXML Chart schemas (axis/titles/labels).
     """
     ghost_texts = {
         "click to add title",
