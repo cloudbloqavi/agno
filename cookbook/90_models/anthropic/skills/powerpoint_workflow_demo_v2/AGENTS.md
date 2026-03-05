@@ -74,7 +74,7 @@ step_visual_quality_review()
 
 | Property | Value |
 |----------|-------|
-| **File** | `powerpoint_template_workflow.py` (single-call) / `powerpoint_chunked_workflow.py` (per-chunk) |
+| **File** | `powerpoint_template_workflow.py` (core logic) / `powerpoint_chunked_workflow.py` (execution) |
 | **Model** | Claude Opus `claude-opus-4-6` + `context-1m-2025-08-07` beta |
 | **Skills** | `pptx` (Anthropic Agent Skill — native PowerPoint creation in sandbox) |
 | **Output** | Raw `.pptx` file (downloaded via Anthropic Files API + `file_download_helper.py`) |

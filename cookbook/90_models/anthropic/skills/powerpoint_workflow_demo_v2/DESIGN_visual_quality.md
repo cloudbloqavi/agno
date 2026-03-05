@@ -314,7 +314,7 @@ When Claude generates a PowerPoint presentation via its `pptx` skill, the genera
 
 **Root cause:** `_populate_placeholder_with_format()` copies text into template placeholders but never sets `word_wrap`, `auto_size`, or calls `fit_text()`. The template placeholder's reference formatting may include a font size that is too large for the amount of text being inserted.
 
-**Current code path** (`_populate_placeholder_with_format()` at lines 305-353 in workflow, 298-368 in standalone):
+**Current code path** (`_populate_placeholder_with_format()` at lines 305-353 in workflow, 298-368 in template workflow):
 - Captures reference paragraph/run XML formatting from the template placeholder
 - Clears the text frame
 - Inserts new paragraphs with cloned formatting
@@ -330,7 +330,7 @@ When Claude generates a PowerPoint presentation via its `pptx` skill, the genera
 
 **Root cause:** `_transfer_tables()` uses `td.left`, `td.top`, `td.width`, `td.height` directly from the source slide. Claude's generated tables often extend to the full width of its default slide, which may not match the template's safe content area. Additionally, no font size is set on table cells, so they inherit the default (usually 18pt), which is too large for dense data tables.
 
-**Current code** (`_transfer_tables()` at lines 356-370 in workflow, 370-387 in standalone):
+**Current code** (`_transfer_tables()` at lines 356-370 in workflow, 370-387 in template workflow):
 ```python
 table_shape = slide.shapes.add_table(
     num_rows, num_cols, td.left, td.top, td.width, td.height
@@ -343,7 +343,7 @@ table.cell(r_idx, c_idx).text = cell_text
 
 **Root cause:** `_transfer_charts()` preserves the original EMU positions from Claude's slide. If Claude placed a chart in a smaller region or the template's content area is larger, the chart will appear undersized.
 
-**Current code** (`_transfer_charts()` at lines 382-410 in workflow, 399-430 in standalone):
+**Current code** (`_transfer_charts()` at lines 382-410 in workflow, 399-430 in template workflow):
 ```python
 slide.shapes.add_chart(
     cd.chart_type, cd.left, cd.top, cd.width, cd.height, chart_data
@@ -793,7 +793,7 @@ flowchart TD
 
 | Caller | Change |
 |--------|--------|
-| `apply_template()` in standalone | Pass `output_prs.slide_width`, `output_prs.slide_height` to `_populate_slide()` |
+| `apply_template()` in template workflow | Pass `output_prs.slide_width`, `output_prs.slide_height` to `_populate_slide()` |
 | `step_assemble_template()` in workflow | Same as above |
 
 ### New Imports Required

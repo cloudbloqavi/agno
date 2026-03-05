@@ -76,19 +76,19 @@ Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. 
 | 2 | LLM code gen (`haiku` fallback) | 80–92% | 10–30s/chunk |
 | 3 | Text-only (deterministic) | Structural | <1s/chunk |
 
-### 4. Template-Faithful Assembly
+### 5. Template-Faithful Assembly
 Fully deterministic Step 3 builds a comprehensive **assembly knowledge file** — combining user intent, content plan, deep per-layout template analysis, and AI image assets — then maps content onto template layouts, fonts, colors, and placeholder regions. No LLM in the loop.
 
-### 5. AI Image Generation
+### 6. AI Image Generation
 Gemini-based planning decides which slides need visuals. NanoBanana generates 16:9 PNG images, scaled/centered within the template's content area preserving aspect ratio.
 
-### 6. Vision-Based Quality Assurance
+### 7. Vision-Based Quality Assurance
 Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), detects visual defects, and auto-corrects critical issues. Includes upfront missing key validation to prevent crash blocks. Fully non-blocking.
 
-### 7. Global API Rate Limit Tracker
+### 8. Global API Rate Limit Tracker
 An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random `60–120s`) inter-chunk sleeps with live countdowns.
 
-### 8. Template Quality Safeguards
+### 9. Template Quality Safeguards
 When using `--template`, five automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually (not just slide 1) so the visual review inspects all slides
 - **Background detection** — 6-layer cascade (shape→slide→layout→master→theme→large shapes) correctly identifies dark template backgrounds for proper text contrast
@@ -155,7 +155,7 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
 | **Template Safeguards** | 5 (rendering, background detection, font guard, overlap reflow, prompt constraints) |
 | **Tests** | Brand parsing: 10 unit tests, template fixes: 14 integration tests |
-| **Last Updated** | 2026-03-04 |
+| **Last Updated** | 2026-03-05 |
 
 ---
 

@@ -75,24 +75,45 @@ export GOOGLE_API_KEY="..."
 # apt-get install libreoffice
 
 # Basic test (no visual review)
-.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \
-    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/my_template.pptx \
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/my_template.pptx \
     --output /tmp/test_output.pptx \
     -v
 
 # With visual review
-.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \
-    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/my_template.pptx \
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/my_template.pptx \
     --output /tmp/test_output_reviewed.pptx \
     --visual-review \
     --footer-text "Confidential" --show-slide-numbers \
     -v
 
 # Text-only (no images, faster)
-.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py \
-    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/my_template.pptx \
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/my_template.pptx \
     --no-images \
     --output /tmp/test_no_images.pptx \
+    -v
+
+# Multi-Provider Test (OpenAI for auxillary agents, Claude for Tier 1)
+export OPENAI_API_KEY="..."
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/my_template.pptx \
+    --llm-provider openai \
+    --output /tmp/test_openai_aux.pptx \
+    -v
+
+# Fallback Tier Testing (Force Tier 2 LLM Code Generation)
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --template cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/my_template.pptx \
+    --start-tier 2 \
+    --output /tmp/test_tier2_fallback.pptx \
+    -v
+
+# Explicit Brand/Style Intent
+.venvs/demo/bin/python cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py \
+    --prompt "Create a 5-slide deck about cloud computing in the style of Apple, using minimalist design and SF Pro typography." \
+    --output /tmp/test_apple_branding.pptx \
     -v
 ```
 

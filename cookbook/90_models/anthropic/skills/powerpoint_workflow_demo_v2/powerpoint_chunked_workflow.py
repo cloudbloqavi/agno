@@ -40,8 +40,8 @@ Brand/Style-Aware Query Parsing:
   (no LLM call). Downstream steps (image pipeline, visual review, merge) are unchanged.
 
 Relationship between the two files:
-  - powerpoint_template_workflow.py is self-contained and can run standalone (single Claude
-    API call, suitable for short presentations of up to ~7 slides).
+  - powerpoint_template_workflow.py acts strictly as a core foundational library 
+    and cannot be run independently.
   - powerpoint_chunked_workflow.py wraps the same template/image/review logic via wildcard
     import so that large presentations (8-15+ slides) are split into chunks and merged.
   - Do NOT modify powerpoint_template_workflow.py to add chunking logic; keep them separate.
