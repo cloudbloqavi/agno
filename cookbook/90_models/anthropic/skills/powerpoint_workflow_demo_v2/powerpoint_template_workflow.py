@@ -764,8 +764,7 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
                                     text_rgb = _hex_to_rgb(text_hex)
                                     ratio = _contrast_ratio(text_rgb, bg_rgb)
                                     if ratio < 3.0:
-                                        rPr.remove(solidFill)
-                                        _make_high_contrast_fill(rPr, bg_hex)
+                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
                             else:
                                 # Check default (black) against background
                                 ratio = _contrast_ratio((0, 0, 0), bg_rgb)
@@ -818,7 +817,18 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
                                 )
 
                 if not text_color:
-                    continue  # No explicit color, skip (inherits from theme which should be correct)
+                    # No explicit color — assume inherited default is dk1 (typically black).
+                    # On dark backgrounds this creates invisible text. Fix it.
+                    inherited_color = theme.dk1 or "000000"
+                    ratio = _contrast_ratio(inherited_color, bg_color)
+                    if ratio < CONTRAST_THRESHOLD:
+                        # Inherited color has poor contrast — set explicit high-contrast color
+                        if rPr is None:
+                            rPr = etree.SubElement(run._r, ns_a + "rPr")
+                        new_fill = etree.SubElement(rPr, ns_a + "solidFill")
+                        srgb = etree.SubElement(new_fill, ns_a + "srgbClr")
+                        srgb.set("val", contrast_color)
+                    continue
 
                 # Check contrast
                 ratio = _contrast_ratio(text_color, bg_color)
@@ -847,6 +857,7 @@ def _extract_table_styles_from_prs(prs) -> list:
     ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
 
     for slide in prs.slides:
+        resized_charts = []
         for shape in slide.shapes:
             if not shape.has_table:
                 continue
@@ -977,6 +988,7 @@ def _extract_chart_styles_from_prs(prs) -> list:
     }
 
     for slide in prs.slides:
+        resized_charts = []
         for shape in slide.shapes:
             if not shape.has_chart:
                 continue
@@ -6949,15 +6961,34 @@ def step_visual_quality_review(
                 )
 
                 if response and response.content:
-                    if isinstance(response.content, SlideQualityReport):
-                        report = response.content
-                    elif isinstance(response.content, dict):
-                        report = SlideQualityReport.model_validate(response.content)
+                    content = response.content
+                    # Duck-type: accept any BaseModel with the right fields,
+                    # dict, or JSON string.  The agent's output_schema may be
+                    # the SlideQualityReport from agents/_shared.py (a
+                    # different Python class than the local one), so a plain
+                    # isinstance() would always fail.
+                    if hasattr(content, "model_dump") and hasattr(content, "design_score"):
+                        report = SlideQualityReport.model_validate(content.model_dump())
+                    elif isinstance(content, dict):
+                        report = SlideQualityReport.model_validate(content)
+                    elif isinstance(content, str):
+                        import json as _json_parse
+                        try:
+                            report = SlideQualityReport.model_validate(
+                                _json_parse.loads(content)
+                            )
+                        except (ValueError, Exception):
+                            if VERBOSE:
+                                print(
+                                    "[VERBOSE] Could not parse string response "
+                                    "as SlideQualityReport"
+                                )
+                            continue
                     else:
                         if VERBOSE:
                             print(
                                 "[VERBOSE] Unexpected response type: %s"
-                                % type(response.content).__name__
+                                % type(content).__name__
                             )
                         continue
                     report.slide_index = idx
@@ -6993,6 +7024,13 @@ def step_visual_quality_review(
                 )
                 if VERBOSE:
                     traceback.print_exc()
+
+        # Warn if vision agent returned nothing parseable
+        if not reports and len(slide_images) > 0:
+            print(
+                "  [WARNING] Vision agent returned 0 parseable reports for %d "
+                "slides. Check model output schema compatibility." % len(slide_images)
+            )
 
         # --- Phase 4: Apply corrections (critical + moderate design enrichment) ---
         total_critical = sum(
@@ -7637,6 +7675,87 @@ def _get_shape_background_color(shape, slide) -> str:
     except Exception:
         pass
 
+    # === Layer 3.5: Check master/layout shapes for large background images/fills ===
+    # Many premium templates place a full-slide Picture shape on the master
+    # as the visual background instead of using <p:bg>. This MUST be checked
+    # BEFORE Layer 4 (master bg XML) because the master's <p:bg> element may
+    # contain a misleading bgRef/schemeClr that maps to white in hardcoded
+    # defaults even though the actual visual background is dark (from the image).
+    _master_shape_bg_checked = False
+    try:
+        slide_w = 0
+        slide_h = 0
+        # SlideMaster has no slide_width attribute — get from presentation part
+        try:
+            prs_part = slide.part.package.presentation_part.presentation
+            slide_w = prs_part.slide_width
+            slide_h = prs_part.slide_height
+        except Exception:
+            pass
+        if not (slide_w and slide_h):
+            # Fallback: standard widescreen 13.333" x 7.5" in EMU
+            slide_w = 12192000
+            slide_h = 6858000
+        if slide_w and slide_h:
+            slide_area = slide_w * slide_h
+            shape_sources = []
+            try:
+                shape_sources.append(("layout", slide.slide_layout.shapes))
+            except Exception:
+                pass
+            try:
+                shape_sources.append(("master", slide.slide_layout.slide_master.shapes))
+            except Exception:
+                pass
+
+            for source_name, shapes_collection in shape_sources:
+                for s in shapes_collection:
+                    try:
+                        if not (s.width and s.height):
+                            continue
+                        shape_area = s.width * s.height
+                        if shape_area > slide_area * 0.6:
+                            # Large shape found — check for image (common bg pattern)
+                            s_elem = s._element
+                            blip = s_elem.find(".//" + ns_a + "blip")
+                            if blip is not None:
+                                if VERBOSE:
+                                    print(
+                                        "  [BG DETECT] Large image shape on %s "
+                                        "'%s' (%.0f%% coverage) — assuming dark (333333)."
+                                        % (
+                                            source_name,
+                                            getattr(s, "name", "?"),
+                                            100.0 * shape_area / slide_area,
+                                        )
+                                    )
+                                return "333333"
+                            # Check for solid fill
+                            if hasattr(s, "fill") and s.fill.type is not None:
+                                try:
+                                    fc = s.fill.fore_color
+                                    if fc and fc.type is not None:
+                                        bg_color = str(fc.rgb)
+                                        if VERBOSE:
+                                            print(
+                                                "  [BG DETECT] Large %s shape "
+                                                "'%s' (%.0f%% coverage): #%s"
+                                                % (
+                                                    source_name,
+                                                    getattr(s, "name", "?"),
+                                                    100.0 * shape_area / slide_area,
+                                                    bg_color,
+                                                )
+                                            )
+                                        return bg_color
+                                except Exception:
+                                    pass
+                    except Exception:
+                        continue
+            _master_shape_bg_checked = True
+    except Exception:
+        pass
+
     # === Layer 4: Slide master background ===
     try:
         master = slide.slide_layout.slide_master
@@ -7700,10 +7819,14 @@ def _get_shape_background_color(shape, slide) -> str:
         slide_w = 0
         slide_h = 0
         try:
-            slide_w = slide.slide_layout.slide_master.slide_width
-            slide_h = slide.slide_layout.slide_master.slide_height
+            prs_part = slide.part.package.presentation_part.presentation
+            slide_w = prs_part.slide_width
+            slide_h = prs_part.slide_height
         except Exception:
             pass
+        if not (slide_w and slide_h):
+            slide_w = 12192000
+            slide_h = 6858000
 
         if slide_w and slide_h:
             slide_area = slide_w * slide_h
@@ -7731,8 +7854,95 @@ def _get_shape_background_color(shape, slide) -> str:
                                     return bg_color
                             except Exception:
                                 pass
+                        # Check for image shapes (blip) — assume dark
+                        s_elem = s._element
+                        blip = s_elem.find(".//" + ns_a + "blip")
+                        if blip is not None:
+                            if VERBOSE:
+                                print(
+                                    "  [BG DETECT] Large image shape on slide "
+                                    "(%.0f%% coverage) — assuming dark (333333)."
+                                    % (100.0 * shape_area / slide_area)
+                                )
+                            return "333333"
                 except Exception:
                     continue
+    except Exception:
+        pass
+
+    # === Layer 7: Check master/layout shapes for large background images/fills ===
+    # Many premium templates place a full-slide Picture shape on the master
+    # as the visual background instead of using <p:bg>. This is very common.
+    try:
+        slide_w = slide_w or 0
+        slide_h = slide_h or 0
+        if not (slide_w and slide_h):
+            try:
+                prs_part = slide.part.package.presentation_part.presentation
+                slide_w = prs_part.slide_width
+                slide_h = prs_part.slide_height
+            except Exception:
+                pass
+        if not (slide_w and slide_h):
+            slide_w = 12192000
+            slide_h = 6858000
+        if slide_w and slide_h:
+            slide_area = slide_w * slide_h
+            # Check layout shapes first, then master (closer layer takes priority)
+            shape_sources = []
+            try:
+                shape_sources.append(("layout", slide.slide_layout.shapes))
+            except Exception:
+                pass
+            try:
+                shape_sources.append(("master", slide.slide_layout.slide_master.shapes))
+            except Exception:
+                pass
+
+            for source_name, shapes_collection in shape_sources:
+                for s in shapes_collection:
+                    try:
+                        if not (s.width and s.height):
+                            continue
+                        shape_area = s.width * s.height
+                        if shape_area > slide_area * 0.6:
+                            # Large shape found — check for image (common bg pattern)
+                            s_elem = s._element
+                            blip = s_elem.find(".//" + ns_a + "blip")
+                            if blip is not None:
+                                if VERBOSE:
+                                    print(
+                                        "  [BG DETECT] Large image shape on %s "
+                                        "'%s' (%.0f%% coverage) — assuming dark (333333)."
+                                        % (
+                                            source_name,
+                                            getattr(s, "name", "?"),
+                                            100.0 * shape_area / slide_area,
+                                        )
+                                    )
+                                return "333333"
+                            # Check for solid fill
+                            if hasattr(s, "fill") and s.fill.type is not None:
+                                try:
+                                    fc = s.fill.fore_color
+                                    if fc and fc.type is not None:
+                                        bg_color = str(fc.rgb)
+                                        if VERBOSE:
+                                            print(
+                                                "  [BG DETECT] Large %s shape "
+                                                "'%s' (%.0f%% coverage): #%s"
+                                                % (
+                                                    source_name,
+                                                    getattr(s, "name", "?"),
+                                                    100.0 * shape_area / slide_area,
+                                                    bg_color,
+                                                )
+                                            )
+                                        return bg_color
+                                except Exception:
+                                    pass
+                    except Exception:
+                        continue
     except Exception:
         pass
 
@@ -7746,7 +7956,7 @@ def _get_shape_background_color(shape, slide) -> str:
 
 
 
-def _make_high_contrast_fill(rPr, bg_hex: str):
+def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
     """Set text color to black or white for maximum contrast against background."""
     ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     bg_rgb = _hex_to_rgb(bg_hex)
@@ -7754,10 +7964,89 @@ def _make_high_contrast_fill(rPr, bg_hex: str):
     # Use white text on dark backgrounds, black text on light backgrounds
     text_hex = "FFFFFF" if bg_lum < 0.4 else "000000"
 
-    solid_fill = etree.SubElement(rPr, ns_a + "solidFill")
+    if existing_solidFill is not None:
+        rPr.remove(existing_solidFill)
+
+    # PowerPoint strictly enforces XML sequence in <a:rPr>
+    # solidFill MUST appear before latin, ea, cs, sym, and hlink tags.
+    solid_fill = etree.Element(ns_a + "solidFill")
     srgb_clr = etree.SubElement(solid_fill, ns_a + "srgbClr")
     srgb_clr.set("val", text_hex)
 
+    insert_idx = 0
+    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
+    for i, child in enumerate(rPr):
+        tag = child.tag.split("}")[-1]
+        if tag in tags_after_fill:
+            insert_idx = i
+            break
+        insert_idx = i + 1
+
+    rPr.insert(insert_idx, solid_fill)
+
+
+def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
+    """Set or replace solidFill color on a chart rPr/defRPr element."""
+    existing = rPr_elem.find(ns_a + "solidFill")
+    if existing is not None:
+        rPr_elem.remove(existing)
+
+    new_fill = etree.Element(ns_a + "solidFill")
+    srgb = etree.SubElement(new_fill, ns_a + "srgbClr")
+    srgb.set("val", color_hex)
+
+    insert_idx = 0
+    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
+    for i, child in enumerate(rPr_elem):
+        tag = child.tag.split("}")[-1]
+        if tag in tags_after_fill:
+            insert_idx = i
+            break
+        insert_idx = i + 1
+
+    rPr_elem.insert(insert_idx, new_fill)
+
+
+def _fix_chart_text_contrast(shape, slide, min_ratio: float = 3.0) -> int:
+    """Fix text contrast inside chart elements (axis labels, data labels, legend, title).
+
+    Chart text (axis tick labels, data labels, legend entries, chart title)
+    lives in c:txPr/a:defRPr or c:tx/a:rPr XML — NOT accessible via
+    shape.text_frame. This function scans all such elements and forces
+    high-contrast text when the slide background is dark.
+
+    Returns number of corrected text elements.
+    """
+    if not getattr(shape, "has_chart", False):
+        return 0
+
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+    bg_hex = _get_shape_background_color(shape, slide)
+    bg_rgb = _hex_to_rgb(bg_hex)
+    bg_lum = _relative_luminance(*bg_rgb)
+
+    if bg_lum >= 0.4:
+        return 0  # Light background — chart text is likely fine
+
+    # On dark backgrounds, force all chart text to white
+    target_color = "FFFFFF"
+    corrections = 0
+
+    try:
+        chart_elem = shape.chart._chartSpace
+    except Exception:
+        return 0
+
+    # Find all defRPr and rPr elements inside the chart XML
+    for rPr in chart_elem.iter(ns_a + "defRPr"):
+        _set_chart_text_color(rPr, ns_a, target_color)
+        corrections += 1
+    for rPr in chart_elem.iter(ns_a + "rPr"):
+        _set_chart_text_color(rPr, ns_a, target_color)
+        corrections += 1
+
+    return corrections
 
 def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
     """Post-merge WCAG contrast enforcement — template-independent safety net.
@@ -7779,6 +8068,7 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
     corrections = 0
 
     for slide in prs.slides:
+        resized_charts = []
         for shape in slide.shapes:
             # Text frames
             if getattr(shape, "has_text_frame", False):
@@ -7797,8 +8087,7 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                     text_rgb = _hex_to_rgb(text_hex)
                                     ratio = _contrast_ratio(text_rgb, bg_rgb)
                                     if ratio < min_ratio:
-                                        rPr.remove(solidFill)
-                                        _make_high_contrast_fill(rPr, bg_hex)
+                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
                                         corrections += 1
                                 else:
                                     # Can't determine text color — check default (black) contrast
@@ -7810,8 +8099,7 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                         corrections += 1
                                     else:
                                         # Stripping would cause dark-on-dark — replace
-                                        rPr.remove(solidFill)
-                                        _make_high_contrast_fill(rPr, bg_hex)
+                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
                                         corrections += 1
                             else:
                                 # No explicit color — check if inherited color (assume black) has contrast
@@ -7867,8 +8155,7 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                             text_rgb = _hex_to_rgb(text_hex)
                                             ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
                                             if ratio < min_ratio:
-                                                rPr.remove(solidFill)
-                                                _make_high_contrast_fill(rPr, cell_bg_hex)
+                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
                                                 corrections += 1
                                         else:
                                             # Can't determine text color — check default (black) contrast
@@ -7878,9 +8165,37 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                                 rPr.remove(solidFill)
                                                 corrections += 1
                                             else:
-                                                rPr.remove(solidFill)
-                                                _make_high_contrast_fill(rPr, cell_bg_hex)
+                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
                                                 corrections += 1
+
+            # Charts — axis labels, data labels, legend text
+            try:
+                chart_fixes = _fix_chart_text_contrast(shape, slide, min_ratio)
+                corrections += chart_fixes
+            except Exception:
+                pass
+
+            # Charts — enforce minimum dimensions to prevent squeezing
+            try:
+                if getattr(shape, "has_chart", False):
+                    from pptx.util import Inches as _Inches
+                    _MIN_W = _Inches(4.0)
+                    _MIN_H = _Inches(3.0)
+                    if shape.width < _MIN_W:
+                        shape.width = _MIN_W
+                        corrections += 1
+                    if shape.height < _MIN_H:
+                        shape.height = _MIN_H
+                        corrections += 1
+                    
+                    # Prevent overlap
+                    for pc in resized_charts:
+                        if abs(shape.left - pc.left) < _Inches(2.0) and abs(shape.top - pc.top) < _Inches(2.0):
+                            shape.top = pc.top + pc.height + _Inches(0.2)
+                            corrections += 1
+                    resized_charts.append(shape)
+            except Exception:
+                pass
 
     if corrections > 0:
         prs.save(pptx_path)
@@ -7939,8 +8254,7 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                         ratio = _contrast_ratio(text_rgb, bg_rgb)
                                         if ratio < 3.0:
                                             # Low contrast — replace with high-contrast color
-                                            rPr.remove(solidFill)
-                                            _make_high_contrast_fill(rPr, bg_hex)
+                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
                                         # else: contrast is adequate, keep original color
                                     else:
                                         # Can't determine text color — check if stripping is safe
@@ -7952,8 +8266,16 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                             rPr.remove(solidFill)
                                         else:
                                             # Stripping would cause dark-on-dark — replace instead
-                                            rPr.remove(solidFill)
-                                            _make_high_contrast_fill(rPr, bg_hex)
+                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                            else:
+                                # No rPr at all — run inherits default (typically black)
+                                default_rgb = (0, 0, 0)
+                                ratio = _contrast_ratio(default_rgb, bg_rgb)
+                                if ratio < 3.0:
+                                    from lxml import etree as _etree
+                                    new_rPr = _etree.Element(ns_a + "rPr")
+                                    run._r.insert(0, new_rPr)
+                                    _make_high_contrast_fill(new_rPr, bg_hex)
             except Exception:
                 pass
             
@@ -7991,8 +8313,7 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                                 text_rgb = _hex_to_rgb(text_hex)
                                                 ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
                                                 if ratio < 3.0:
-                                                    rPr.remove(solidFill)
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex)
+                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
                                                 # else: keep original
                                             else:
                                                 # Can't determine text color — check if stripping is safe
@@ -8001,8 +8322,13 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                                 if ratio >= 3.0:
                                                     rPr.remove(solidFill)
                                                 else:
-                                                    rPr.remove(solidFill)
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex)
+                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
+            except Exception:
+                pass
+
+            # Charts — axis labels, data labels, legend text
+            try:
+                _fix_chart_text_contrast(shape, slide)
             except Exception:
                 pass
         
