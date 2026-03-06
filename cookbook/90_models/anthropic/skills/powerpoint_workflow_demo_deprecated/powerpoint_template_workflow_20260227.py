@@ -2,13 +2,12 @@
 Agno Workflow: PowerPoint Template Generation Pipeline.
 
 A sequential workflow that generates presentations using Claude's pptx skill,
-intelligently adds AI-generated images via NanoBanana, and
-applies a custom .pptx template for professional styling. Auxiliary agents
-like image planning and visual review are swappable (Claude, OpenAI, Gemini).
+intelligently adds AI-generated images via NanoBanana (powered by Gemini), and
+applies a custom .pptx template for professional styling.
 
 Workflow steps:
   Step 1  Content Generation  - Claude + pptx skill -> raw .pptx
-  Step 2  Image Planning      - Swappable Agent decides which slides need images
+  Step 2  Image Planning      - Gemini decides which slides need images
   Step 3  Image Generation    - NanoBanana generates slide images
   Step 4  Template Assembly   - The most critical step. Before constructing any slide,
                                 consolidates all context into a comprehensive knowledge
@@ -20,7 +19,7 @@ Workflow steps:
                                 image assets with dimensions and target layouts. Only then
                                 does the actual PPTX construction begin, governed entirely
                                 by this knowledge file as the single source of truth.
-  Step 5  Visual Quality Review (optional) - Swappable Vision Agent inspects rendered slides
+  Step 5  Visual Quality Review (optional) - Gemini vision inspects rendered slides
 
 Operating modes:
   With template (--template / -t):
@@ -37,21 +36,10 @@ Operating modes:
     template is available.
 
 Prerequisites:
-- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
-- export ANTHROPIC_API_KEY="your_api_key_here" (always required)
-- export OPENAI_API_KEY="your_openai_api_key_here" (for --llm-provider openai)
-- export GOOGLE_API_KEY="your_google_api_key_here" (for --llm-provider gemini)
+- uv pip install agno anthropic python-pptx google-genai pillow
+- export ANTHROPIC_API_KEY="your_api_key_here"
+- export GOOGLE_API_KEY="your_google_api_key_here"
 - A .pptx template file (optional — omit to get raw Claude output)
-- LibreOffice (required for --visual-review step: `sudo apt-get install -y libreoffice`)
-- poppler-utils (required for per-slide PNG rendering: `sudo apt-get install -y poppler-utils`)
-
-Template Quality Safeguards:
-  When a template is provided, these safeguards prevent common styling issues:
-  - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review
-  - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
-  - Minimum font size: 10pt body / 14pt title floor prevents unreadable text from fit_text() shrinkage
-  - Overlap reflow: Post-transfer overlap detection moves colliding shapes apart
-  - Template-aware LLM prompts: Tier 2 prompt includes template constraints (bg color, text color, max shapes)
 
 Usage:
     # Basic usage with a template:
@@ -125,7 +113,6 @@ import json
 import os
 import shutil
 import sys
-import time
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
@@ -134,7 +121,7 @@ from typing import Dict, List
 
 from agno.agent import Agent
 from agno.media import Image as AgnoImage
-from lib_patches.anthropic.claude import Claude
+from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.run.agent import RunOutput
 from agno.tools.nano_banana import NanoBananaTools
@@ -148,17 +135,10 @@ from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
-from pydantic import BaseModel, Field, model_validator
-from typing import Optional
+from pydantic import BaseModel, Field
 
 # Module-level verbose flag (set from CLI args)
 VERBOSE = False
-
-# Minimum body font size in points — fit_text() and MSO_AUTO_SIZE can shrink text
-# to as little as 4pt which is unreadable. This floor ensures legibility.
-# When text overflows at this size, content is truncated with '…' instead.
-_MIN_BODY_FONT_PT = 10
-_MIN_TITLE_FONT_PT = 14
 
 
 # ---------------------------------------------------------------------------
@@ -250,36 +230,29 @@ class SlideQualityReport(BaseModel):
     Produced by a senior UI/UX designer persona who evaluates both structural
     correctness AND visual design quality (typography hierarchy, whitespace balance,
     color palette utilization, visual interest, and brand consistency).
-
-    Robust schema: accepts 'design_score' as an alias for 'overall_quality' to handle
-    vision model responses that may use either field name. Contains graceful defaults
-    for all required fields so partial responses never crash the pipeline.
     """
 
-    slide_index: int = Field(default=0, description="Zero-based index of the slide")
+    slide_index: int = Field(description="Zero-based index of the slide")
     overall_quality: str = Field(
-        default="acceptable",
         description=(
             "Overall slide design quality from a professional designer perspective. "
             "One of: good (well-designed, minimal changes), "
             "acceptable (functional but improvable), poor (broken or significantly underdesigned)."
-        ),
+        )
     )
     design_score: int = Field(
-        default=5,
         description=(
             "Designer score 1-10. 9-10: excellent layout and visual hierarchy. "
             "7-8: good, minor improvements possible. 5-6: functional but generic. "
             "3-4: noticeably bland or has design problems. 1-2: broken or unusable."
-        ),
+        )
     )
     is_visually_bland: bool = Field(
-        default=False,
         description=(
             "True if the slide fails to use the template's visual vocabulary — "
             "e.g. text-only with no accent colors applied, no visual hierarchy, "
             "excessive unused whitespace, or content that looks like a bare draft."
-        ),
+        )
     )
     blandness_reason: str = Field(
         default="",
@@ -295,38 +268,6 @@ class SlideQualityReport(BaseModel):
             "defects and design quality improvements. Be specific and actionable."
         ),
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reconcile_quality_fields(cls, data):
-        """Accept design_score as alias for overall_quality and vice-versa.
-
-        Vision models may return either field name. This validator normalises
-        the data so both fields are always populated, preventing Pydantic
-        validation errors that caused the visual review step to silently do nothing.
-        """
-        if not isinstance(data, dict):
-            return data
-        # If overall_quality is missing but design_score is present, synthesise it
-        if not data.get("overall_quality") and "design_score" in data:
-            score = data["design_score"]
-            try:
-                score = int(score)
-            except (TypeError, ValueError):
-                score = 5
-            if score >= 8:
-                data["overall_quality"] = "good"
-            elif score >= 5:
-                data["overall_quality"] = "acceptable"
-            else:
-                data["overall_quality"] = "poor"
-        # If design_score is missing but overall_quality is present, synthesise it
-        if not data.get("design_score") and data.get("overall_quality"):
-            quality_map = {"good": 8, "acceptable": 6, "poor": 3}
-            data["design_score"] = quality_map.get(
-                str(data["overall_quality"]).lower(), 5
-            )
-        return data
 
 
 class PresentationQualityReport(BaseModel):
@@ -666,14 +607,15 @@ def _relative_luminance(r: int, g: int, b: int) -> float:
     return 0.2126 * _linearize(r) + 0.7152 * _linearize(g) + 0.0722 * _linearize(b)
 
 
-def _contrast_ratio(color1_rgb: tuple, color2_rgb: tuple) -> float:
-    """Calculate WCAG contrast ratio between two RGB color tuples.
+def _contrast_ratio(color1_hex: str, color2_hex: str) -> float:
+    """Calculate WCAG contrast ratio between two hex colors.
 
-    Each argument should be an (R, G, B) tuple with values 0-255.
     Returns a ratio >= 1.0. WCAG AA requires >= 4.5 for normal text.
     """
-    l1 = _relative_luminance(*color1_rgb)
-    l2 = _relative_luminance(*color2_rgb)
+    r1, g1, b1 = _hex_to_rgb(color1_hex)
+    r2, g2, b2 = _hex_to_rgb(color2_hex)
+    l1 = _relative_luminance(r1, g1, b1)
+    l2 = _relative_luminance(r2, g2, b2)
     lighter = max(l1, l2)
     darker = min(l1, l2)
     return (lighter + 0.05) / (darker + 0.05)
@@ -746,30 +688,11 @@ def _get_slide_background_color(
     except Exception:
         pass
 
-    # 4. Delegate to robust multi-layer detection (_get_shape_background_color)
-    #    which handles blipFill (image), gradFill (gradient), bgRef (theme ref),
-    #    large background-covering shapes, and dk1/dk2 theme heuristics.
-    #    This is critical for templates with non-solidFill dark backgrounds.
-    try:
-        # Use any shape on the slide as a reference for per-shape detection
-        for shape in slide.shapes:
-            bg_color_robust = _get_shape_background_color(shape, slide)
-            if bg_color_robust and bg_color_robust != "FFFFFF":
-                print(
-                    "  [BG DETECT] _get_slide_background_color: robust detection "
-                    "found bg=%s via _get_shape_background_color fallback."
-                    % bg_color_robust
-                )
-                return bg_color_robust
-            break  # Only need to check once — background is slide-level
-    except Exception:
-        pass
-
-    # 5. Use theme lt1 (usually white or near-white)
+    # 4. Use theme lt1 (usually white or near-white)
     if template_style and template_style.theme.lt1:
         return template_style.theme.lt1
 
-    # 6. Default white
+    # 5. Default white
     return "FFFFFF"
 
 
@@ -784,32 +707,7 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
     theme lt1 (light color) for text on dark backgrounds.
     """
     if template_style is None:
-        # Template-independent fallback: detect background and fix contrast
-        ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-        for shape in slide.shapes:
-            if getattr(shape, "has_text_frame", False):
-                bg_hex = _get_shape_background_color(shape, slide)
-                bg_rgb = _hex_to_rgb(bg_hex)
-                for para in shape.text_frame.paragraphs:
-                    for run in para.runs:
-                        if not run.text.strip():
-                            continue
-                        rPr = run._r.find(ns_a + "rPr")
-                        if rPr is not None:
-                            solidFill = rPr.find(ns_a + "solidFill")
-                            if solidFill is not None:
-                                text_hex = _extract_color_from_solid_fill(solidFill)
-                                if text_hex:
-                                    text_rgb = _hex_to_rgb(text_hex)
-                                    ratio = _contrast_ratio(text_rgb, bg_rgb)
-                                    if ratio < 3.0:
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
-                            else:
-                                # Check default (black) against background
-                                ratio = _contrast_ratio((0, 0, 0), bg_rgb)
-                                if ratio < 3.0:
-                                    _make_high_contrast_fill(rPr, bg_hex)
-        return  # Done with template-independent path
+        return
 
     bg_color = _get_slide_background_color(slide, template_style)
     if not bg_color:
@@ -856,21 +754,10 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
                                 )
 
                 if not text_color:
-                    # No explicit color — assume inherited default is dk1 (typically black).
-                    # On dark backgrounds this creates invisible text. Fix it.
-                    inherited_color = theme.dk1 or "000000"
-                    ratio = _contrast_ratio(_hex_to_rgb(inherited_color), _hex_to_rgb(bg_color))
-                    if ratio < CONTRAST_THRESHOLD:
-                        # Inherited color has poor contrast — set explicit high-contrast color
-                        if rPr is None:
-                            rPr = etree.SubElement(run._r, ns_a + "rPr")
-                        new_fill = etree.SubElement(rPr, ns_a + "solidFill")
-                        srgb = etree.SubElement(new_fill, ns_a + "srgbClr")
-                        srgb.set("val", contrast_color)
-                    continue
+                    continue  # No explicit color, skip (inherits from theme which should be correct)
 
                 # Check contrast
-                ratio = _contrast_ratio(_hex_to_rgb(text_color), _hex_to_rgb(bg_color))
+                ratio = _contrast_ratio(text_color, bg_color)
 
                 if ratio < CONTRAST_THRESHOLD:
                     if VERBOSE:
@@ -896,7 +783,6 @@ def _extract_table_styles_from_prs(prs) -> list:
     ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
 
     for slide in prs.slides:
-        resized_charts = []
         for shape in slide.shapes:
             if not shape.has_table:
                 continue
@@ -1027,7 +913,6 @@ def _extract_chart_styles_from_prs(prs) -> list:
     }
 
     for slide in prs.slides:
-        resized_charts = []
         for shape in slide.shapes:
             if not shape.has_chart:
                 continue
@@ -1788,18 +1673,8 @@ def _extract_slide_content(slide) -> SlideContent:
 
         if shape.has_text_frame:
             text_frame = shape.text_frame
-            # Guard: shape.is_placeholder can be True but placeholder_format may
-            # still raise "shape is not a placeholder" for Tier-2 LLM-generated
-            # slides with non-standard XML. Always access via try/except.
-            ph_idx = None
             if shape.is_placeholder:
-                try:
-                    ph_fmt = shape.placeholder_format
-                    ph_idx = ph_fmt.idx if ph_fmt is not None else None
-                except Exception:
-                    ph_idx = None  # treat as non-placeholder text box
-
-            if ph_idx is not None:
+                ph_idx = shape.placeholder_format.idx
                 if ph_idx == 0:
                     content.title = text_frame.text.strip()
                 elif ph_idx == 1:
@@ -1817,7 +1692,7 @@ def _extract_slide_content(slide) -> SlideContent:
                         if text:
                             content.body_paragraphs.append((text, para.level))
             else:
-                # Non-placeholder text boxes: preserve styling via XML.
+                # Preserve non-placeholder text boxes as shapes to keep styling.
                 text_val = text_frame.text.strip()
                 if text_val:
                     content.has_text_box = True
@@ -3108,27 +2983,6 @@ def _populate_placeholder_with_format(
         if VERBOSE:
             print("[VERBOSE] Exception suppressed: %s" % str(e))
         tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-
-    # --- Fix 3: Minimum font size enforcement ---
-    # fit_text() can shrink text to 4pt or less to fit everything. Enforce a
-    # readable minimum. If text overflows at the minimum size, truncate content.
-    min_font_pt = _MIN_TITLE_FONT_PT if is_title else _MIN_BODY_FONT_PT
-    min_font_sz = min_font_pt * 100  # OOXML hundredths of a point
-    ns_a_mincheck = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    font_too_small = False
-    for para in tf.paragraphs:
-        for run in para.runs:
-            rPr = run._r.find(ns_a_mincheck + "rPr")
-            if rPr is not None:
-                sz = rPr.get("sz")
-                if sz and int(sz) < min_font_sz:
-                    font_too_small = True
-                    rPr.set("sz", str(min_font_sz))
-    if font_too_small:
-        print(
-            "  [FONT GUARD] Font size was below %dpt minimum — enforced %dpt."
-            " Text may need truncation." % (min_font_pt, min_font_pt)
-        )
         # Ensure word_wrap is True — fit_text machinery may have reset it.
         tf.word_wrap = True
 
@@ -3429,133 +3283,6 @@ def _apply_template_font_to_shape_xml(shape_elem, font_family: str) -> None:
         pass
 
 
-def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
-    """Fix 4: Detect and resolve overlapping non-placeholder shapes.
-
-    After shape transfer, multiple shapes may overlap because the LLM generated
-    them for a full slide but they were rescaled into a smaller template region.
-
-    Algorithm:
-      1. Collect all non-placeholder shapes with text content.
-      2. Sort by top position (natural reading order).
-      3. For each pair of adjacent shapes, if they vertically overlap,
-         push the lower shape down to just below the upper shape.
-      4. Enforce minimum shape dimensions (prevent near-invisible shapes).
-      5. If shapes would push off-slide, scale down proportionally.
-
-    Returns True if any shapes were adjusted.
-    """
-    # Collect non-placeholder shapes with position
-    movable_shapes = []
-    for shape in list(slide.shapes):
-        try:
-            if shape.is_placeholder:
-                continue
-            # Only process shapes that have meaningful dimensions
-            if shape.width > 0 and shape.height > 0:
-                movable_shapes.append(shape)
-        except Exception:
-            continue
-
-    if len(movable_shapes) < 2:
-        return False
-
-    modified = False
-
-    # --- Phase 1: Enforce minimum shape dimensions ---
-    min_width = int(slide_width * 0.08)   # 8% of slide width
-    min_height = int(slide_height * 0.04)  # 4% of slide height
-
-    for shape in movable_shapes:
-        try:
-            if shape.width < min_width:
-                if VERBOSE:
-                    print(
-                        "  [OVERLAP FIX] Shape too narrow (%d EMU → %d EMU minimum)"
-                        % (shape.width, min_width)
-                    )
-                shape.width = min_width
-                modified = True
-            if shape.height < min_height:
-                if VERBOSE:
-                    print(
-                        "  [OVERLAP FIX] Shape too short (%d EMU → %d EMU minimum)"
-                        % (shape.height, min_height)
-                    )
-                shape.height = min_height
-                modified = True
-        except Exception:
-            continue
-
-    # --- Phase 2: Sort shapes by vertical position and fix overlaps ---
-    # Sort by top position for natural reading order
-    try:
-        movable_shapes.sort(key=lambda s: (s.top, s.left))
-    except Exception:
-        return modified
-
-    MARGIN = int(slide_height * 0.01)  # 1% gap between shapes
-    overlap_count = 0
-    for i in range(len(movable_shapes) - 1):
-        try:
-            upper = movable_shapes[i]
-            lower = movable_shapes[i + 1]
-
-            upper_bottom = upper.top + upper.height
-            # Check for vertical overlap (shapes on similar x-axis range)
-            x_overlap = (
-                lower.left < upper.left + upper.width
-                and lower.left + lower.width > upper.left
-            )
-
-            if x_overlap and lower.top < upper_bottom + MARGIN:
-                new_top = upper_bottom + MARGIN
-                if VERBOSE:
-                    print(
-                        "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
-                        "(was overlapping by %d EMU)"
-                        % (lower.top, new_top, upper_bottom - lower.top)
-                    )
-                lower.top = new_top
-                overlap_count += 1
-                modified = True
-        except Exception:
-            continue
-
-    # --- Phase 3: If reflow pushed shapes off-slide, scale down ---
-    if modified:
-        try:
-            max_bottom = max(
-                s.top + s.height for s in movable_shapes
-                if hasattr(s, "top") and hasattr(s, "height")
-            )
-            safe_bottom = int(slide_height * 0.92)  # 8% bottom margin
-            if max_bottom > safe_bottom and max_bottom > 0:
-                scale = safe_bottom / max_bottom
-                if scale < 1.0 and scale > 0.5:  # Don't shrink more than 50%
-                    for shape in movable_shapes:
-                        try:
-                            shape.top = int(shape.top * scale)
-                            shape.height = int(shape.height * scale)
-                        except Exception:
-                            continue
-                    if VERBOSE:
-                        print(
-                            "  [OVERLAP FIX] Scaled shapes down by %.0f%% to fit slide"
-                            % ((1 - scale) * 100)
-                        )
-        except Exception:
-            pass
-
-    if overlap_count > 0:
-        print(
-            "  [OVERLAP FIX] Resolved %d overlapping shape(s) via vertical reflow."
-            % overlap_count
-        )
-
-    return modified
-
-
 def _transfer_shapes(
     slide,
     shapes_xml,
@@ -3718,928 +3445,6 @@ def _remove_empty_textboxes(slide) -> None:
             pass
 
 
-# ---------------------------------------------------------------------------
-# Phase A+B: Semantic Content-Aware Layout Engine
-# ---------------------------------------------------------------------------
-# Classifies slide content into semantic types (sequential, comparative,
-# metrics, hero) and routes to specialized, visually-rich layout builders.
-# Every builder is fully exception-isolated: failures log a warning and
-# return False so _populate_slide() always has a safe fallback path.
-# ---------------------------------------------------------------------------
-
-import re as _re
-
-
-class SlideSemanticType(str, Enum):
-    """Semantic layout category for a slide's content."""
-
-    SEQUENTIAL = "sequential"    # Phase/Step/Year progression → Timeline or Chevron
-    COMPARATIVE = "comparative"  # 2-4 parallel peer categories → Card Grid
-    METRICS = "metrics"          # KPI-heavy slide → KPI Dashboard
-    HERO = "hero"                # < 15 words total → Full-bleed Hero
-    DEFAULT = "default"          # Fallback — standard bulleted layout
-
-
-@dataclass
-class SemanticSlideContext:
-    """Result of semantic classification for a single slide."""
-
-    semantic_type: SlideSemanticType = SlideSemanticType.DEFAULT
-    confidence: float = 0.0
-    extracted_metrics: list = field(default_factory=list)   # [{value, label, raw}]
-    group_count: int = 0
-    sequential_labels: list = field(default_factory=list)   # ["Phase 1", "Phase 2"…]
-    sequential_descriptions: list = field(default_factory=list)
-    storyboard_hint: str = "default"
-
-
-# ── Metric extraction patterns (priority-ordered) ──────────────────────────
-
-_METRIC_PATTERNS = [
-    # Currency ranges: $169.2B → $395B  |  $6.9B → $41B
-    (r'\$[\d,]+(?:\.\d+)?[BbMmKk]?\s*(?:→|->|to)\s*\$[\d,]+(?:\.\d+)?[BbMmKk]?', 0.95),
-    # Single currency: $41B  |  $6.9M  |  $300K
-    (r'\$[\d,]+(?:\.\d+)?[BbMmKk]', 0.90),
-    # Percentage + optional label: 42.8% CAGR  |  18.4%  |  >100%
-    (r'>?\s*[\d,]+(?:\.\d+)?%(?:\s+[A-Z]{2,8})?', 0.90),
-    # X-multiples: 5x  |  3X  |  10×
-    (r'\b[\d]+[xX×]\b', 0.85),
-    # Time-bounded: 90-day  |  18-month  |  3 years
-    (r'\b\d+[\-–\s]?\d*\s*(?:day|month|year)s?\b', 0.80),
-    # Count + noun: 300+ deals  |  75K+ users  |  3-5 pilots
-    (r'\b\d+[KkMmBb]?\+?\s+(?:deals?|users?|districts?|schools?|pilots?|customers?)', 0.80),
-    # Financial acronyms with attached value
-    (r'\b(?:NRR|ARR|MRR|CAGR|CAC|LTV|ROI|ACV)\b[^\n]{0,30}[\d,]+%?', 0.85),
-    # Standalone large numbers: 75K, 300+
-    (r'\b\d{1,3}(?:,\d{3})*[KkMmBb]?\+?\b', 0.65),
-]
-
-_SEQUENTIAL_PATTERN = _re.compile(
-    r'^(?:Phase|Step|Stage|Year|Month|Quarter|Q|Wave|Round|Milestone|Sprint)\s*[\d]+',
-    _re.IGNORECASE,
-)
-_SEQUENTIAL_ORDINAL = _re.compile(r'\b(?:1st|2nd|3rd|\d+th)\b', _re.IGNORECASE)
-
-
-def _extract_kpi_metrics(body_paragraphs: list) -> list:
-    """Extract quantifiable metrics from slide text using regex patterns.
-
-    Args:
-        body_paragraphs: List of (text, level) tuples from SlideContent.
-
-    Returns:
-        List of dicts with keys: value, label, raw_line, confidence.
-        Returns [] on any error or when < 2 distinct metrics are found.
-    """
-    try:
-        results = []
-        seen_values: set = set()
-
-        lines = [para[0] if isinstance(para, tuple) else str(para)
-                 for para in body_paragraphs]
-
-        for line_idx, line in enumerate(lines):
-            if not line.strip():
-                continue
-            for pattern, base_confidence in _METRIC_PATTERNS:
-                matches = _re.findall(pattern, line)
-                for match in matches:
-                    match_str = str(match).strip()
-                    if len(match_str) < 2 or match_str in seen_values:
-                        continue
-                    seen_values.add(match_str)
-
-                    # Derive a label: check same line remainder or previous line
-                    remainder = line.replace(match_str, "").strip().strip("|:–-—").strip()
-                    if len(remainder) > 3 and len(remainder) < 80:
-                        label = remainder
-                    elif line_idx > 0 and lines[line_idx - 1].strip():
-                        label = lines[line_idx - 1].strip()
-                    else:
-                        label = "Key Metric"
-
-                    results.append({
-                        "value": match_str,
-                        "label": label,
-                        "raw_line": line,
-                        "confidence": base_confidence,
-                    })
-                    break  # first matching pattern wins per line
-
-        # De-duplicate and return only if we have at least 2
-        return results if len(results) >= 2 else []
-    except Exception as e:
-        if VERBOSE:
-            print("[SEMANTIC] _extract_kpi_metrics error: %s" % str(e))
-        return []
-
-
-def _classify_slide_semantics(
-    content: "SlideContent",
-    storyboard_hint: str = "default",
-) -> SemanticSlideContext:
-    """Classify slide content into a semantic layout type with a confidence score.
-
-    Multi-signal detection:
-      - SEQUENTIAL: regex for Phase/Step/Year labels in 2+ bullets
-      - COMPARATIVE: 2-4 equal-depth peer groups detected
-      - METRICS: _extract_kpi_metrics returns 2+ values
-      - HERO: total visible word count < 15
-
-    Storyboard hints from the LLM storyboard boost confidence by +0.2.
-    If confidence < 0.5 for all types, returns DEFAULT.
-
-    Never raises: all exceptions are caught and return DEFAULT context.
-    """
-    ctx = SemanticSlideContext(storyboard_hint=storyboard_hint)
-    try:
-        paragraphs = content.body_paragraphs or []
-
-        # Bail early on empty / trivially small content
-        all_text = " ".join(
-            p[0] if isinstance(p, tuple) else str(p) for p in paragraphs
-        )
-        word_count = len(all_text.split())
-        title_words = len((content.title or "").split())
-        total_words = word_count + title_words
-
-        if total_words < 3:
-            return ctx  # DEFAULT
-
-        # ── HERO check (< 15 words total, few paragraphs, no table/chart) ─
-        if (
-            total_words < 15
-            and len(paragraphs) <= 2
-            and not content.tables
-            and not content.charts
-            and not content.images
-        ):
-            hero_confidence = 0.7
-            if storyboard_hint == "hero":
-                hero_confidence = 0.9
-            ctx.semantic_type = SlideSemanticType.HERO
-            ctx.confidence = hero_confidence
-            return ctx
-
-        # ── METRICS check ───────────────────────────────────────────────────
-        metrics = _extract_kpi_metrics(paragraphs)
-        if metrics:
-            metric_confidence = 0.65 + min(len(metrics) * 0.05, 0.20)
-            if storyboard_hint in ("metrics", "revenue", "kpi"):
-                metric_confidence = min(metric_confidence + 0.20, 0.95)
-            if metric_confidence >= 0.60:
-                ctx.semantic_type = SlideSemanticType.METRICS
-                ctx.confidence = metric_confidence
-                ctx.extracted_metrics = metrics
-                return ctx
-
-        # ── SEQUENTIAL check ────────────────────────────────────────────────
-        seq_labels = []
-        seq_descs = []
-        level0_paras = [p for p in paragraphs if (p[1] if isinstance(p, tuple) else 0) == 0]
-        for i, para in enumerate(level0_paras):
-            text = para[0] if isinstance(para, tuple) else str(para)
-            if _SEQUENTIAL_PATTERN.match(text) or _SEQUENTIAL_ORDINAL.search(text):
-                seq_labels.append(text)
-                # Collect sub-bullets as description
-                sub_bullets = []
-                for sub in paragraphs:
-                    sub_text = sub[0] if isinstance(sub, tuple) else str(sub)
-                    sub_level = sub[1] if isinstance(sub, tuple) else 0
-                    if sub_level > 0 and sub_text not in seq_labels:
-                        sub_bullets.append(sub_text)
-                seq_descs.append(" ".join(sub_bullets[:3]).strip())
-
-        if len(seq_labels) >= 2:
-            seq_confidence = 0.60 + min(len(seq_labels) * 0.05, 0.20)
-            if storyboard_hint == "sequential":
-                seq_confidence = min(seq_confidence + 0.20, 0.95)
-            # Visual suggestion keywords as secondary signal
-            visual = getattr(content, "visual_suggestion", "") or ""
-            if any(k in visual.lower() for k in ("timeline", "chevron", "process", "roadmap")):
-                seq_confidence = min(seq_confidence + 0.10, 0.95)
-            if seq_confidence >= 0.60:
-                ctx.semantic_type = SlideSemanticType.SEQUENTIAL
-                ctx.confidence = seq_confidence
-                ctx.sequential_labels = seq_labels
-                ctx.sequential_descriptions = seq_descs
-                return ctx
-
-        # ── COMPARATIVE check ───────────────────────────────────────────────
-        # Detect 2-4 peer-level bold/titled groups: level-0 bullets with sub-items
-        group_headers = [
-            p[0] if isinstance(p, tuple) else str(p)
-            for p in paragraphs
-            if (p[1] if isinstance(p, tuple) else 0) == 0
-        ]
-        sub_item_groups = []
-        for h in group_headers:
-            subs = [
-                p[0] if isinstance(p, tuple) else str(p)
-                for p in paragraphs
-                if (p[1] if isinstance(p, tuple) else 0) > 0
-            ]
-            sub_item_groups.append(subs)
-
-        if 2 <= len(group_headers) <= 4 and all(sub_item_groups):
-            # Check groups are roughly balanced (no group has 5x more items than another)
-            lengths = [max(1, len(s)) for s in sub_item_groups]
-            if max(lengths) / min(lengths) <= 4:
-                comp_confidence = 0.60
-                if storyboard_hint == "comparative":
-                    comp_confidence = min(comp_confidence + 0.20, 0.90)
-                if comp_confidence >= 0.60:
-                    ctx.semantic_type = SlideSemanticType.COMPARATIVE
-                    ctx.confidence = comp_confidence
-                    ctx.group_count = len(group_headers)
-                    ctx.sequential_labels = group_headers
-                    ctx.sequential_descriptions = [
-                        " ".join(s[:3]) for s in sub_item_groups
-                    ]
-                    return ctx
-
-        # DEFAULT fallback
-        return ctx
-
-    except Exception as e:
-        if VERBOSE:
-            print("[SEMANTIC] _classify_slide_semantics error: %s — returning DEFAULT" % str(e))
-        return SemanticSlideContext(storyboard_hint=storyboard_hint)
-
-
-# ── Helper: resolve accent color safely ────────────────────────────────────
-
-def _safe_accent(template_style: "TemplateStyle | None", idx: int = 0, fallback: str = "2E4057") -> str:
-    """Return hex accent color by index; fall back to a professional dark blue."""
-    try:
-        if template_style and template_style.theme.accent_colors:
-            colors = template_style.theme.accent_colors
-            return colors[idx % len(colors)] or fallback
-    except Exception:
-        pass
-    # No-template fallback palette (dark navy, blue, orange, teal)
-    _fallback_palette = ["2E4057", "048A81", "EA6C00", "5C4033", "1B4332", "6A0572"]
-    return _fallback_palette[idx % len(_fallback_palette)]
-
-
-def _safe_font(template_style: "TemplateStyle | None", major: bool = True) -> str:
-    try:
-        if template_style:
-            return template_style.theme.major_font if major else template_style.theme.minor_font
-    except Exception:
-        pass
-    return "Calibri"
-
-
-def _rgb_from_hex(hex_str: str):
-    """Return pptx RGBColor from hex string, or RGBColor(0,0,0) on error."""
-    from pptx.dml.color import RGBColor
-    try:
-        h = hex_str.strip().lstrip("#")
-        if len(h) == 6:
-            return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-    except Exception:
-        pass
-    return RGBColor(0, 0, 0)
-
-
-def _add_filled_rect(slide, left, top, width, height, hex_color: str):
-    """Add a filled rectangle shape to a slide. Returns the shape or None."""
-    from pptx.util import Emu
-    from pptx.dml.color import RGBColor
-    try:
-        from pptx.enum.shapes import MSO_SHAPE_TYPE
-        shape = slide.shapes.add_shape(
-            1,  # MSO_SHAPE.RECTANGLE
-            left, top, width, height
-        )
-        fill = shape.fill
-        fill.solid()
-        fill.fore_color.rgb = _rgb_from_hex(hex_color)
-        shape.line.fill.background()  # no border
-        return shape
-    except Exception as e:
-        if VERBOSE:
-            print("[SEMANTIC] _add_filled_rect error: %s" % str(e))
-        return None
-
-
-def _add_textbox_styled(
-    slide,
-    left, top, width, height,
-    text: str,
-    font_size_pt: int = 14,
-    bold: bool = False,
-    italic: bool = False,
-    hex_color: str = "000000",
-    font_name: str = "Calibri",
-    wrap: bool = True,
-    align_center: bool = False,
-):
-    """Add a styled text box. Returns shape or None on error."""
-    from pptx.util import Pt as _Pt, Emu
-    from pptx.dml.color import RGBColor
-    from pptx.enum.text import PP_ALIGN
-    try:
-        txBox = slide.shapes.add_textbox(left, top, width, height)
-        tf = txBox.text_frame
-        tf.word_wrap = wrap
-        p = tf.paragraphs[0]
-        if align_center:
-            p.alignment = PP_ALIGN.CENTER
-        run = p.add_run()
-        run.text = text
-        run.font.size = _Pt(font_size_pt)
-        run.font.bold = bold
-        run.font.italic = italic
-        run.font.color.rgb = _rgb_from_hex(hex_color)
-        run.font.name = font_name
-        return txBox
-    except Exception as e:
-        if VERBOSE:
-            print("[SEMANTIC] _add_textbox_styled error: %s" % str(e))
-        return None
-
-
-# ── Layout Builder 1: Horizontal Timeline ──────────────────────────────────
-
-def _build_horizontal_timeline(
-    slide,
-    labels: list,
-    descriptions: list,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Build a horizontal timeline with N labeled boxes connected by arrows.
-
-    Caps at 5 items. Auto-adjusts box width. Labels truncated at 22 chars.
-    Falls back gracefully on any exception.
-
-    Returns True on success, False on failure (caller uses DEFAULT path).
-    """
-    try:
-        from pptx.util import Emu, Pt as _Pt
-        from pptx.dml.color import RGBColor
-
-        n = min(len(labels), 5)
-        if n < 2:
-            return False
-
-        labels = labels[:n]
-        descriptions = (descriptions[:n] + [""] * n)[:n]
-
-        # Layout geometry
-        ARROW_W = int(area.width * 0.03)
-        total_arrow = ARROW_W * (n - 1)
-        box_w = max(int((area.width - total_arrow) / n), int(Inches(1.5)))
-        box_h = int(area.height * 0.55)
-        box_top = area.top + int(area.height * 0.10)
-        desc_top = box_top + box_h + int(Inches(0.15))
-        desc_h = area.top + area.height - desc_top - int(Inches(0.05))
-        desc_h = max(desc_h, int(Inches(0.3)))
-
-        font_name = _safe_font(template_style, major=True)
-        body_font = _safe_font(template_style, major=False)
-
-        for i in range(n):
-            color_hex = _safe_accent(template_style, i)
-            x = area.left + i * (box_w + ARROW_W)
-
-            # Colored box
-            rect = _add_filled_rect(slide, x, box_top, box_w, box_h, color_hex)
-
-            # Label inside box
-            label_text = str(labels[i])[:22]
-            _add_textbox_styled(
-                slide, x + int(Inches(0.05)), box_top + int(Inches(0.08)),
-                box_w - int(Inches(0.10)), box_h - int(Inches(0.15)),
-                label_text,
-                font_size_pt=12, bold=True, hex_color="FFFFFF",
-                font_name=font_name, align_center=True,
-            )
-
-            # Description below the box
-            desc = str(descriptions[i])[:120] if descriptions[i] else ""
-            if desc:
-                _add_textbox_styled(
-                    slide, x, desc_top, box_w, desc_h,
-                    desc,
-                    font_size_pt=9, bold=False, hex_color="333333",
-                    font_name=body_font, align_center=True,
-                )
-
-            # Arrow connector between boxes (not after last box)
-            if i < n - 1:
-                arrow_x = x + box_w
-                try:
-                    arrow = slide.shapes.add_shape(
-                        13,  # MSO_SHAPE.RIGHT_ARROW
-                        arrow_x,
-                        box_top + int(box_h * 0.35),
-                        ARROW_W,
-                        int(box_h * 0.30),
-                    )
-                    arrow.fill.solid()
-                    arrow.fill.fore_color.rgb = _rgb_from_hex(
-                        _safe_accent(template_style, i + 1)
-                    )
-                    arrow.line.fill.background()
-                except Exception:
-                    pass  # Arrow is cosmetic — skip if it fails
-
-        print("[SEMANTIC] Built HORIZONTAL TIMELINE: %d items" % n)
-        return True
-
-    except Exception as e:
-        print("[SEMANTIC] _build_horizontal_timeline failed: %s — falling back" % str(e))
-        return False
-
-
-# ── Layout Builder 2: Chevron Process ─────────────────────────────────────
-
-def _build_chevron_process(
-    slide,
-    labels: list,
-    descriptions: list,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Build a horizontal chevron/pentagon process flow (up to 4 items).
-
-    Uses PPTX pentagon shape (arrow chevron). Falls back to
-    _build_horizontal_timeline if shape insertion fails.
-
-    Returns True on success, False on failure.
-    """
-    try:
-        from pptx.util import Emu, Pt as _Pt
-
-        n = min(len(labels), 4)
-        if n < 2:
-            return False
-
-        labels = labels[:n]
-        descriptions = (descriptions[:n] + [""] * n)[:n]
-
-        # Each pentagon overlaps the previous by 10%
-        overlap = int(area.width * 0.04)
-        shape_w = int((area.width + overlap * (n - 1)) / n)
-        shape_h = int(area.height * 0.50)
-        shape_top = area.top + int(area.height * 0.08)
-        desc_top = shape_top + shape_h + int(Inches(0.12))
-        desc_h = max(area.top + area.height - desc_top - int(Inches(0.05)), int(Inches(0.3)))
-
-        font_name = _safe_font(template_style, major=True)
-        body_font = _safe_font(template_style, major=False)
-
-        for i in range(n):
-            color_hex = _safe_accent(template_style, i)
-            x = area.left + i * (shape_w - overlap)
-            try:
-                # PENTAGON = shape type 15 in python-pptx
-                chev = slide.shapes.add_shape(15, x, shape_top, shape_w, shape_h)
-                chev.fill.solid()
-                chev.fill.fore_color.rgb = _rgb_from_hex(color_hex)
-                chev.line.fill.background()
-            except Exception:
-                # Pentagon not available — fall through to rectangle timeline
-                return _build_horizontal_timeline(slide, labels, descriptions, area, template_style)
-
-            label_text = str(labels[i])[:20]
-            _add_textbox_styled(
-                slide,
-                x + int(Inches(0.06)), shape_top + int(shape_h * 0.25),
-                shape_w - int(Inches(0.12)), int(shape_h * 0.5),
-                label_text,
-                font_size_pt=11, bold=True, hex_color="FFFFFF",
-                font_name=font_name, align_center=True,
-            )
-
-            desc = str(descriptions[i])[:100] if descriptions[i] else ""
-            if desc:
-                _add_textbox_styled(
-                    slide, x, desc_top, shape_w - overlap, desc_h,
-                    desc,
-                    font_size_pt=9, bold=False, hex_color="333333",
-                    font_name=body_font, align_center=True,
-                )
-
-        print("[SEMANTIC] Built CHEVRON PROCESS: %d items" % n)
-        return True
-
-    except Exception as e:
-        print("[SEMANTIC] _build_chevron_process failed: %s — trying timeline fallback" % str(e))
-        return _build_horizontal_timeline(slide, labels, descriptions, area, template_style)
-
-
-# ── Layout Builder 3: Multi-Column Card Grid ──────────────────────────────
-
-def _build_card_grid(
-    slide,
-    labels: list,
-    descriptions: list,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Build a 2-4 column card grid with colored header bands and body text.
-
-    Auto-selects column count from len(labels). Truncates body at 200 chars.
-    Falls back gracefully on any exception.
-
-    Returns True on success, False on failure.
-    """
-    try:
-        from pptx.util import Emu, Pt as _Pt
-
-        n = max(2, min(len(labels), 4))
-        labels = (list(labels) + [""] * n)[:n]
-        descriptions = (list(descriptions) + [""] * n)[:n]
-
-        CARD_GAP = int(Inches(0.12))
-        card_w = max(int((area.width - CARD_GAP * (n - 1)) / n), int(Inches(1.4)))
-        card_h = int(area.height * 0.80)
-        card_top = area.top + int(area.height * 0.05)
-        HEADER_H = int(card_h * 0.25)
-        body_top_offset = HEADER_H + int(Inches(0.06))
-        body_h = card_h - HEADER_H - int(Inches(0.08))
-
-        font_name = _safe_font(template_style, major=True)
-        body_font = _safe_font(template_style, major=False)
-        # Light gray for card body background
-        CARD_BG = "F5F5F5"
-        dk_color = "FFFFFF"  # text on colored header
-
-        for i in range(n):
-            accent_hex = _safe_accent(template_style, i)
-            x = area.left + i * (card_w + CARD_GAP)
-
-            # Card body background (light gray)
-            _add_filled_rect(slide, x, card_top, card_w, card_h, CARD_BG)
-
-            # Colored header band
-            _add_filled_rect(slide, x, card_top, card_w, HEADER_H, accent_hex)
-
-            # Header label
-            header_text = str(labels[i])[:30]
-            _add_textbox_styled(
-                slide,
-                x + int(Inches(0.05)), card_top + int(Inches(0.04)),
-                card_w - int(Inches(0.10)), HEADER_H - int(Inches(0.08)),
-                header_text,
-                font_size_pt=12, bold=True, hex_color=dk_color,
-                font_name=font_name, align_center=False,
-            )
-
-            # Body description
-            body_text = str(descriptions[i])[:200]
-            if body_text:
-                _add_textbox_styled(
-                    slide,
-                    x + int(Inches(0.05)),
-                    card_top + body_top_offset,
-                    card_w - int(Inches(0.10)),
-                    body_h,
-                    body_text,
-                    font_size_pt=10, bold=False, hex_color="222222",
-                    font_name=body_font, align_center=False,
-                )
-
-        print("[SEMANTIC] Built CARD GRID: %d columns" % n)
-        return True
-
-    except Exception as e:
-        print("[SEMANTIC] _build_card_grid failed: %s — falling back" % str(e))
-        return False
-
-
-# ── Layout Builder 4: Hero Layout ─────────────────────────────────────────
-
-def _build_hero_layout(
-    slide,
-    title: str,
-    subtitle: str,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Build a centered hero layout: large title + optional subtitle.
-
-    Adds a full-content-area color-tinted background rectangle.
-    Requires area height > 1.5 inches; degrades to large textbox otherwise.
-
-    Returns True on success, False on failure.
-    """
-    try:
-        from pptx.util import Emu, Pt as _Pt
-        from pptx.enum.text import PP_ALIGN
-
-        MIN_HEIGHT = int(Inches(1.5))
-        if area.height < MIN_HEIGHT:
-            # Degrade: just a big centered textbox
-            return bool(
-                _add_textbox_styled(
-                    slide,
-                    area.left, area.top, area.width, area.height,
-                    title, font_size_pt=32, bold=True, hex_color="111111",
-                    font_name=_safe_font(template_style, major=True), align_center=True,
-                )
-            )
-
-        # Background accent rectangle (subtle tint at ~25% of area height)
-        accent_hex = _safe_accent(template_style, 0)
-        _add_filled_rect(slide, area.left, area.top, area.width, area.height, accent_hex)
-
-        # Title — oversized, centered
-        title_h = int(area.height * 0.55)
-        _add_textbox_styled(
-            slide,
-            area.left + int(Inches(0.15)),
-            area.top + int(area.height * 0.15),
-            area.width - int(Inches(0.30)),
-            title_h,
-            title,
-            font_size_pt=40, bold=True, hex_color="FFFFFF",
-            font_name=_safe_font(template_style, major=True), align_center=True,
-        )
-
-        # Subtitle — italic, smaller
-        if subtitle and subtitle.strip():
-            sub_top = area.top + int(area.height * 0.15) + title_h + int(Inches(0.08))
-            sub_h = area.top + area.height - sub_top - int(Inches(0.08))
-            sub_h = max(sub_h, int(Inches(0.3)))
-            _add_textbox_styled(
-                slide,
-                area.left + int(Inches(0.15)),
-                sub_top,
-                area.width - int(Inches(0.30)),
-                sub_h,
-                subtitle,
-                font_size_pt=18, bold=False, italic=True, hex_color="F0F0F0",
-                font_name=_safe_font(template_style, major=False), align_center=True,
-            )
-
-        print("[SEMANTIC] Built HERO LAYOUT")
-        return True
-
-    except Exception as e:
-        print("[SEMANTIC] _build_hero_layout failed: %s — falling back" % str(e))
-        return False
-
-
-# ── Layout Builder 5: KPI Dashboard ───────────────────────────────────────
-
-def _build_kpi_dashboard(
-    slide,
-    metrics: list,
-    context_text: str,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Build a KPI dashboard: horizontal metrics row + optional prose below.
-
-    Each KPI box shows a large bold value and a smaller sub-label.
-    Caps at 4 KPIs. If 0 metrics, returns False immediately.
-
-    Args:
-        metrics: List of dicts with keys: value, label.
-        context_text: Optional narrative prose to show below the KPI row.
-
-    Returns True on success, False on failure.
-    """
-    try:
-        from pptx.util import Emu, Pt as _Pt
-
-        if not metrics:
-            return False
-
-        n = min(len(metrics), 4)
-        metrics = metrics[:n]
-
-        KPI_GAP = int(Inches(0.12))
-        kpi_w = max(int((area.width - KPI_GAP * (n - 1)) / n), int(Inches(1.2)))
-        # KPI row takes 55-65% of area height; rest for context
-        HAS_CONTEXT = bool(context_text and context_text.strip())
-        kpi_h = int(area.height * (0.55 if HAS_CONTEXT else 0.75))
-        kpi_top = area.top + int(area.height * 0.05)
-        VALUE_H = int(kpi_h * 0.62)
-        LABEL_H = kpi_h - VALUE_H - int(Inches(0.04))
-
-        font_name = _safe_font(template_style, major=True)
-        body_font = _safe_font(template_style, major=False)
-
-        # Determine value font size: target ~36pt, floor 24pt
-        value_font_pt = max(24, min(36, int(36 * (area.width / (n * int(Inches(2.0)))))))
-
-        for i, metric in enumerate(metrics):
-            accent_hex = _safe_accent(template_style, i)
-            x = area.left + i * (kpi_w + KPI_GAP)
-
-            # Subtle accent-tinted background for KPI box
-            _add_filled_rect(slide, x, kpi_top, kpi_w, kpi_h, "F8F8F8")
-            # Left accent border (3px wide)
-            BORDER_W = int(Inches(0.04))
-            _add_filled_rect(slide, x, kpi_top, BORDER_W, kpi_h, accent_hex)
-
-            # Metric value (large, bold, accent color)
-            value_str = str(metric.get("value", ""))[:30]
-            _add_textbox_styled(
-                slide,
-                x + BORDER_W + int(Inches(0.05)),
-                kpi_top + int(Inches(0.05)),
-                kpi_w - BORDER_W - int(Inches(0.08)),
-                VALUE_H,
-                value_str,
-                font_size_pt=value_font_pt, bold=True, hex_color=accent_hex,
-                font_name=font_name, align_center=False,
-            )
-
-            # Sub-label (small, muted)
-            label_str = str(metric.get("label", ""))[:60]
-            if label_str:
-                _add_textbox_styled(
-                    slide,
-                    x + BORDER_W + int(Inches(0.05)),
-                    kpi_top + VALUE_H + int(Inches(0.02)),
-                    kpi_w - BORDER_W - int(Inches(0.08)),
-                    LABEL_H,
-                    label_str,
-                    font_size_pt=9, bold=False, hex_color="666666",
-                    font_name=body_font, align_center=False,
-                )
-
-        # Context narrative below the KPI row
-        if HAS_CONTEXT:
-            ctx_top = kpi_top + kpi_h + int(Inches(0.15))
-            ctx_h = area.top + area.height - ctx_top - int(Inches(0.05))
-            ctx_h = max(ctx_h, int(Inches(0.3)))
-            _add_textbox_styled(
-                slide,
-                area.left, ctx_top, area.width, ctx_h,
-                context_text[:400],
-                font_size_pt=10, bold=False, italic=True, hex_color="444444",
-                font_name=body_font, align_center=False,
-            )
-
-        print("[SEMANTIC] Built KPI DASHBOARD: %d metric(s)" % n)
-        return True
-
-    except Exception as e:
-        print("[SEMANTIC] _build_kpi_dashboard failed: %s — falling back" % str(e))
-        return False
-
-
-# ── Density Reduction (medium-confidence path) ────────────────────────────
-
-def _apply_density_reduction(
-    slide,
-    content: "SlideContent",
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> None:
-    """Reduce bullet density for medium-confidence slides.
-
-    Applied when classifier confidence is 0.4-0.6 (clear signal but not
-    confident enough for a full specialized layout). Adds a left-border
-    accent strip to each text block and truncates overlong paragraph lists.
-    This function never raises — errors are silently suppressed.
-    """
-    try:
-        paragraphs = content.body_paragraphs or []
-        if len(paragraphs) <= 5:
-            return  # Density is already acceptable
-
-        # Add a left-border accent bar as visual rhythm element
-        accent_hex = _safe_accent(template_style, 0)
-        BORDER_W = int(Inches(0.04))
-        BORDER_H = int(area.height * 0.60)
-        try:
-            _add_filled_rect(
-                slide,
-                area.left,
-                area.top + int(area.height * 0.15),
-                BORDER_W,
-                BORDER_H,
-                accent_hex,
-            )
-        except Exception:
-            pass
-
-    except Exception as e:
-        if VERBOSE:
-            print("[SEMANTIC] _apply_density_reduction error: %s" % str(e))
-
-
-
-# ── Template Native Layout Matching ───────────────────────────────────────
-
-def _find_matching_template_layout(
-    semantic_type: "SlideSemanticType",
-    slide_layout,
-) -> "dict | None":
-    """Check if the template has a native layout matching the semantic type.
-
-    Scans the slide_layout's placeholders and SmartArt elements for visual
-    structures (e.g. a native comparison layout, process flow, etc.) that
-    correspond to the given semantic classification.
-
-    Args:
-        semantic_type: The classified semantic type for this slide.
-        slide_layout: The python-pptx slide layout object being used.
-
-    Returns:
-        A dict describing the native match (e.g. {'type': 'smartart', 'idx': 3}),
-        or None if no native layout matches — in which case the custom semantic
-        builder should be used instead.
-
-    Note:
-        Current implementation returns None for all cases (always falls
-        through to the custom builder). This is a planned extension point for
-        templates with rich native SmartArt layouts.
-    """
-    try:
-        # Parse layout name for hints
-        layout_name = (slide_layout.name or "").lower()
-
-        # Check for native PowerPoint SmartArt or comparison layouts
-        _LAYOUT_KEYWORDS = {
-            "sequential": ("process", "timeline", "chevron", "step"),
-            "comparative": ("comparison", "two content", "content with",),
-            "metrics": ("dashboard", "kpi", "metric",),
-            "hero": ("title only", "blank", "section header",),
-        }
-
-        stype_str = semantic_type.value if hasattr(semantic_type, "value") else str(semantic_type)
-        keywords = _LAYOUT_KEYWORDS.get(stype_str, ())
-
-        for kw in keywords:
-            if kw in layout_name:
-                return {"type": "native_layout", "layout_name": layout_name, "keyword": kw}
-
-        return None
-    except Exception:
-        return None
-
-
-# ── Semantic Router ────────────────────────────────────────────────────────
-
-def _route_to_semantic_builder(
-    slide,
-    content: "SlideContent",
-    ctx: SemanticSlideContext,
-    area: "ContentArea",
-    template_style: "TemplateStyle | None" = None,
-) -> bool:
-    """Dispatch to the correct layout builder based on semantic context.
-
-    Returns True if a specialized layout was successfully built, False
-    if the builder failed or was not applicable (caller uses DEFAULT path).
-
-    This function never raises.
-    """
-    try:
-        stype = ctx.semantic_type
-
-        if stype == SlideSemanticType.SEQUENTIAL:
-            # Try chevron first (≤4 items), fall back to timeline
-            if len(ctx.sequential_labels) <= 4:
-                return _build_chevron_process(
-                    slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
-                )
-            return _build_horizontal_timeline(
-                slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
-            )
-
-        elif stype == SlideSemanticType.COMPARATIVE:
-            return _build_card_grid(
-                slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
-            )
-
-        elif stype == SlideSemanticType.METRICS:
-            # Gather non-metric text as context prose
-            metric_raws = {m.get("raw_line", "") for m in ctx.extracted_metrics}
-            context_lines = [
-                p[0] if isinstance(p, tuple) else str(p)
-                for p in (content.body_paragraphs or [])
-                if (p[0] if isinstance(p, tuple) else str(p)) not in metric_raws
-            ]
-            context_text = " ".join(context_lines[:3]).strip()
-            return _build_kpi_dashboard(
-                slide, ctx.extracted_metrics, context_text, area, template_style
-            )
-
-        elif stype == SlideSemanticType.HERO:
-            title = content.title or ""
-            subtitle = content.subtitle or ""
-            if not subtitle and content.body_paragraphs:
-                first = content.body_paragraphs[0]
-                subtitle = first[0] if isinstance(first, tuple) else str(first)
-            return _build_hero_layout(slide, title, subtitle, area, template_style)
-
-    except Exception as e:
-        print("[SEMANTIC] _route_to_semantic_builder error: %s — falling back" % str(e))
-
-    return False
-
-
 def _populate_footer_placeholders(
     slide,
     populated_indices: set,
@@ -4684,14 +3489,6 @@ def _populate_footer_placeholders(
                 populated_indices.add(ph_idx)
         except Exception:
             continue
-
-ICON_KEYWORD_MAP = {
-    ("growth", "increase", "scale", "expand"): "UP_ARROW",
-    ("revenue", "money", "cost", "price"):     "FLOWCHART_CURRENCY",
-    ("user", "customer", "student", "person"): "OVAL",
-    ("target", "goal", "milestone"):           "PENTAGON",
-    ("data", "analytics", "metrics"):          "CHART",
-}
 
 
 def _populate_slide(
@@ -4761,33 +3558,6 @@ def _populate_slide(
                 region_map.visual_region.height,
             )
         )
-
-    # -----------------------------------------------------------------------
-    # Phase A: Semantic Classifier & Layout Routing
-    # -----------------------------------------------------------------------
-    semantic_ctx = _classify_slide_semantics(content, getattr(content, "visual_suggestion", "default"))
-    
-    handled_by_semantic = False
-    if semantic_ctx.confidence >= 0.60:
-        if VERBOSE:
-            print("[SEMANTIC] Routing to %s builder (confidence: %.2f)" % (
-                semantic_ctx.semantic_type, semantic_ctx.confidence
-            ))
-        handled_by_semantic = _route_to_semantic_builder(
-            new_slide, content, semantic_ctx, region_map.text_region, template_style
-        )
-    elif 0.40 <= semantic_ctx.confidence < 0.60:
-        if VERBOSE:
-            print("[SEMANTIC] Applying density reduction (confidence: %.2f)" % semantic_ctx.confidence)
-        _apply_density_reduction(new_slide, content, region_map.text_region, template_style)
-
-    # If the semantic builder successfully handled the body content, suppress the 
-    # default body text population to prevent messy overlaps. 
-    # Titles/subtitles are still populated into their native placeholders.
-    if handled_by_semantic:
-        content.body_paragraphs = []
-        content.text_box_paragraphs = []
-    # -----------------------------------------------------------------------
 
     # Track populated placeholder indices for cleanup
     populated_indices: set[int] = set()
@@ -4963,30 +3733,6 @@ def _populate_slide(
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
             tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
 
-        # --- Fix 3: Minimum font size enforcement (fallback textbox) ---
-        ns_a_mincheck2 = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-        min_font_sz2 = _MIN_BODY_FONT_PT * 100
-        font_too_small2 = False
-        for para in tf.paragraphs:
-            for run in para.runs:
-                rPr = run._r.find(ns_a_mincheck2 + "rPr")
-                if rPr is not None:
-                    sz = rPr.get("sz")
-                    if sz and int(sz) < min_font_sz2:
-                        font_too_small2 = True
-                        rPr.set("sz", str(min_font_sz2))
-        if font_too_small2:
-            print(
-                "  [FONT GUARD] Fallback textbox font was below %dpt — enforced %dpt."
-                % (_MIN_BODY_FONT_PT, _MIN_BODY_FONT_PT)
-            )
-            # If too many paragraphs for the space at min font, truncate
-            if len(body_paragraphs) > 8:
-                print(
-                    "  [FONT GUARD] Truncating %d body paragraphs to 8 to prevent overflow."
-                    % len(body_paragraphs)
-                )
-
     # Place visuals into the visual_region (separate from text)
     visual_area = region_map.visual_region
     image_area = None
@@ -5062,23 +3808,6 @@ def _populate_slide(
     _transfer_charts(
         new_slide, content.charts, visual_area, template_style=template_style
     )
-    # Check if layout has actual content placeholders (body/object)
-    # If it's a Blank or Title-only layout, transferring LLM shapes into
-    # the restricted safe-margin box squashes them. Use the full slide dimensions.
-    _has_content_ph = any(
-        getattr(ph, "placeholder_format", None)
-        and ph.placeholder_format.type
-        in {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.SUBTITLE}
-        for ph in new_slide.slide_layout.placeholders
-    )
-
-    if _has_content_ph:
-        shapes_target_area = region_map.visual_region
-        text_shapes_target_area = region_map.text_region
-    else:
-        shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
-        text_shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
-
     # P1-1: Pass source slide dimensions and target area so shapes are rescaled
     # proportionally to the template's content region instead of being copied
     # at Claude's original absolute EMU coordinates.
@@ -5089,7 +3818,7 @@ def _populate_slide(
         content.shapes_xml,
         src_width=src_slide_width,
         src_height=src_slide_height,
-        target_area=shapes_target_area,
+        target_area=region_map.visual_region,
         template_style=template_style,
     )
     if content_mix == ContentMix.TEXT_ONLY:
@@ -5098,12 +3827,9 @@ def _populate_slide(
             content.text_shapes_xml,
             src_width=src_slide_width,
             src_height=src_slide_height,
-            target_area=text_shapes_target_area,
+            target_area=region_map.text_region,
             template_style=template_style,
         )
-
-    # --- Fix 4: Post-transfer overlap detection and reflow ---
-    _fix_overlapping_shapes(new_slide, slide_width, slide_height)
 
     # ------------------------------------------------------------------
     # Insert generated images into picture placeholders.
@@ -5272,7 +3998,6 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     user_prompt = step_input.input
     template_path = session_state.get("template_path", "")
@@ -5303,20 +4028,14 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
         if VERBOSE:
             print("[VERBOSE] Exception suppressed: %s" % str(e))
 
-    # Claude 4.6 Token Limits
-    # Model 	Context Window (Input)	Max Output Tokens
-    # Claude Opus 4.6	200,000 / 1,000,000 (beta)	128,000 tokens
-    # Claude Sonnet 4.6	200,000 / 1,000,000 (beta)	64,000 tokens
-
     # Create the Claude agent
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id="claude-opus-4-6",
+            id="claude-sonnet-4-6",
             betas=["context-1m-2025-08-07"],
             # "claude-sonnet-4-5-20250929",
             # # Or: "claude-sonnet-4-6", "claude-opus-4-6"
-            max_tokens=128000,
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
         ),
         instructions=[
@@ -5700,8 +4419,6 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     session_state["total_slides"] = len(slides_data)
 
     slides_summary = json.dumps(slides_data, indent=2)
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 1 Content Generation: completed in %.2fs" % elapsed)
     return StepOutput(
         content=slides_summary,
         success=True,
@@ -5713,9 +4430,36 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
 # ---------------------------------------------------------------------------
 
 # This agent decides which slides need AI-generated images
-# image_planner agent is now loaded from the agents/ package via get_agents().
-# Stored in session_state["agents"]["image_planner"].
-# See agents/claude_agents.py (or openai/gemini variants) for the definition.
+image_planner = Agent(
+    name="Image Planner",
+    model=Gemini(id="gemini-3-flash-preview"),
+    instructions=[
+        "You are an image planning specialist for PowerPoint presentations.",
+        "You will receive slide metadata AND the user's presentation topic/request.",
+        "",
+        "RULES (follow strictly):",
+        "- If has_image_placeholder is true: ALWAYS set needs_image to true.",
+        "- Title slides (index 0): ALWAYS generate an image — first impressions matter.",
+        "- Slides with existing images: NEVER generate (already have visuals).",
+        "- Data slides (has_table or has_chart is true): Usually skip unless topic is very visual.",
+        "- All other content slides: Default to YES. Visuals enhance every presentation.",
+        "- If the user explicitly requested 'visuals', 'images', or 'with pictures',",
+        "  generate images for at LEAST half of eligible slides.",
+        "",
+        "IMPORTANT: When in doubt, generate an image. It is better to have too many",
+        "images than too few. Empty picture placeholders look unprofessional.",
+        "",
+        "When writing image prompts:",
+        "- Use the PRESENTATION TOPIC to create relevant imagery.",
+        "- Describe professional, clean, modern illustrations.",
+        "- Use abstract or metaphorical imagery, not literal text depictions.",
+        "- Specify style: 'minimalist corporate illustration', 'flat design', etc.",
+        "- Keep prompts under 100 words.",
+        "- Make images suitable for a professional business presentation.",
+    ],
+    output_schema=ImagePlan,
+    markdown=False,
+)
 
 
 def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
@@ -5728,7 +4472,6 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 2: Planning images for slides...")
@@ -5756,11 +4499,9 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
             % combined_message[:500]
         )
 
-    # Lazily load agent: do not use session_state["agents"] to avoid deepcopy failures.
-    from agents import get_agents as _get_agents
-    _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
+    # Run the image_planner agent directly with the combined message
     try:
-        response = _image_planner.run(combined_message, stream=False)
+        response = image_planner.run(combined_message, stream=False)
     except Exception as e:
         print("[ERROR] Image planner failed: %s" % str(e))
         if VERBOSE:
@@ -5782,13 +4523,9 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
             print(
                 "[VERBOSE] Image planner output (first 500 chars):\n%s" % result[:500]
             )
-        elapsed = time.time() - _step_start
-        print("[TIMING] Step 2 Image Planning: completed in %.2fs" % elapsed)
         return StepOutput(content=result, success=True)
 
     print("[WARNING] Image planner returned no content.")
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 2 Image Planning: completed in %.2fs" % elapsed)
     return StepOutput(
         content=json.dumps({"decisions": []}),
         success=True,
@@ -5810,7 +4547,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 3: Generating images with NanoBanana...")
@@ -5845,33 +4581,16 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
     decisions = plan_data.get("decisions", [])
     slides_needing_images = [d for d in decisions if d.get("needs_image", False)]
 
-    # Enforce minimum images if configured.
-    # IMPORTANT: Only consider non-data-vis slides as candidates.
-    # Slides with native charts, tables, or infographics must NEVER receive an
-    # AI-generated image — the external photo/illustration would collide with the
-    # native visual and degrade the slide's clarity.
-    DATA_VIS_KEYWORDS = ("chart", "table", "infographic", "diagram", "graph")
+    # Enforce minimum images if configured
     min_images = session_state.get("min_images", 1)
     if len(slides_needing_images) < min_images and min_images > 0:
         print(
             "Image planner selected %d slides, but --min-images=%d. Adding more..."
             % (len(slides_needing_images), min_images)
         )
-        # Find slides not yet selected, excluding data-vis slides
+        # Find slides not yet selected, preferring those with image placeholders
         selected_indices = {d["slide_index"] for d in slides_needing_images}
-        remaining = [
-            d
-            for d in decisions
-            if d["slide_index"] not in selected_indices
-            # Skip slides that the planner flagged as having native data visualizations
-            and not d.get("has_table", False)
-            and not d.get("has_chart", False)
-            and not d.get("has_data_vis", False)
-            # Skip slides whose visual_suggestion mentions a data-vis type
-            and not any(
-                kw in d.get("visual_suggestion", "").lower() for kw in DATA_VIS_KEYWORDS
-            )
-        ]
+        remaining = [d for d in decisions if d["slide_index"] not in selected_indices]
         # Sort: image_placeholder slides first, then title slide (index 0)
         remaining.sort(
             key=lambda d: (
@@ -5905,16 +4624,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
         s["index"] for s in slides_data if s.get("has_image", False)
     }
 
-    # Build a lookup from slide_index -> slide metadata for the belt-and-suspenders
-    # guard below. This is necessary because SlideImageDecision (the image planner's
-    # output schema) only carries slide_index, needs_image, image_prompt, and reasoning —
-    # it never has has_table, has_chart, has_data_vis, or visual_suggestion.
-    # Without this lookup, the existing decision.get("has_table", ...) checks always
-    # return False and the guard never fires, allowing data-vis slides to receive images.
-    slides_data_by_idx: Dict[int, dict] = {
-        s.get("index", i): s for i, s in enumerate(slides_data)
-    }
-
     # Initialize NanoBanana
     google_api_key = os.getenv("GOOGLE_API_KEY")
     if not google_api_key:
@@ -5937,36 +4646,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
         if slide_idx in slides_with_existing_images:
             print(
                 "  Slide %d: Already has image from Claude, skipping." % (slide_idx + 1)
-            )
-            continue
-
-        # Belt-and-suspenders guard: even if this decision slipped through the
-        # min_images enforcement filter above, never generate an external AI image
-        # for a slide that carries native data visualizations (charts, tables,
-        # infographics, or diagrams). The native visual already fills the visual
-        # region; an added photo would collide and degrade the slide.
-        #
-        # IMPORTANT: SlideImageDecision (image planner output) only carries
-        # slide_index, needs_image, image_prompt, and reasoning — it NEVER has
-        # has_table, has_chart, has_data_vis, or visual_suggestion.
-        # We must look these up from slides_data_by_idx, which was enriched by
-        # step_process_chunks with storyboard data (Fix: was reading from decision).
-        _slide_meta = slides_data_by_idx.get(slide_idx, {})
-        if (
-            _slide_meta.get("has_table", False)
-            or _slide_meta.get("has_chart", False)
-            or _slide_meta.get("has_data_vis", False)
-        ):
-            print(
-                "  Slide %d: Contains native data visualization (chart/table/infographic)."
-                " Skipping AI image generation to avoid collision." % (slide_idx + 1)
-            )
-            continue
-        vs = _slide_meta.get("visual_suggestion", "").lower()
-        if any(kw in vs for kw in DATA_VIS_KEYWORDS):
-            print(
-                "  Slide %d: Data-vis visual_suggestion ('%s…') detected."
-                " Skipping AI image generation." % (slide_idx + 1, vs[:40])
             )
             continue
 
@@ -5995,8 +4674,6 @@ def step_generate_images(step_input: StepInput, session_state: Dict) -> StepOutp
                 traceback.print_exc()
 
     session_state["generated_images"] = generated_images
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 3 Image Generation: completed in %.2fs" % elapsed)
     return StepOutput(
         content="Generated %d image(s) for presentation." % len(generated_images),
         success=True,
@@ -6635,7 +5312,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 4: Assembling final presentation with template...")
@@ -6777,45 +5453,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         # The keys may be int or str depending on how they were stored.
         gen_img = generated_images.get(idx) or generated_images.get(str(idx))
 
-        # Template assembly guard: suppress any generated image if the slide carries
-        # native data visualizations. Three independent detection layers ensure coverage
-        # across all Tiers (Tier 1: Claude PPTX skill native charts/tables,
-        # Tier 2: python-pptx native ChartData objects, Tier 3: infographic shapes
-        # not detectable as charts/tables but flagged via storyboard has_data_vis):
-        #
-        #   Layer 1 — PPTX shape inspection: content.charts / content.tables
-        #             (populated by _extract_slide_content; catches Tier 1 & 2)
-        #   Layer 2 — slides_data metadata: has_data_vis / has_chart / has_table
-        #             (enriched in step_process_chunks from storyboard; catches Tier 3)
-        #   Layer 3 — visual_suggestion keyword scan (belt-and-suspenders)
-        #
-        # Inserting an external AI photo alongside any native data visual would
-        # collide with the visual region and degrade slide clarity.
-        _slides_data_lookup = {
-            s.get("index", i): s
-            for i, s in enumerate(session_state.get("slides_data", []))
-        }
-        _slide_meta_asm = _slides_data_lookup.get(idx, {})
-        _DATA_VIS_KW_ASM = ("chart", "table", "infographic", "diagram", "graph")
-        _slide_has_data_vis = (
-            bool(content.charts)
-            or bool(content.tables)
-            or _slide_meta_asm.get("has_chart", False)
-            or _slide_meta_asm.get("has_table", False)
-            or _slide_meta_asm.get("has_data_vis", False)
-            or any(
-                _kw in _slide_meta_asm.get("visual_suggestion", "").lower()
-                for _kw in _DATA_VIS_KW_ASM
-            )
-        )
-        if gen_img is not None and _slide_has_data_vis:
-            print(
-                "  Slide %d: Has native data visualization (chart/table/infographic) — "
-                "suppressing generated image to preserve data visualization."
-                % (idx + 1)
-            )
-            gen_img = None
-
         # Find layout FIRST so we can detect picture placeholders before
         # deciding whether to add a free-floating image.
         content_mix = _classify_content_mix(
@@ -6931,13 +5568,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             show_slide_number=session_state.get("show_slide_numbers", False),
         )
 
-    # Clean up empty placeholders and hardcoded contrast issues
-    clean_presentation_visual_noise_and_contrast(output_prs)
     output_prs.save(output_path)
     print("\nSaved final presentation: %s" % output_path)
 
-    elapsed = time.time() - _step_start
-    print("[TIMING] Step 4 Template Assembly: completed in %.2fs" % elapsed)
     return StepOutput(
         content="Presentation saved to %s (%d slides)" % (output_path, total_slides),
         success=True,
@@ -6950,17 +5583,13 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
 
 
 def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
-    """Render all slides to per-slide PNG images.
-
-    Uses a two-step pipeline for reliable per-slide rendering:
-      1. PPTX → PDF via LibreOffice headless
-      2. PDF  → per-page PNGs via pdftoppm (poppler-utils)
-
-    Falls back to direct PPTX→PNG (single image) if pdftoppm is unavailable,
-    but logs a loud warning since this only produces the first slide.
+    """Render all slides to PNG images using LibreOffice headless.
 
     Returns a sorted list of PNG file paths (one per slide, in slide order).
     Raises RuntimeError if LibreOffice is not available or rendering fails.
+
+    The entire PPTX is rendered in a single subprocess invocation so that
+    LibreOffice's startup overhead is paid only once, regardless of slide count.
 
     Args:
         pptx_path:  Path to the .pptx file to render.
@@ -6977,102 +5606,6 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
     if not lo_cmd:
         raise RuntimeError(
             "LibreOffice not found. Install with: apt-get install libreoffice"
-        )
-
-    # Count expected slides for validation
-    expected_slides = 0
-    try:
-        _count_prs = Presentation(pptx_path)
-        expected_slides = len(_count_prs.slides)
-        print("  [RENDER] PPTX has %d slide(s) to render." % expected_slides)
-    except Exception:
-        pass
-
-    # --- Strategy 1: PPTX → PDF → per-page PNGs (preferred) ---
-    pdftoppm_cmd = _shutil.which("pdftoppm")
-    if pdftoppm_cmd:
-        print("  [RENDER] Using PPTX→PDF→PNG pipeline (pdftoppm available).")
-        # Step 1: Convert PPTX to PDF
-        pdf_result = subprocess.run(
-            [
-                lo_cmd,
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                output_dir,
-                pptx_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if pdf_result.returncode != 0:
-            print(
-                "  [RENDER WARNING] PDF conversion failed (exit %d): %s"
-                % (pdf_result.returncode, pdf_result.stderr[:200])
-            )
-            print("  [RENDER] Falling back to direct PNG conversion.")
-        else:
-            base = os.path.splitext(os.path.basename(pptx_path))[0]
-            pdf_path = os.path.join(output_dir, base + ".pdf")
-            if os.path.isfile(pdf_path):
-                # Step 2: Convert PDF pages to PNGs via pdftoppm
-                png_prefix = os.path.join(output_dir, "slide")
-                ppm_result = subprocess.run(
-                    [
-                        pdftoppm_cmd,
-                        "-png",
-                        "-r",
-                        "150",  # 150 DPI — good quality for vision review
-                        pdf_path,
-                        png_prefix,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                if ppm_result.returncode == 0:
-                    # pdftoppm names files: slide-01.png, slide-02.png, ...
-                    pngs = sorted(glob.glob(os.path.join(output_dir, "slide-*.png")))
-                    if pngs:
-                        if expected_slides > 0 and len(pngs) != expected_slides:
-                            print(
-                                "  [RENDER WARNING] Expected %d slides but rendered %d PNGs."
-                                % (expected_slides, len(pngs))
-                            )
-                        else:
-                            print(
-                                "  [RENDER] Successfully rendered %d per-slide PNG(s) via PDF pipeline."
-                                % len(pngs)
-                            )
-                        # Clean up intermediate PDF
-                        try:
-                            os.remove(pdf_path)
-                        except OSError:
-                            pass
-                        return pngs
-                else:
-                    print(
-                        "  [RENDER WARNING] pdftoppm failed (exit %d): %s"
-                        % (ppm_result.returncode, ppm_result.stderr[:200])
-                    )
-                # Clean up intermediate PDF on failure
-                try:
-                    os.remove(pdf_path)
-                except OSError:
-                    pass
-
-    # --- Strategy 2: Direct PPTX → PNG (fallback — single image only) ---
-    print(
-        "  [RENDER WARNING] pdftoppm not available — falling back to direct PNG "
-        "conversion. This produces ONLY 1 image (first slide), not per-slide images!"
-    )
-    if expected_slides > 1:
-        print(
-            "  [RENDER WARNING] Visual review will only inspect 1 of %d slides! "
-            "Install poppler-utils for full per-slide rendering: "
-            "sudo apt-get install poppler-utils" % expected_slides
         )
 
     result = subprocess.run(
@@ -7116,9 +5649,117 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
 # Slide quality review agent — acts as a senior UI/UX designer with deep knowledge
 # of presentation design, visual hierarchy, typography, and brand consistency.
 # Instantiated at module level; only invoked when --visual-review is enabled.
-# slide_quality_reviewer agent is now loaded from the agents/ package via get_agents().
-# Stored in session_state["agents"]["slide_quality_reviewer"].
-# See agents/claude_agents.py (or openai/gemini variants) for the definition.
+slide_quality_reviewer = Agent(
+    name="Senior UI/UX Presentation Designer",
+    model=Gemini(id="gemini-2.5-flash"),
+    instructions=[
+        "You are a world-class senior UI/UX designer and presentation design expert",
+        "with 15+ years of experience creating award-winning corporate presentations.",
+        "You combine the precision of a quality inspector with the creative eye of a",
+        "professional designer who understands visual hierarchy, typography, color theory,",
+        "whitespace, and the importance of brand consistency.",
+        "",
+        "Analyze the provided slide screenshot from BOTH a structural AND aesthetic",
+        "design quality perspective. Your goal is to elevate every slide to the",
+        "standard of a professionally designed McKinsey or Apple-quality presentation.",
+        "",
+        "=== STRUCTURAL DEFECTS (always report if present) ===",
+        "text_overflow      - Text extends beyond its container or is cut off.",
+        "overlap            - Two elements visibly overlap in a way that hurts readability.",
+        "ghost_text         - 'Click to add' placeholder text is still visible.",
+        "low_contrast       - Text is nearly indistinguishable from background.",
+        "element_clipped    - Content is cut off by the slide boundary.",
+        "empty_placeholder  - Visible empty frame with no content.",
+        "footer_inconsistent - Footer text missing, truncated, or misaligned.",
+        "",
+        "=== DESIGN QUALITY ISSUES (report when they significantly impact visual quality) ===",
+        "poor_spacing       - Insufficient whitespace, cramped layout, or unbalanced margins.",
+        "alignment_off      - Elements are visibly misaligned (not on a consistent grid).",
+        "typography_hierarchy - Title and body have similar weight/size, lacking visual hierarchy.",
+        "color_underutilized - Template accent colors are not used; everything looks monochrome.",
+        "visual_enrichment_needed - Slide uses only plain text when the template's design",
+        "                           vocabulary (colored shapes, accent bars, icons) could",
+        "                           dramatically improve visual interest.",
+        "font_inconsistency - Inconsistent font sizes or weights across similar content types.",
+        "",
+        "=== SEVERITY GUIDE ===",
+        "critical  - Broken or unreadable: text cut off, ghost text, major overlap.",
+        "moderate  - Clearly suboptimal: a professional would notice and want to fix it.",
+        "minor     - A refinement that would polish the slide.",
+        "",
+        "=== PROGRAMMATIC FIX SELECTION ===",
+        "For structural issues:",
+        "  reduce_font_size      -> text_overflow",
+        "  increase_contrast     -> low_contrast",
+        "  remove_element        -> overlap (remove the offending element)",
+        "  clear_placeholder     -> ghost_text, empty_placeholder",
+        "",
+        "For spacing/alignment (safe, failsafe implementations):",
+        "  fix_spacing                  -> poor_spacing: clamps shapes that overflow safe",
+        "                                  margins back within 5% edge boundary.",
+        "  fix_alignment                -> alignment_off: snaps outlier shapes to the",
+        "                                  majority left edge (max 2% slide width).",
+        "  fix_body_paragraph_alignment -> alignment_off / poor_spacing: sets all body",
+        "                                  text paragraphs to left alignment.",
+        "",
+        "For typography hierarchy (ensures title is visually dominant):",
+        "  enforce_typography_hierarchy -> typography_hierarchy: ensures title font is at",
+        "                                  least 6pt larger than body. Increases title if",
+        "                                  needed (cap: 36pt).",
+        "  increase_title_font_size     -> typography_hierarchy: forces title to 28pt.",
+        "",
+        "For color scheme (applies template accent colors):",
+        "  apply_accent_color_title -> color_underutilized / typography_hierarchy:",
+        "                              applies primary accent color to title text runs.",
+        "  apply_accent_color_body  -> color_underutilized: applies primary accent color",
+        "                              to the first (lead) paragraph of body text.",
+        "",
+        "For visual enrichment (native PPTX shapes, NO image generation):",
+        "  apply_body_accent_border  -> mild enrichment: thin vertical accent bar left of body.",
+        "  enrich_header_bar    -> prominent: full-width accent bar across top 8% of slide.",
+        "  enrich_title_card    -> structured: lightly tinted card behind title area.",
+        "  enrich_divider       -> separator: thin horizontal accent rule at 25% height.",
+        "  enrich_accent_strip  -> minimal: thin vertical accent strip on far left edge.",
+        "",
+        "SELECTION GUIDE:",
+        "  poor_spacing                   -> fix_spacing",
+        "  alignment_off (shapes)         -> fix_alignment",
+        "  alignment_off (text)           -> fix_body_paragraph_alignment",
+        "  typography_hierarchy (severe)  -> enforce_typography_hierarchy",
+        "  typography_hierarchy (mild)    -> increase_title_font_size",
+        "  color_underutilized (title)    -> apply_accent_color_title",
+        "  color_underutilized (overall)  -> apply_accent_color_body + enrich_*",
+        "  visual_enrichment_needed       -> choose the best enrich_* type",
+        "",
+        "Use 'none' ONLY when the issue requires AI-generated images, human content",
+        "editing, or a completely different slide layout.",
+        "",
+        "=== VISUAL BLANDNESS ===",
+        "A slide is visually bland (is_visually_bland=True) when it fails to use",
+        "the template's visual vocabulary — for example: all text in one plain color,",
+        "no accent colors applied anywhere, no visual hierarchy, large empty whitespace",
+        "regions, or it looks like an unformatted draft document.",
+        "Be generous with this flag: flag it if a professional designer would look at",
+        "the slide and immediately want to add some visual structure or color accent.",
+        "",
+        "=== DESIGN SCORE (design_score field, 1-10) ===",
+        "10: Stunning. Could appear in a top-tier consulting pitch deck.",
+        "8-9: Strong design with minor polish opportunities.",
+        "6-7: Functional and readable, could use visual enrichment.",
+        "4-5: Plain / generic; lacks visual identity or hierarchy.",
+        "2-3: Noticeably poorly designed or has significant issues.",
+        "1: Broken or completely unusable.",
+        "",
+        "=== IMPORTANT ===",
+        "- The template_context field in the prompt tells you the available accent",
+        "  colors and fonts from the template. Reference these when suggesting fixes.",
+        "- Be specific in descriptions: not 'title could be bigger' but 'title is 20pt,",
+        "  indistinguishable from body text at 18pt; increase to 28pt for hierarchy'.",
+        "- Always return design_score even if the slide looks perfect.",
+    ],
+    output_schema=SlideQualityReport,
+    markdown=False,
+)
 
 
 def _apply_accent_color_to_title(slide, accent_color_hex: str) -> bool:
@@ -7794,11 +6435,10 @@ def _apply_visual_corrections(
 
     if modified:
         prs.save(pptx_path)
-        # Clean up empty placeholders and hardcoded contrast issues
-        clean_presentation_visual_noise_and_contrast(prs)
-        prs.save(pptx_path)
-        print("\nFallback presentation generation successful: %s" % pptx_path)
-        return modified
+        if VERBOSE:
+            print("[VERBOSE] Corrected presentation saved: %s" % pptx_path)
+
+    return modified
 
 
 def step_visual_quality_review(
@@ -7809,13 +6449,6 @@ def step_visual_quality_review(
 
     This step is non-blocking: any failure (LibreOffice unavailable, API error,
     timeout) silently returns success=True without modifying the output file.
-    
-    NOTE ON Pydantic Schema Parsing (Duck-Typing):
-    Agent output validation utilizes duck-typing on `SlideQualityReport` rather 
-    than strict `isinstance` checks. This resilient design resolves a Python 
-    namespacing quirk where Pydantic models generated dynamically by the LLM 
-    framework might not mathematically equate to `__main__.SlideQualityReport`, 
-    preventing False-Negative review dropouts.
 
     Workflow:
     1. Render the final .pptx to PNGs using LibreOffice headless.
@@ -7836,7 +6469,6 @@ def step_visual_quality_review(
     """
     global VERBOSE
     VERBOSE = session_state.get("verbose", VERBOSE)
-    _step_start = time.time()
 
     print("\n" + "=" * 60)
     print("Step 5 (Optional): UI/UX Design Review...")
@@ -7907,15 +6539,6 @@ def step_visual_quality_review(
                 print("[VERBOSE] Template style re-extraction failed: %s" % str(e))
 
         # --- Phase 3: Vision inspection with UI/UX designer agent ---
-        # Build a per-slide data-vis lookup so the reviewer knows which slides
-        # contain native charts/tables/infographics and must not be penalised
-        # for the absence of an AI-generated photo.
-        _DATA_VIS_KW_REVIEW = ("chart", "table", "infographic", "diagram", "graph")
-        _slides_data_list = session_state.get("slides_data", [])
-        _slides_data_map = {
-            s.get("index", i): s for i, s in enumerate(_slides_data_list)
-        }
-
         reports = []
         for idx, img_path in enumerate(slide_images):
             print("  Reviewing slide %d / %d..." % (idx + 1, len(slide_images)))
@@ -7923,39 +6546,19 @@ def step_visual_quality_review(
                 with open(img_path, "rb") as f:
                     img_bytes = f.read()
 
-                # Determine whether this slide carries a native data visualization.
-                # When it does, the reviewer must not flag it for missing a photo/image.
-                _s_meta = _slides_data_map.get(idx, {})
-                _slide_has_data_vis = (
-                    _s_meta.get("has_chart", False)
-                    or _s_meta.get("has_table", False)
-                    or _s_meta.get("has_data_vis", False)
-                    or any(
-                        _kw in _s_meta.get("visual_suggestion", "").lower()
-                        for _kw in _DATA_VIS_KW_REVIEW
-                    )
-                )
-                data_vis_flag = (
-                    "[Data vis: chart/table/infographic present] "
-                    if _slide_has_data_vis
-                    else ""
-                )
-
                 # Include template context in the prompt so the agent can
-                # reference specific accent colors and fonts in its feedback.
-                # data_vis_flag tells the agent not to penalise the slide for
-                # the intentional absence of an AI-generated photo/illustration.
+                # reference specific accent colors and fonts in its feedback
                 context_prefix = (
                     ("[Template context: %s] " % template_context)
                     if template_context
                     else ""
                 )
                 prompt = (
-                    "%s%sYou are reviewing slide %d of %d in a professional "
+                    "%sYou are reviewing slide %d of %d in a professional "
                     "presentation. Assess both structural quality and design excellence. "
                     "Provide a design_score (1-10), identify all issues, and flag "
                     "whether the slide is visually bland."
-                ) % (context_prefix, data_vis_flag, idx + 1, len(slide_images))
+                ) % (context_prefix, idx + 1, len(slide_images))
 
                 # Use AgnoImage with raw bytes — Agno requires Image objects,
                 # not raw dicts, for multimodal agent.run() calls.
@@ -7964,43 +6567,22 @@ def step_visual_quality_review(
                     mime_type="image/png",
                     format="png",
                 )
-                from agents import get_agents as _get_agents
-                _slide_reviewer = _get_agents(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
-                response = _slide_reviewer.run(
+                response = slide_quality_reviewer.run(
                     prompt,
                     images=[slide_image_obj],
                     stream=False,
                 )
 
                 if response and response.content:
-                    content = response.content
-                    # Duck-type: accept any BaseModel with the right fields,
-                    # dict, or JSON string.  The agent's output_schema may be
-                    # the SlideQualityReport from agents/_shared.py (a
-                    # different Python class than the local one), so a plain
-                    # isinstance() would always fail.
-                    if hasattr(content, "model_dump") and hasattr(content, "design_score"):
-                        report = SlideQualityReport.model_validate(content.model_dump())
-                    elif isinstance(content, dict):
-                        report = SlideQualityReport.model_validate(content)
-                    elif isinstance(content, str):
-                        import json as _json_parse
-                        try:
-                            report = SlideQualityReport.model_validate(
-                                _json_parse.loads(content)
-                            )
-                        except (ValueError, Exception):
-                            if VERBOSE:
-                                print(
-                                    "[VERBOSE] Could not parse string response "
-                                    "as SlideQualityReport"
-                                )
-                            continue
+                    if isinstance(response.content, SlideQualityReport):
+                        report = response.content
+                    elif isinstance(response.content, dict):
+                        report = SlideQualityReport.model_validate(response.content)
                     else:
                         if VERBOSE:
                             print(
                                 "[VERBOSE] Unexpected response type: %s"
-                                % type(content).__name__
+                                % type(response.content).__name__
                             )
                         continue
                     report.slide_index = idx
@@ -8036,13 +6618,6 @@ def step_visual_quality_review(
                 )
                 if VERBOSE:
                     traceback.print_exc()
-
-        # Warn if vision agent returned nothing parseable
-        if not reports and len(slide_images) > 0:
-            print(
-                "  [WARNING] Vision agent returned 0 parseable reports for %d "
-                "slides. Check model output schema compatibility." % len(slide_images)
-            )
 
         # --- Phase 4: Apply corrections (critical + moderate design enrichment) ---
         total_critical = sum(
@@ -8135,8 +6710,6 @@ def step_visual_quality_review(
             len(all_recommendations),
         )
         print("\n  %s" % summary)
-        elapsed = time.time() - _step_start
-        print("[TIMING] Step 5 Visual Quality Review: completed in %.2fs" % elapsed)
         return StepOutput(content=summary, success=True)
 
     except Exception as e:
@@ -8233,15 +6806,6 @@ def parse_args():
         "Requires LibreOffice (install: apt-get install libreoffice). "
         "Non-blocking: skips silently if LibreOffice or the vision API is unavailable.",
     )
-    parser.add_argument(
-        "--llm-provider",
-        choices=["claude", "openai", "gemini"],
-        default="claude",
-        help=(
-            "LLM provider for swappable agents (image planner, visual reviewer). "
-            "The Content Generator always uses Claude (PPTX skill). Default: claude."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -8259,28 +6823,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise ValueError(
-            "ANTHROPIC_API_KEY environment variable not set "
-            "(required: Content Generator agent always uses Claude)"
-        )
-    if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY environment variable not set (required for --llm-provider openai)")
-    if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
-        raise ValueError("GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)")
-
-    # Gemini API key validation guard for --visual-review
-    # If the key is missing or blank, auto-disable visual review to avoid burning
-    # time on guaranteed-to-fail Gemini API calls.
-    google_key = os.getenv("GOOGLE_API_KEY", "")
-    if args.visual_review and not google_key:
-        print(
-            "[WARNING] --visual-review requested but GOOGLE_API_KEY is not set. "
-            "Visual review automatically disabled."
-        )
-        args.visual_review = False
-
-    # Provider name is stored in session_state (a plain string, safely deep-copyable).
-    # Agents are loaded lazily inside each step via get_agents() to avoid pickling errors.
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
 
     # Setup output directory
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -8332,7 +6875,6 @@ if __name__ == "__main__":
     print("=" * 60)
     print("PowerPoint Template Workflow")
     print("=" * 60)
-    print("Provider: %s" % args.llm_provider)
     print("Template: %s" % (args.template or "none (raw output)"))
     print("Output:   %s" % output_path)
     print("Images:   %s" % ("disabled" if args.no_images else "enabled"))
@@ -8406,12 +6948,9 @@ if __name__ == "__main__":
             "show_slide_numbers": args.show_slide_numbers,
             "assembly_knowledge": {},
             "quality_report": {},
-            # LLM provider name for swappable agents (agents are loaded lazily per step)
-            "llm_provider": args.llm_provider,
         },
     )
 
-    _workflow_start = time.time()
     workflow.print_response(input=prompt, markdown=True)
 
     # If no template was provided, copy the generated file to the output path
@@ -8426,934 +6965,7 @@ if __name__ == "__main__":
                 % output_path
             )
 
-    _workflow_elapsed = time.time() - _workflow_start
-    print("[TIMING] Total workflow execution: %.2fs" % _workflow_elapsed)
-
     print("\n" + "=" * 60)
     print("Workflow complete!")
     print("Output: %s" % output_path)
     print("=" * 60)
-
-
-# NOTE: _hex_to_rgb, _relative_luminance, _contrast_ratio are defined once
-# near the top of this file (around line 639). Do NOT duplicate them here.
-
-
-def _extract_color_from_solid_fill(solid_fill_elem) -> str | None:
-    """Extract hex color string from an OPC solidFill XML element.
-
-    Handles srgbClr, schemeClr (with common theme defaults), and sysClr.
-    Returns hex string like 'FF0000' or None if not extractable.
-    """
-    if solid_fill_elem is None:
-        return None
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-
-    # 1. Check srgbClr first (most common in generated code)
-    srgb = solid_fill_elem.find(ns_a + "srgbClr")
-    if srgb is not None:
-        return srgb.get("val", None)
-
-    # 2. Check schemeClr (theme colors) — map to common defaults
-    scheme = solid_fill_elem.find(ns_a + "schemeClr")
-    if scheme is not None:
-        val = scheme.get("val", "")
-        # Standard Office theme defaults (covers most non-custom themes)
-        scheme_defaults = {
-            "lt1": "FFFFFF",      # Light 1 (usually white)
-            "dk1": "000000",      # Dark 1 (usually black)
-            "lt2": "E7E6E6",      # Light 2 (usually light gray)
-            "dk2": "44546A",      # Dark 2 (usually dark blue-gray)
-            "bg1": "FFFFFF",      # Background 1 (usually white)
-            "bg2": "E7E6E6",      # Background 2 (usually light gray)
-            "tx1": "000000",      # Text 1 (usually black)
-            "tx2": "44546A",      # Text 2 (usually dark blue-gray)
-            "accent1": "4472C4",  # Blue
-            "accent2": "ED7D31",  # Orange
-            "accent3": "A5A5A5",  # Gray
-            "accent4": "FFC000",  # Gold
-            "accent5": "5B9BD5",  # Light blue
-            "accent6": "70AD47",  # Green
-            "hlink": "0563C1",    # Hyperlink
-            "folHlink": "954F72", # Followed hyperlink
-        }
-        if val in scheme_defaults:
-            return scheme_defaults[val]
-        return None
-
-    # 3. Check sysClr (system colors with lastClr fallback)
-    sys_clr = solid_fill_elem.find(ns_a + "sysClr")
-    if sys_clr is not None:
-        last_clr = sys_clr.get("lastClr", None)
-        if last_clr:
-            return last_clr
-        # Map common system color names
-        val = sys_clr.get("val", "")
-        sys_defaults = {
-            "windowText": "000000",
-            "window": "FFFFFF",
-        }
-        if val in sys_defaults:
-            return sys_defaults[val]
-
-    return None
-
-
-def _get_shape_background_color(shape, slide) -> str:
-    """Detect the effective background color behind a shape.
-
-    Uses a multi-layer detection strategy:
-      1. Shape's own fill (solid, gradient first-stop)
-      2. Slide background (solid, gradient, image, theme-ref)
-      3. Slide layout background
-      3.5 Slide master shape traversal (crucial for full-background wrapper shapes 
-          often used by templates without explicitly declaring a `<p:bg>` background)
-      4. Slide master background
-      5. Theme dk1/dk2 heuristic (dark-theme detection)
-      6. Default fallback
-
-    For image-based backgrounds (blipFill), assumes a dark color since most
-    professional templates with image backgrounds use dark overlays.
-    professional templates with image backgrounds use dark overlays.
-
-    Returns hex color string (e.g. '394755').
-    """
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    ns_p = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
-
-    def _extract_bg_color_from_element(bg_elem):
-        """Extract background color from a p:bg or p:bgPr XML element.
-
-        Handles solidFill, gradFill (first stop), blipFill (image → dark heuristic),
-        and bgRef (theme reference).
-        Returns hex string or None.
-        """
-        if bg_elem is None:
-            return None
-
-        # Check bgPr child first (contains the actual fill)
-        bgPr = bg_elem.find(ns_p + "bgPr")
-        if bgPr is None:
-            bgPr = bg_elem  # Sometimes fill is directly under bg
-
-        # 1. solidFill — most straightforward
-        solid_fill = bgPr.find(ns_a + "solidFill")
-        if solid_fill is None:
-            solid_fill = bgPr.find(".//" + ns_a + "solidFill")
-        if solid_fill is not None:
-            color = _extract_color_from_solid_fill(solid_fill)
-            if color:
-                return color
-
-        # 2. gradFill — use the first gradient stop color
-        grad_fill = bgPr.find(ns_a + "gradFill")
-        if grad_fill is None:
-            grad_fill = bgPr.find(".//" + ns_a + "gradFill")
-        if grad_fill is not None:
-            gs_lst = grad_fill.find(ns_a + "gsLst")
-            if gs_lst is not None:
-                first_gs = gs_lst.find(ns_a + "gs")
-                if first_gs is not None:
-                    solid = first_gs.find(ns_a + "srgbClr")
-                    if solid is not None:
-                        return solid.get("val")
-                    scheme = first_gs.find(ns_a + "schemeClr")
-                    if scheme is not None:
-                        val = scheme.get("val", "")
-                        scheme_defaults = {
-                            "dk1": "000000", "dk2": "44546A",
-                            "lt1": "FFFFFF", "lt2": "E7E6E6",
-                            "bg1": "FFFFFF", "bg2": "E7E6E6",
-                        }
-                        if val in scheme_defaults:
-                            return scheme_defaults[val]
-
-        # 3. blipFill — image-based background.
-        # We can't analyze the image pixels without heavy deps, so use a
-        # heuristic: professional templates with image backgrounds are
-        # overwhelmingly dark (dark overlays, photos with dark areas).
-        blip_fill = bgPr.find(ns_a + "blipFill")
-        if blip_fill is None:
-            blip_fill = bgPr.find(".//" + ns_a + "blipFill")
-        if blip_fill is not None:
-            if VERBOSE:
-                print(
-                    "  [BG DETECT] Image-based background detected — "
-                    "assuming dark background (333333)."
-                )
-            return "333333"  # Assume dark for image backgrounds
-
-        # 4. bgRef — theme-referenced background
-        bgRef = bg_elem.find(ns_p + "bgRef")
-        if bgRef is None:
-            bgRef = bg_elem.find(".//" + ns_p + "bgRef")
-        if bgRef is not None:
-            # bgRef has an idx attribute and may contain a color override
-            srgb = bgRef.find(ns_a + "srgbClr")
-            if srgb is not None:
-                return srgb.get("val")
-            scheme = bgRef.find(ns_a + "schemeClr")
-            if scheme is not None:
-                val = scheme.get("val", "")
-                scheme_defaults = {
-                    "dk1": "000000", "dk2": "44546A",
-                    "lt1": "FFFFFF", "lt2": "E7E6E6",
-                    "bg1": "FFFFFF", "bg2": "E7E6E6",
-                }
-                if val in scheme_defaults:
-                    return scheme_defaults[val]
-
-        return None
-
-    # === Layer 1: Shape's own fill ===
-    if hasattr(shape, "fill"):
-        try:
-            fill = shape.fill
-            if fill.type is not None:
-                try:
-                    fc = fill.fore_color
-                    if fc and fc.type is not None:
-                        return str(fc.rgb)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-    # === Layer 2: Slide background ===
-    try:
-        bg = slide.background
-        if bg and bg.fill and bg.fill.type is not None:
-            try:
-                fc = bg.fill.fore_color
-                if fc and fc.type is not None:
-                    return str(fc.rgb)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Layer 2b: Slide XML for complex backgrounds (image, gradient, theme-ref)
-    try:
-        slide_xml = slide._element
-        bg_elem = slide_xml.find(ns_p + "bg")
-        if bg_elem is None:
-            # Sometimes it's under cSld
-            cSld = slide_xml.find(ns_p + "cSld")
-            if cSld is not None:
-                bg_elem = cSld.find(ns_p + "bg")
-        if bg_elem is not None:
-            color = _extract_bg_color_from_element(bg_elem)
-            if color:
-                return color
-    except Exception:
-        pass
-
-    # === Layer 3: Slide layout background ===
-    try:
-        layout = slide.slide_layout
-        layout_xml = layout._element
-        bg_elem = layout_xml.find(ns_p + "bg")
-        if bg_elem is None:
-            cSld = layout_xml.find(ns_p + "cSld")
-            if cSld is not None:
-                bg_elem = cSld.find(ns_p + "bg")
-        if bg_elem is not None:
-            color = _extract_bg_color_from_element(bg_elem)
-            if color:
-                if VERBOSE:
-                    print(
-                        "  [BG DETECT] Background color from slide layout: #%s"
-                        % color
-                    )
-                return color
-    except Exception:
-        pass
-
-    # === Layer 3.5: Check master/layout shapes for large background images/fills ===
-    # Many premium templates place a full-slide Picture shape on the master
-    # as the visual background instead of using <p:bg>. This MUST be checked
-    # BEFORE Layer 4 (master bg XML) because the master's <p:bg> element may
-    # contain a misleading bgRef/schemeClr that maps to white in hardcoded
-    # defaults even though the actual visual background is dark (from the image).
-    _master_shape_bg_checked = False
-    try:
-        slide_w = 0
-        slide_h = 0
-        # SlideMaster has no slide_width attribute — get from presentation part
-        try:
-            prs_part = slide.part.package.presentation_part.presentation
-            slide_w = prs_part.slide_width
-            slide_h = prs_part.slide_height
-        except Exception:
-            pass
-        if not (slide_w and slide_h):
-            # Fallback: standard widescreen 13.333" x 7.5" in EMU
-            slide_w = 12192000
-            slide_h = 6858000
-        if slide_w and slide_h:
-            slide_area = slide_w * slide_h
-            shape_sources = []
-            try:
-                shape_sources.append(("layout", slide.slide_layout.shapes))
-            except Exception:
-                pass
-            try:
-                shape_sources.append(("master", slide.slide_layout.slide_master.shapes))
-            except Exception:
-                pass
-
-            for source_name, shapes_collection in shape_sources:
-                for s in shapes_collection:
-                    try:
-                        if not (s.width and s.height):
-                            continue
-                        shape_area = s.width * s.height
-                        if shape_area > slide_area * 0.6:
-                            # Large shape found — check for image (common bg pattern)
-                            s_elem = s._element
-                            blip = s_elem.find(".//" + ns_a + "blip")
-                            if blip is not None:
-                                if VERBOSE:
-                                    print(
-                                        "  [BG DETECT] Large image shape on %s "
-                                        "'%s' (%.0f%% coverage) — assuming dark (333333)."
-                                        % (
-                                            source_name,
-                                            getattr(s, "name", "?"),
-                                            100.0 * shape_area / slide_area,
-                                        )
-                                    )
-                                return "333333"
-                            # Check for solid fill
-                            if hasattr(s, "fill") and s.fill.type is not None:
-                                try:
-                                    fc = s.fill.fore_color
-                                    if fc and fc.type is not None:
-                                        bg_color = str(fc.rgb)
-                                        if VERBOSE:
-                                            print(
-                                                "  [BG DETECT] Large %s shape "
-                                                "'%s' (%.0f%% coverage): #%s"
-                                                % (
-                                                    source_name,
-                                                    getattr(s, "name", "?"),
-                                                    100.0 * shape_area / slide_area,
-                                                    bg_color,
-                                                )
-                                            )
-                                        return bg_color
-                                except Exception:
-                                    pass
-                    except Exception:
-                        continue
-            _master_shape_bg_checked = True
-    except Exception:
-        pass
-
-    # === Layer 4: Slide master background ===
-    try:
-        master = slide.slide_layout.slide_master
-        master_xml = master._element
-        bg_elem = master_xml.find(ns_p + "bg")
-        if bg_elem is None:
-            cSld = master_xml.find(ns_p + "cSld")
-            if cSld is not None:
-                bg_elem = cSld.find(ns_p + "bg")
-        if bg_elem is not None:
-            color = _extract_bg_color_from_element(bg_elem)
-            if color:
-                if VERBOSE:
-                    print(
-                        "  [BG DETECT] Background color from slide master: #%s"
-                        % color
-                    )
-                return color
-    except Exception:
-        pass
-
-    # === Layer 5: Theme dk1 heuristic ===
-    # If we reached here, the background is likely inherited from the theme.
-    # Check if the theme uses a dark color scheme (dk1 luminance check).
-    # Many premium templates define dark backgrounds via the theme, not explicit fills.
-    try:
-        master = slide.slide_layout.slide_master
-        theme_xml = master.element.find(
-            ".//{http://schemas.openxmlformats.org/drawingml/2006/main}theme"
-        )
-        # Try extracting dk1 from the theme
-        theme_elem = master._element
-        # Look for clrScheme in the slide master's theme
-        for clr_scheme in theme_elem.iter(ns_a + "clrScheme"):
-            dk1 = clr_scheme.find(ns_a + "dk1")
-            if dk1 is not None:
-                srgb = dk1.find(ns_a + "srgbClr")
-                if srgb is not None:
-                    dk1_hex = srgb.get("val", "000000")
-                    dk1_rgb = _hex_to_rgb(dk1_hex)
-                    dk1_lum = _relative_luminance(*dk1_rgb)
-                    # If dk1 is actually bright, this is likely a dark-bg template
-                    # (dk1 is text-on-dark, so lt1 is the background)
-                    lt1 = clr_scheme.find(ns_a + "lt1")
-                    if lt1 is not None:
-                        lt1_srgb = lt1.find(ns_a + "srgbClr")
-                        if lt1_srgb is not None:
-                            return lt1_srgb.get("val", "FFFFFF")
-                    break
-                sys_clr = dk1.find(ns_a + "sysClr")
-                if sys_clr is not None:
-                    last_clr = sys_clr.get("lastClr")
-                    if last_clr:
-                        break
-    except Exception:
-        pass
-
-    # === Layer 6: Check if slide has large dark shapes covering the background ===
-    # Some templates use full-slide rectangles as background (not actual bg elements)
-    try:
-        slide_w = 0
-        slide_h = 0
-        try:
-            prs_part = slide.part.package.presentation_part.presentation
-            slide_w = prs_part.slide_width
-            slide_h = prs_part.slide_height
-        except Exception:
-            pass
-        if not (slide_w and slide_h):
-            slide_w = 12192000
-            slide_h = 6858000
-
-        if slide_w and slide_h:
-            slide_area = slide_w * slide_h
-            for s in slide.shapes:
-                try:
-                    if s == shape:
-                        continue
-                    shape_area = s.width * s.height
-                    # If a shape covers >60% of the slide, treat it as background
-                    if shape_area > slide_area * 0.6:
-                        if hasattr(s, "fill") and s.fill.type is not None:
-                            try:
-                                fc = s.fill.fore_color
-                                if fc and fc.type is not None:
-                                    bg_color = str(fc.rgb)
-                                    if VERBOSE:
-                                        print(
-                                            "  [BG DETECT] Large background shape detected "
-                                            "(%.0f%% coverage): #%s"
-                                            % (
-                                                100.0 * shape_area / slide_area,
-                                                bg_color,
-                                            )
-                                        )
-                                    return bg_color
-                            except Exception:
-                                pass
-                        # Check for image shapes (blip) — assume dark
-                        s_elem = s._element
-                        blip = s_elem.find(".//" + ns_a + "blip")
-                        if blip is not None:
-                            if VERBOSE:
-                                print(
-                                    "  [BG DETECT] Large image shape on slide "
-                                    "(%.0f%% coverage) — assuming dark (333333)."
-                                    % (100.0 * shape_area / slide_area)
-                                )
-                            return "333333"
-                except Exception:
-                    continue
-    except Exception:
-        pass
-
-    # === Layer 7: Check master/layout shapes for large background images/fills ===
-    # Many premium templates place a full-slide Picture shape on the master
-    # as the visual background instead of using <p:bg>. This is very common.
-    try:
-        slide_w = slide_w or 0
-        slide_h = slide_h or 0
-        if not (slide_w and slide_h):
-            try:
-                prs_part = slide.part.package.presentation_part.presentation
-                slide_w = prs_part.slide_width
-                slide_h = prs_part.slide_height
-            except Exception:
-                pass
-        if not (slide_w and slide_h):
-            slide_w = 12192000
-            slide_h = 6858000
-        if slide_w and slide_h:
-            slide_area = slide_w * slide_h
-            # Check layout shapes first, then master (closer layer takes priority)
-            shape_sources = []
-            try:
-                shape_sources.append(("layout", slide.slide_layout.shapes))
-            except Exception:
-                pass
-            try:
-                shape_sources.append(("master", slide.slide_layout.slide_master.shapes))
-            except Exception:
-                pass
-
-            for source_name, shapes_collection in shape_sources:
-                for s in shapes_collection:
-                    try:
-                        if not (s.width and s.height):
-                            continue
-                        shape_area = s.width * s.height
-                        if shape_area > slide_area * 0.6:
-                            # Large shape found — check for image (common bg pattern)
-                            s_elem = s._element
-                            blip = s_elem.find(".//" + ns_a + "blip")
-                            if blip is not None:
-                                if VERBOSE:
-                                    print(
-                                        "  [BG DETECT] Large image shape on %s "
-                                        "'%s' (%.0f%% coverage) — assuming dark (333333)."
-                                        % (
-                                            source_name,
-                                            getattr(s, "name", "?"),
-                                            100.0 * shape_area / slide_area,
-                                        )
-                                    )
-                                return "333333"
-                            # Check for solid fill
-                            if hasattr(s, "fill") and s.fill.type is not None:
-                                try:
-                                    fc = s.fill.fore_color
-                                    if fc and fc.type is not None:
-                                        bg_color = str(fc.rgb)
-                                        if VERBOSE:
-                                            print(
-                                                "  [BG DETECT] Large %s shape "
-                                                "'%s' (%.0f%% coverage): #%s"
-                                                % (
-                                                    source_name,
-                                                    getattr(s, "name", "?"),
-                                                    100.0 * shape_area / slide_area,
-                                                    bg_color,
-                                                )
-                                            )
-                                        return bg_color
-                                except Exception:
-                                    pass
-                    except Exception:
-                        continue
-    except Exception:
-        pass
-
-    if VERBOSE:
-        print(
-            "  [BG DETECT] Could not determine background color — "
-            "defaulting to FFFFFF (white). This may cause contrast issues "
-            "on dark-themed templates."
-        )
-    return "FFFFFF"  # Default to white
-
-
-
-def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
-    """Set text color to black or white for maximum contrast against background.
-    
-    IMPORTANT OOXML SEQUENCE ENFORCEMENT:
-    Microsoft PowerPoint strictly enforces OpenXML schema sequencing within 
-    the `<a:rPr>` element. The `<a:solidFill>` tag MUST logically precede structural
-    font styling tags such as `<a:latin>`, `<a:ea>`, `<a:cs>`, or `<a:sym>`. 
-    If appended to the end of the element group, PowerPoint's engine will silently
-    declare the tag invalid and discard the high-contrast color modification.
-    Therefore, this function removes any misordered pre-existing solidFills and 
-    programmatically calculates the correct schema index to ensure compliant insertion.
-    """
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    bg_rgb = _hex_to_rgb(bg_hex)
-    bg_lum = _relative_luminance(*bg_rgb)
-    # Use white text on dark backgrounds, black text on light backgrounds
-    text_hex = "FFFFFF" if bg_lum < 0.4 else "000000"
-
-    if existing_solidFill is not None:
-        rPr.remove(existing_solidFill)
-
-    # PowerPoint strictly enforces XML sequence in <a:rPr>
-    # solidFill MUST appear before latin, ea, cs, sym, and hlink tags.
-    solid_fill = etree.Element(ns_a + "solidFill")
-    srgb_clr = etree.SubElement(solid_fill, ns_a + "srgbClr")
-    srgb_clr.set("val", text_hex)
-
-    insert_idx = 0
-    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
-    for i, child in enumerate(rPr):
-        tag = child.tag.split("}")[-1]
-        if tag in tags_after_fill:
-            insert_idx = i
-            break
-        insert_idx = i + 1
-
-    rPr.insert(insert_idx, solid_fill)
-
-
-def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
-    """Set or replace solidFill color on a chart rPr/defRPr element.
-    
-    Mirrors the strict OOPXML Sequence Enforcement implemented in 
-    `_make_high_contrast_fill()`. Ensures `<a:solidFill>` appears before 
-    `<a:latin>` elements so PowerPoint successfully parses and renders 
-    axis labels, legends, and data labels in high contrast.
-    """
-    existing = rPr_elem.find(ns_a + "solidFill")
-    if existing is not None:
-        rPr_elem.remove(existing)
-
-    new_fill = etree.Element(ns_a + "solidFill")
-    srgb = etree.SubElement(new_fill, ns_a + "srgbClr")
-    srgb.set("val", color_hex)
-
-    insert_idx = 0
-    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
-    for i, child in enumerate(rPr_elem):
-        tag = child.tag.split("}")[-1]
-        if tag in tags_after_fill:
-            insert_idx = i
-            break
-        insert_idx = i + 1
-
-    rPr_elem.insert(insert_idx, new_fill)
-
-
-def _fix_chart_text_contrast(shape, slide, min_ratio: float = 3.0) -> int:
-    """Fix text contrast inside chart elements (axis labels, data labels, legend, title).
-
-    Chart text (axis tick labels, data labels, legend entries, chart title)
-    lives in c:txPr/a:defRPr or c:tx/a:rPr XML — NOT accessible via
-    shape.text_frame. This function scans all such elements and forces
-    high-contrast text when the slide background is dark.
-
-    Returns number of corrected text elements.
-    """
-    if not getattr(shape, "has_chart", False):
-        return 0
-
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-
-    bg_hex = _get_shape_background_color(shape, slide)
-    bg_rgb = _hex_to_rgb(bg_hex)
-    bg_lum = _relative_luminance(*bg_rgb)
-
-    if bg_lum >= 0.4:
-        return 0  # Light background — chart text is likely fine
-
-    # On dark backgrounds, force all chart text to white
-    target_color = "FFFFFF"
-    corrections = 0
-
-    try:
-        chart_elem = shape.chart._chartSpace
-    except Exception:
-        return 0
-
-    # Find all defRPr and rPr elements inside the chart XML
-    for rPr in chart_elem.iter(ns_a + "defRPr"):
-        _set_chart_text_color(rPr, ns_a, target_color)
-        corrections += 1
-    for rPr in chart_elem.iter(ns_a + "rPr"):
-        _set_chart_text_color(rPr, ns_a, target_color)
-        corrections += 1
-
-    return corrections
-
-def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
-    """Post-merge WCAG contrast enforcement — template-independent safety net.
-
-    Opens the PPTX, checks every text run against its effective background,
-    and fixes any low-contrast text. Works without a template.
-    
-    Additional QA Enhancements:
-    1. Iterates over Chart elements to repair internal sub-element text visibility (defRPr).
-    2. Overrides AI compression side-effects by enforcing minimum shape bounds (3.0" x 4.0")
-       specifically on undersized Charts.
-    3. Avoids post-resize overlap by caching bounding box properties and pushing adjacent
-       rescaled geometries hierarchically downwards.
-
-    Args:
-        pptx_path: Path to the PPTX file to process.
-        min_ratio: Minimum WCAG contrast ratio to accept (default 3.0).
-
-    Returns:
-        Number of text runs that were corrected.
-    """
-    from pptx import Presentation as PptxPresentation
-
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-    prs = PptxPresentation(pptx_path)
-    corrections = 0
-
-    for slide in prs.slides:
-        resized_charts = []
-        for shape in slide.shapes:
-            # Text frames
-            if getattr(shape, "has_text_frame", False):
-                bg_hex = _get_shape_background_color(shape, slide)
-                bg_rgb = _hex_to_rgb(bg_hex)
-                for para in shape.text_frame.paragraphs:
-                    for run in para.runs:
-                        if not run.text.strip():
-                            continue
-                        rPr = run._r.find(ns_a + "rPr")
-                        if rPr is not None:
-                            solidFill = rPr.find(ns_a + "solidFill")
-                            if solidFill is not None:
-                                text_hex = _extract_color_from_solid_fill(solidFill)
-                                if text_hex:
-                                    text_rgb = _hex_to_rgb(text_hex)
-                                    ratio = _contrast_ratio(text_rgb, bg_rgb)
-                                    if ratio < min_ratio:
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
-                                        corrections += 1
-                                else:
-                                    # Can't determine text color — check default (black) contrast
-                                    default_rgb = (0, 0, 0)
-                                    ratio = _contrast_ratio(default_rgb, bg_rgb)
-                                    if ratio >= 3.0:
-                                        # Safe to strip — default black has good contrast
-                                        rPr.remove(solidFill)
-                                        corrections += 1
-                                    else:
-                                        # Stripping would cause dark-on-dark — replace
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
-                                        corrections += 1
-                            else:
-                                # No explicit color — check if inherited color (assume black) has contrast
-                                default_rgb = (0, 0, 0)
-                                ratio = _contrast_ratio(default_rgb, bg_rgb)
-                                if ratio < min_ratio:
-                                    # Dark default on dark bg — fix it
-                                    if rPr is None:
-                                        from lxml import etree as _etree
-
-                                        rPr = _etree.SubElement(run._r, ns_a + "rPr")
-                                    _make_high_contrast_fill(rPr, bg_hex)
-                                    corrections += 1
-                        else:
-                            # No rPr at all — check default black against background
-                            default_rgb = (0, 0, 0)
-                            ratio = _contrast_ratio(default_rgb, bg_rgb)
-                            if ratio < min_ratio:
-                                from lxml import etree as _etree
-
-                                rPr = _etree.SubElement(run._r, ns_a + "rPr")
-                                _make_high_contrast_fill(rPr, bg_hex)
-                                corrections += 1
-
-            # Tables
-            if getattr(shape, "has_table", False):
-                for row in shape.table.rows:
-                    for cell in row.cells:
-                        cell_bg_hex = "FFFFFF"
-                        try:
-                            tc_elem = cell._tc
-                            tc_pr = tc_elem.find(ns_a + "tcPr") if tc_elem is not None else None
-                            if tc_pr is not None:
-                                cell_fill = tc_pr.find(ns_a + "solidFill")
-                                if cell_fill is not None:
-                                    extracted = _extract_color_from_solid_fill(cell_fill)
-                                    if extracted:
-                                        cell_bg_hex = extracted
-                        except Exception:
-                            pass
-
-                        cell_bg_rgb = _hex_to_rgb(cell_bg_hex)
-                        for para in cell.text_frame.paragraphs:
-                            for run in para.runs:
-                                if not run.text.strip():
-                                    continue
-                                rPr = run._r.find(ns_a + "rPr")
-                                if rPr is not None:
-                                    solidFill = rPr.find(ns_a + "solidFill")
-                                    if solidFill is not None:
-                                        text_hex = _extract_color_from_solid_fill(solidFill)
-                                        if text_hex:
-                                            text_rgb = _hex_to_rgb(text_hex)
-                                            ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
-                                            if ratio < min_ratio:
-                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
-                                                corrections += 1
-                                        else:
-                                            # Can't determine text color — check default (black) contrast
-                                            default_rgb = (0, 0, 0)
-                                            ratio = _contrast_ratio(default_rgb, cell_bg_rgb)
-                                            if ratio >= 3.0:
-                                                rPr.remove(solidFill)
-                                                corrections += 1
-                                            else:
-                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
-                                                corrections += 1
-
-            # Charts — axis labels, data labels, legend text
-            try:
-                chart_fixes = _fix_chart_text_contrast(shape, slide, min_ratio)
-                corrections += chart_fixes
-            except Exception:
-                pass
-
-            # Charts — enforce minimum dimensions to prevent squeezing
-            try:
-                if getattr(shape, "has_chart", False):
-                    from pptx.util import Inches as _Inches
-                    _MIN_W = _Inches(4.0)
-                    _MIN_H = _Inches(3.0)
-                    if shape.width < _MIN_W:
-                        shape.width = _MIN_W
-                        corrections += 1
-                    if shape.height < _MIN_H:
-                        shape.height = _MIN_H
-                        corrections += 1
-                    
-                    # Prevent overlap
-                    for pc in resized_charts:
-                        if abs(shape.left - pc.left) < _Inches(2.0) and abs(shape.top - pc.top) < _Inches(2.0):
-                            shape.top = pc.top + pc.height + _Inches(0.2)
-                            corrections += 1
-                    resized_charts.append(shape)
-            except Exception:
-                pass
-
-    if corrections > 0:
-        prs.save(pptx_path)
-        print("    [CONTRAST] Fixed %d low-contrast text run(s) in final output" % corrections)
-
-    return corrections
-
-
-def clean_presentation_visual_noise_and_contrast(prs) -> None:
-    """Clean empty placeholder ghost text and strip hardcoded font colors.
-
-    1. Removes any text shapes containing default MS PowerPoint placeholder ghost text or empty text.
-    2. Strips <a:solidFill> from text runs so text inherits the high-contrast
-       theme color from the slide master. 
-       Handles OOXML `a:rPr` property omissions gracefully by creating properties dynamically
-       to enforce contrast baselines if natively absent.
-    3. Extends contrast remediation logic deep into OOXML Chart schemas (axis/titles/labels).
-    """
-    ghost_texts = {
-        "click to add title",
-        "click to add subtitle",
-        "click to add text",
-        "click to add notes",
-        "double-tap to add title",
-        "double-tap to add subtitle",
-        "double-tap to add text",
-    }
-    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-
-    for slide in prs.slides:
-        spTree = slide.shapes._spTree
-        elements_to_remove = []
-        
-        for shape in list(slide.shapes):
-            # 1. Clean visual noise
-            try:
-                if getattr(shape, "has_text_frame", False):
-                    text = shape.text.strip().lower()
-                    if text in ghost_texts or text == "":
-                        elements_to_remove.append(shape._element)
-                        continue # Removed, don't check for color
-            except Exception:
-                pass
-            
-            # 2. Fix Text Contrast (contrast-aware color correction)
-            try:
-                if getattr(shape, "has_text_frame", False):
-                    bg_hex = _get_shape_background_color(shape, slide)
-                    bg_rgb = _hex_to_rgb(bg_hex)
-                    for para in shape.text_frame.paragraphs:
-                        for run in para.runs:
-                            rPr = run._r.find(ns_a + "rPr")
-                            if rPr is not None:
-                                solidFill = rPr.find(ns_a + "solidFill")
-                                if solidFill is not None:
-                                    text_hex = _extract_color_from_solid_fill(solidFill)
-                                    if text_hex:
-                                        text_rgb = _hex_to_rgb(text_hex)
-                                        ratio = _contrast_ratio(text_rgb, bg_rgb)
-                                        if ratio < 3.0:
-                                            # Low contrast — replace with high-contrast color
-                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
-                                        # else: contrast is adequate, keep original color
-                                    else:
-                                        # Can't determine text color — check if stripping is safe
-                                        # (inherited default is typically black)
-                                        default_rgb = (0, 0, 0)
-                                        ratio = _contrast_ratio(default_rgb, bg_rgb)
-                                        if ratio >= 3.0:
-                                            # Safe to strip — default black has good contrast
-                                            rPr.remove(solidFill)
-                                        else:
-                                            # Stripping would cause dark-on-dark — replace instead
-                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
-                            else:
-                                # No rPr at all — run inherits default (typically black)
-                                default_rgb = (0, 0, 0)
-                                ratio = _contrast_ratio(default_rgb, bg_rgb)
-                                if ratio < 3.0:
-                                    from lxml import etree as _etree
-                                    new_rPr = _etree.Element(ns_a + "rPr")
-                                    run._r.insert(0, new_rPr)
-                                    _make_high_contrast_fill(new_rPr, bg_hex)
-            except Exception:
-                pass
-            
-            # Table cells — contrast-aware color correction
-            try:
-                if getattr(shape, "has_table", False):
-                    for row in shape.table.rows:
-                        for cell in row.cells:
-                            # Detect cell background
-                            cell_bg_hex = "FFFFFF"
-                            try:
-                                tc_elem = cell._tc
-                                tc_pr = None
-                                if tc_elem is not None:
-                                    ns_a_table = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-                                    tc_pr = tc_elem.find(ns_a_table + "tcPr")
-                                if tc_pr is not None:
-                                    cell_fill = tc_pr.find(ns_a + "solidFill")
-                                    if cell_fill is not None:
-                                        extracted = _extract_color_from_solid_fill(cell_fill)
-                                        if extracted:
-                                            cell_bg_hex = extracted
-                            except Exception:
-                                pass
-
-                            cell_bg_rgb = _hex_to_rgb(cell_bg_hex)
-                            for para in cell.text_frame.paragraphs:
-                                for run in para.runs:
-                                    rPr = run._r.find(ns_a + "rPr")
-                                    if rPr is not None:
-                                        solidFill = rPr.find(ns_a + "solidFill")
-                                        if solidFill is not None:
-                                            text_hex = _extract_color_from_solid_fill(solidFill)
-                                            if text_hex:
-                                                text_rgb = _hex_to_rgb(text_hex)
-                                                ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
-                                                if ratio < 3.0:
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
-                                                # else: keep original
-                                            else:
-                                                # Can't determine text color — check if stripping is safe
-                                                default_rgb = (0, 0, 0)
-                                                ratio = _contrast_ratio(default_rgb, cell_bg_rgb)
-                                                if ratio >= 3.0:
-                                                    rPr.remove(solidFill)
-                                                else:
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
-            except Exception:
-                pass
-
-            # Charts — axis labels, data labels, legend text
-            try:
-                _fix_chart_text_contrast(shape, slide)
-            except Exception:
-                pass
-        
-        for element in elements_to_remove:
-            try:
-                spTree.remove(element)
-            except Exception:
-                pass

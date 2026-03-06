@@ -1,8 +1,8 @@
 # Design: Visual Quality Improvements for PowerPoint Template Assembly
 
 **Date:** 2026-02-19
-**Last Updated:** 2026-03-04
-**Status:** Implemented (Phase 1 + Phase 2 + Phase 3)
+**Last Updated:** 2026-03-06
+**Status:** Implemented (Phase 1 + Phase 2 + Phase 3 + Phase 4)
 **Files affected:**
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`; also adds a 3-tier chunk generation fallback — see below)
@@ -77,6 +77,33 @@ Five interconnected fixes targeting template-specific styling failures (2026-03-
 | Chart Scaling Bounds | `enforce_final_contrast()` | Microscopic 0.4" charts | ✅ Implemented |
 | Chart Overlap Repositioning | `enforce_final_contrast()` | Adjusted charts stacked over each other | ✅ Implemented |
 | Layer 3.5 Shape Heuristics | `_get_shape_background_color()` | SlideMaster shape wrapper detection | ✅ Implemented |
+
+### Phase 4: Semantic Content-Aware Layout Engine — COMPLETE ✅
+
+A dynamic layout engine that classifies slide content and routes to specialized visual builders instead of defaulting to bullet lists (2026-03-06).
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Semantic type enum | `SlideSemanticType` (`sequential`, `comparative`, `metrics`, `hero`, `default`) | ✅ Implemented |
+| Classification context | `SemanticSlideContext` dataclass | ✅ Implemented |
+| Multi-signal classifier | `_classify_slide_semantics()` — regex + word count + storyboard hints | ✅ Implemented |
+| KPI metric extractor | `_extract_kpi_metrics()` — 8-pattern regex with confidence scoring | ✅ Implemented |
+| Timeline builder | `_build_horizontal_timeline()` — N boxes L→R with arrow connectors | ✅ Implemented |
+| Chevron process builder | `_build_chevron_process()` — arrow/chevron shapes, falls back to timeline | ✅ Implemented |
+| Card grid builder | `_build_card_grid()` — 2-4 column rounded-rectangle cards | ✅ Implemented |
+| Hero layout builder | `_build_hero_layout()` — centered hero with background rectangle | ✅ Implemented |
+| KPI dashboard builder | `_build_kpi_dashboard()` — large metric values + context prose | ✅ Implemented |
+| Semantic router | `_route_to_semantic_builder()` — dispatches to correct builder | ✅ Implemented |
+| Template layout matcher | `_find_matching_template_layout()` — native SmartArt detection | ✅ Implemented |
+| Density reduction | `_apply_density_reduction()` — medium-confidence paragraph truncation | ✅ Implemented |
+| Keyword icon map | `ICON_KEYWORD_MAP` — maps keywords to native PPTX shape types | ✅ Implemented |
+| Router in `_populate_slide()` | Confidence-gated semantic routing at entry | ✅ Implemented |
+| `SlideQualityReport` fix | `model_validator` reconciling `design_score` → `overall_quality` | ✅ Implemented |
+| Placeholder extraction fix | `try/except` in `_extract_slide_content()` for non-conforming shapes | ✅ Implemented |
+| Storyboard metadata | `SlideStoryboard.semantic_type` + `key_metrics` fields | ✅ Implemented |
+| Tier 1/2 prompt upgrades | Semantic layout rules injected into chunk generation prompts | ✅ Implemented |
+
+**Robustness:** Every builder wraps its body in `try/except Exception` → returns `False` → falls back to existing bullet layout. The classifier itself never raises — returns `DEFAULT` with `confidence=0.0` on any error. Medium-confidence slides (0.4–0.6) get density reduction only.
 
 ---
 

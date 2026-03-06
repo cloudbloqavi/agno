@@ -5,7 +5,7 @@
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Main chunked orchestrator for all presentations
 
 **Date:** 2026-02-25
-**Last Updated:** 2026-03-05
+**Last Updated:** 2026-03-06
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
@@ -29,8 +29,14 @@ powerpoint_template_workflow.py
   │
   │  Provides (via wildcard import *):
   │    - All Pydantic models (SlideImageDecision, ImagePlan, ShapeIssue, etc.)
-  │    - All dataclasses (SlideContent, ContentArea, RegionMap, etc.)
+  │    - All dataclasses (SlideContent, ContentArea, RegionMap, SemanticSlideContext, etc.)
+  │    - All enums (ContentMix, SlideSemanticType, etc.)
   │    - All helper functions (_extract_slide_content, _populate_slide, etc.)
+  │    - Semantic layout engine (_classify_slide_semantics, _extract_kpi_metrics,
+  │                              _build_horizontal_timeline, _build_chevron_process,
+  │                              _build_card_grid, _build_hero_layout,
+  │                              _build_kpi_dashboard, _route_to_semantic_builder,
+  │                              _apply_density_reduction, _find_matching_template_layout)
   │    - All agents (image_planner, slide_quality_reviewer)
   │    - All step functions (step_generate_images, step_assemble_template,
   │                          step_visual_quality_review)

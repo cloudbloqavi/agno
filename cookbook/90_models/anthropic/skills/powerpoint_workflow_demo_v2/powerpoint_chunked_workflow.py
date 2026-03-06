@@ -431,6 +431,14 @@ class SlideStoryboard(BaseModel):
     key_points: List[str] = Field(..., description="3-5 bullet points for this slide")
     visual_suggestion: str = Field(..., description="Visual element recommendation")
     transition_note: str = Field(..., description="How this slide connects to next")
+    semantic_type: str = Field(
+        default="default",
+        description="Semantic layout type (e.g. 'sequential', 'comparative', 'metrics', 'hero', 'default')",
+    )
+    key_metrics: List[str] = Field(
+        default_factory=list,
+        description="Extracted quantifiable metrics for this slide (if applicable)",
+    )
 
 
 class StoryboardPlan(BaseModel):
@@ -874,22 +882,29 @@ def _format_slide_markdown(slide: SlideStoryboard) -> str:
     """Format a SlideStoryboard as a markdown string for the pptx agent.
 
     Excludes transition_note (planning meta-info, not useful for content generation)
-    to keep context size lean. Includes type, key points, and visual suggestion only.
+    to keep context size lean. Includes type, key points, visual suggestion,
+    and semantic intelligence fields.
 
     Args:
         slide: SlideStoryboard instance to format.
 
     Returns:
-        Markdown string with slide number, title, type, key points, and visual suggestion.
+        Markdown string with slide number, title, type, key points, visual suggestion, and semantic hints.
     """
-    points = "\n".join("- %s" % p for p in slide.key_points)
-    return ("# Slide %d: %s\n\n**Type:** %s\n\n## Content\n%s\n\n**Visual:** %s\n") % (
-        slide.slide_number,
-        slide.slide_title,
-        slide.slide_type,
-        points,
-        slide.visual_suggestion,
-    )
+    lines = [
+        "## Slide %d" % slide.slide_number,
+        "**Title:** %s" % slide.slide_title,
+        "**Type:** %s" % slide.slide_type,
+        "**Semantic Type:** %s" % getattr(slide, "semantic_type", "default"),
+    ]
+    if getattr(slide, "key_metrics", []):
+        lines.append("**Key Metrics:** %s" % ", ".join(slide.key_metrics))
+        
+    lines.append("**Key Points:**")
+    for point in slide.key_points:
+        lines.append("- %s" % point)
+    lines.append("**Visual Suggestion:** %s" % slide.visual_suggestion)
+    return "\n".join(lines) + "\n"
 
 
 def _format_global_context_markdown(plan: StoryboardPlan) -> str:
@@ -1146,7 +1161,9 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         '      "slide_number": <integer>,\n'
         '      "slide_title": "<string>",\n'
         '      "slide_type": "<title|agenda|content|data|closing>",\n'
+        '      "semantic_type": "<sequential|comparative|metrics|hero|default>",\n'
         '      "key_points": ["<string>", ...],\n'
+        '      "key_metrics": ["<string>", ...],\n'
         '      "visual_suggestion": "<string>",\n'
         '      "transition_note": "<string>"\n'
         "    },\n"
@@ -1376,6 +1393,9 @@ def generate_chunk_pptx(
         "or use matplotlib/PIL to render one.\n"
         "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) "
         "or a native table to approximate the visual — do NOT insert images for infographics or diagrams.\n"
+        "SEMANTIC LAYOUT RULES: If the slide Semantic Type is 'sequential', 'comparative', 'metrics', or 'hero', "
+        "DO NOT use standard bullet points. Instead, create native shapes (chevrons, cards, metric grids, banners) "
+        "that visually represent that semantic classification.\n"
         "If a requested visual cannot be represented exactly, preserve the slide structure and add a concise "
         "native textbox note; do NOT fail the chunk and do NOT use image-based substitutes.\n"
         "Save the output as 'chunk_%03d.pptx'."
@@ -2139,6 +2159,11 @@ def generate_chunk_pptx_v2(
         "- For 'content' type slides: use prs.slide_layouts[1] (Title and Content).\n"
         "- For 'data' type slides: use prs.slide_layouts[3] if available, else [1].\n"
         "- For 'closing' type slides: use prs.slide_layouts[0].\n"
+        "SEMANTIC LAYOUT RULES (CRITICAL):\n"
+        "- If Semantic Type is 'sequential': DO NOT use standard bullets. Programmatically draw a horizontal chevron/arrow process flow using native python-pptx shapes.\n"
+        "- If Semantic Type is 'comparative': DO NOT use standard bullets. Programmatically draw a 2-4 column card grid using filled rectangles and textboxes.\n"
+        "- If Semantic Type is 'metrics': DO NOT use standard bullets. Draw a KPI Dashboard row with large, high-contrast numbers inside subtle native rectangles.\n"
+        "- If Semantic Type is 'hero': DO NOT use bullets. Draw a massive, centered title and subtitle on a dark tinted rectangle spanning the full slide.\n"
         "- For any slide with a chart visual_suggestion: generate a REAL chart using "
         "  python-pptx native ChartData ONLY (e.g. CategoryChartData + slide.shapes.add_chart()).\n"
         "  Do NOT use matplotlib, PIL, or any image-based approach for charts.\n"
