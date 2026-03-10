@@ -4,12 +4,12 @@
 Chunked PPTX Workflow
 ============================================================
 Provider:   claude
-Session:    session_6375a417_20260306_120810
-Session dir: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810
-Prompt:     Create a nice looking 7-slide presentation about a PC OEM vendor Sales outlook i
-Output:     /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx
+Session:    session_92569bbd_20260310_065230
+Session dir: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230
+Prompt:     Create a nice looking 7-slide presentation about Android Smartphone Sales outloo
+Output:     /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx
 Mode:       template-assisted generation
-Template:   ./templates/Agile-Project-Plan-Template.pptx
+Template:   ./templates/AI Strategy.pptx
 Visual review: enabled (3 passes max)
 Chunk size: 3 slides per API call
 Max retries per chunk: 2
@@ -19,258 +19,262 @@ Verbose:    enabled
 ============================================================
 Step 1: Optimizing query and generating storyboard...
 ============================================================
-User prompt: Create a nice looking 7-slide presentation about a PC OEM vendor Sales outlook in 2026 with visuals, leveraging visual elements, charts etc. from template as relevant
+User prompt: Create a nice looking 7-slide presentation about Android Smartphone Sales outlook in 2026 with visuals, leveraging visual elements, smart arts, charts etc. from template
 [BRAND] Analyzing query for branding/styling intent...
 [BRAND] No explicit branding keywords detected, but analyzing prompt with LLM (gpt-4o-mini) to check for implicit styling intent...
 [BRAND] No branding intent confirmed by gpt-4o-mini.
-[BRAND] Extracting style from template: ./templates/Agile-Project-Plan-Template.pptx
-[BRAND] Template company name heuristic: 'Project Goal'
-[TIMING] Brand/style parsing completed in 42.7s
-[PROMPT] Optimizer prompt saved to: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/prompt_optimize_and_plan_1772798933688.txt
-[RATE TRACKER] [step_optimize_and_plan/query_optimizer] claude-sonnet-4-6 — ~1115 estimated input tokens | window so far: ~0 / 30000 tokens/min
-Storyboard plan: 'PC OEM Vendor Sales Outlook 2026' (7 slides, tone: Authoritative, data-driven, and strategically forward-looking)
+[BRAND] Extracting style from template: ./templates/AI Strategy.pptx
+[BRAND] Template company name heuristic: 'The Exponential Linear Curve'
+[TIMING] Brand/style parsing completed in 52.1s
+[PROMPT] Optimizer prompt saved to: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/prompt_optimize_and_plan_1773125602434.txt
+[RATE TRACKER] [step_optimize_and_plan/query_optimizer] claude-sonnet-4-6 — ~1132 estimated input tokens | window so far: ~0 / 30000 tokens/min
+Storyboard plan: 'Android Smartphone Sales Outlook 2026' (7 slides, tone: Authoritative, forward-looking, and analytically precise — grounded in real market data with a strategic lens)
 [VERBOSE] Full storyboard JSON:
 {
   "total_slides": 7,
-  "presentation_title": "PC OEM Vendor Sales Outlook 2026",
-  "search_topic": "PC OEM vendor market share and sales outlook 2026",
-  "target_audience": "Sales leaders, business development teams, and executive stakeholders at PC OEM vendors",
-  "tone": "Authoritative, data-driven, and strategically forward-looking",
-  "brand_voice": "Project Goal: goal-oriented, clear, confident, and insight-led — framing every challenge as a targetable opportunity with measurable outcomes",
-  "global_context": "The global PC market reached 278.7 million units shipped in 2025 (9.1% YoY growth) and is valued at USD 242.63 billion in 2026, but the outlook is bifurcated: 57% of B2B channel partners forecast growth, yet memory and storage cost inflation of 40–70% in 2025 threatens unit volumes. OEM vendors that can secure supply, pivot to premium and AI-enabled SKUs, and capitalize on the ongoing Windows 10 refresh wave will define the competitive hierarchy in 2026.",
+  "presentation_title": "Android Smartphone Sales Outlook 2026",
+  "search_topic": "Android smartphone sales market share growth outlook 2026",
+  "target_audience": "Business strategists, technology investors, and product leaders tracking the global Android ecosystem and smartphone market dynamics in 2026",
+  "tone": "Authoritative, forward-looking, and analytically precise — grounded in real market data with a strategic lens",
+  "brand_voice": "The Exponential Linear Curve: clarity-driven, data-informed, and growth-oriented — translating complex market trajectories into sharp, actionable intelligence",
+  "global_context": "Android retains its dominant position in 2026 with approximately 72.77% global mobile OS market share and 3.9 billion active users, even as the overall smartphone market faces a projected ~1% unit shipment decline driven by memory component shortages. Despite volume headwinds, record-high average selling prices ($465) and accelerating demand for AI-enabled and 5G devices signal a structural shift toward value-over-volume growth. This presentation maps the key forces, regional opportunities, vendor dynamics, and strategic risks shaping the Android sales trajectory in 2026.",
   "slides": [
     {
       "slide_number": 1,
-      "slide_title": "PC OEM Sales Outlook 2026",
+      "slide_title": "Android 2026: The Curve Ahead",
       "slide_type": "title",
       "key_points": [
-        "The global PC market enters 2026 valued at USD 242.63 billion, following a strong 9.1% shipment surge in 2025.",
-        "Supply-side headwinds and premium demand tailwinds are reshaping the competitive landscape for all OEM vendors.",
-        "This presentation defines where growth will come from, who will win, and what strategic moves are required.",
-        "Project Goal: align sales priorities to the highest-opportunity segments before market dynamics harden in H2 2026."
+        "Android commands 72.77% of global mobile OS market share as of late 2025, powering 3.9 billion active devices worldwide.",
+        "2026 marks a pivotal inflection: volume softens while market value reaches a record high of $578.9 billion.",
+        "AI integration and 5G expansion are redefining the growth curve for Android OEMs in 2026.",
+        "This deck examines the sales outlook, regional momentum, competitive dynamics, and strategic risks ahead."
       ],
-      "visual_suggestion": "Full-bleed hero image of a modern, premium laptop on a clean desk with a bold title overlay; use Project Goal brand color palette with a strong accent gradient bar at bottom",
-      "transition_note": "Set the stage by moving into a structured agenda that maps the narrative arc from market context to strategic action.",
+      "visual_suggestion": "Full-bleed hero image of a sleek Android flagship device overlaid with a bold exponential curve graphic in brand colors; title text centered with a subtle grid/data-line background motif",
+      "transition_note": "Set the stage with a dominant market position, then immediately contextualize where growth is happening and why 2026 is a defining year.",
       "semantic_type": "hero",
       "key_metrics": [
-        "278.7M units shipped globally in 2025 (+9.1% YoY)",
-        "PC market value: USD 242.63B in 2026",
-        "57% of B2B channel partners forecast 2026 growth (Omdia, Nov 2025)"
+        "72.77% global Android OS share",
+        "3.9B active Android devices",
+        "$578.9B projected market value in 2026",
+        "~1% unit shipment decline forecast (IDC)"
       ]
     },
     {
       "slide_number": 2,
-      "slide_title": "Agenda: Navigating 2026 Priorities",
-      "slide_type": "agenda",
+      "slide_title": "Market Snapshot: Scale and Dominance",
+      "slide_type": "data",
       "key_points": [
-        "Section 1 — Market Snapshot: 2025 performance baseline and 2026 size projections.",
-        "Section 2 — Vendor Landscape: Market share standings and competitive dynamics among top OEMs.",
-        "Section 3 — Key Growth Drivers: Windows refresh wave, AI PC adoption, and premium segment expansion.",
-        "Section 4 — Risks and Headwinds: Memory supply constraints, tariff volatility, and pricing pressure.",
-        "Section 5 — Regional Opportunities: Geographic demand pockets and growth differentials.",
-        "Section 6 — Strategic Priorities: Recommended sales and portfolio actions for 2026."
+        "Android controls 79% of quarterly worldwide smartphone sales as of Q3 2025, far outpacing iOS at 17%.",
+        "The global smartphone market is estimated at $609 billion in 2025 and projected to reach $656 billion in 2026.",
+        "Total smartphone shipments reached 1.25 billion units in 2025 with 1.5% YoY growth before expected 2026 softening.",
+        "Global smartphone users are projected to surpass 5.12 billion in 2026, adding approximately 440 million new users YoY."
       ],
-      "visual_suggestion": "Numbered vertical agenda list with icon per section; use brand accent color for section numbers and a subtle dividing line between items",
-      "transition_note": "Anchor the audience in the 2025 market reality before projecting forward into 2026 opportunity.",
-      "semantic_type": "sequential",
-      "key_metrics": []
+      "visual_suggestion": "SmartArt dashboard layout: large donut chart showing Android vs iOS OS share (72.77% vs 26.82%); paired KPI metric cards for market value, unit shipments, and user base",
+      "transition_note": "With market scale established, pivot to how Android's value is distributed across regions — and where the growth engine is firing hardest.",
+      "semantic_type": "metrics",
+      "key_metrics": [
+        "79% Android quarterly sales share (Q3 2025)",
+        "$656B projected 2026 smartphone market size",
+        "1.25B units shipped in 2025",
+        "5.12B global smartphone users in 2026"
+      ]
     },
     {
       "slide_number": 3,
-      "slide_title": "2025 Baseline and 2026 Market Size",
-      "slide_type": "data",
+      "slide_title": "Regional Hotspots: Where Android Wins",
+      "slide_type": "content",
       "key_points": [
-        "Full-year 2025 PC shipments totaled 278.7 million units, a 9.1% increase over 2024, marking the market's strongest recovery year.",
-        "The PC market is projected at USD 242.63 billion in 2026, growing at an 8.98% CAGR toward USD 372.68 billion by 2031.",
-        "Desktop shipments grew 14.5% in 2025 to 59.1 million units, outpacing notebook growth for the first time in years.",
-        "Even with potential unit volume softness in 2026, higher average selling prices driven by memory costs are expected to sustain or grow total market value."
+        "India leads global Android adoption at 95.21% penetration and is expected to reach 1 billion smartphone users by 2026.",
+        "Asia-Pacific commands 82.03% Android market share and is estimated to contribute 48% to global market growth.",
+        "Indonesia follows with 86.8% Android penetration, fueled by a growing e-commerce and digital services sector.",
+        "Emerging markets in Asia and Africa are forecasted to lead volume growth due to increasing affordability and connectivity."
       ],
-      "visual_suggestion": "Dual-axis combo chart: bar chart showing annual PC shipments (2022–2026E) in millions of units on left axis; line chart overlaying market value in USD billions on right axis; highlight 2026 bar with brand accent color",
-      "transition_note": "With the market size established, zoom into which vendors are capturing share and leading the competitive race.",
-      "semantic_type": "metrics",
+      "visual_suggestion": "World map choropleth (heat map) with color intensity indicating Android market share by country/region; callout bubbles for India, Indonesia, Brazil, and Africa with their respective penetration percentages",
+      "transition_note": "Regional dominance tells the demand story; next, examine which vendors are best positioned to capture that demand within the Android ecosystem.",
+      "semantic_type": "comparative",
       "key_metrics": [
-        "2025 shipments: 278.7M units (+9.1% YoY)",
-        "2026 market value: USD 242.63B",
-        "2031 projected value: USD 372.68B (CAGR 8.98%)",
-        "Desktop growth in 2025: +14.5% YoY"
+        "95.21% Android penetration in India",
+        "82.03% Android share in Asia-Pacific",
+        "86.8% Android penetration in Indonesia",
+        "48% of global growth contribution from APAC"
       ]
     },
     {
       "slide_number": 4,
-      "slide_title": "Vendor Landscape: Who Is Winning in 2026",
+      "slide_title": "Vendor Landscape: Who Leads Android",
       "slide_type": "data",
       "key_points": [
-        "Lenovo holds the top position with 71 million units shipped in 2025 and 25.3% Q4 market share, growing 14.6% YoY — the largest absolute gain among peers.",
-        "HP ranked second in Q4 2025, recording growth on both a sequential and annual basis, reinforcing its commercial market stronghold.",
-        "Apple stood out as the fastest-growing full-year vendor, recording 16.4% growth with 28 million units shipped in 2025.",
-        "Large, well-established OEMs will widen their lead in 2026 as their procurement scale provides privileged access to constrained memory supply."
+        "Samsung leads Android OEMs with 30.8% vendor market share within the ecosystem, shipping 58 million units in Q2 2025.",
+        "Chinese manufacturers — Xiaomi, Vivo, Oppo, and Transsion — collectively account for over 42% of Android device shipments.",
+        "Xiaomi holds 15.9% of Android vendor share, with Vivo at 11.2% and Oppo at 10.1% rounding out the top tier.",
+        "Emerging brands like Nothing and Google Pixel saw 25–31% YoY growth in 2025, signaling a premium Android resurgence."
       ],
-      "visual_suggestion": "Horizontal bar chart: top 5 OEM vendors ranked by 2025 full-year shipment volume (units in millions); include YoY growth % as a data label per bar; color-code bars by brand tier (market leader vs. challengers) using brand palette",
-      "transition_note": "Market share reveals who is winning today — now examine the demand catalysts that will define which vendors grow in 2026.",
+      "visual_suggestion": "Horizontal stacked bar chart showing Android vendor market share breakdown (Samsung, Xiaomi, Vivo, Oppo, Realme, Others); secondary SmartArt process diagram showing OEM tier segmentation from flagship to budget",
+      "transition_note": "With vendors mapped, shift focus to the technology forces — AI and 5G — that are actively reshaping which Android devices consumers choose to buy.",
       "semantic_type": "comparative",
       "key_metrics": [
-        "Lenovo: 71M units in 2025, 25.3% Q4 market share (+14.6% YoY)",
-        "Apple: 28M units shipped in 2025, fastest full-year growth at +16.4%",
-        "Top 5 OEMs: Lenovo, HP, Dell, Apple, Asus"
+        "Samsung: 30.8% Android vendor share",
+        "Chinese OEMs: 42%+ of Android shipments",
+        "Xiaomi: 15.9% Android share",
+        "Google/Nothing: 25–31% YoY growth"
       ]
     },
     {
       "slide_number": 5,
-      "slide_title": "2026 Growth Drivers: Refresh, AI, and Premium",
+      "slide_title": "Growth Catalysts: AI, 5G, and Foldables",
       "slide_type": "content",
       "key_points": [
-        "The Windows 10 end-of-support deadline (October 2025) is fueling a multi-year enterprise refresh cycle, with meaningful procurement demand extending well into 2026.",
-        "Significant growth in the AI PC market is expected from 2026, driven by new AI chipsets and NPUs from major silicon vendors, lifting average selling prices.",
-        "Premium PC segments (above USD 1,200) are accelerating at a 13.19% CAGR, creating higher-margin revenue opportunities that offset unit volume compression.",
-        "E-commerce and direct-to-consumer channels are growing at 14.25% CAGR, enabling OEMs to capture premium buyers and reduce channel margin dilution."
+        "38% of North American and European consumers in 2025 cited on-device AI features as their primary reason to upgrade smartphones.",
+        "5G shipments already represent 57.43% of 2025 volume, advancing at a 4.54% CAGR with Ericsson projecting 3.5 billion 5G subscriptions by 2026.",
+        "Foldable Android devices are projected to grow 6% in 2026, supported by Samsung and emerging competitors entering the segment.",
+        "AI integration in mid-range Android devices is expanding intelligent features into more affordable price points, broadening upgrade demand."
       ],
-      "visual_suggestion": "Three-column icon card layout: Card 1 = Windows Refresh (icon: refresh arrows, stat: enterprise refresh wave), Card 2 = AI PC (icon: chip/brain, stat: new AI chipset launches), Card 3 = Premium Segment (icon: upward trend line, stat: 13.19% CAGR); brand accent colors per card",
-      "transition_note": "Balanced against these tailwinds are material risks — particularly on the supply side — that will test vendor resilience throughout 2026.",
+      "visual_suggestion": "Three-column SmartArt pyramid or icon grid: Column 1 — AI (brain/chip icon, stat callout); Column 2 — 5G (signal tower icon, stat callout); Column 3 — Foldables (device fold icon, stat callout); use brand accent colors per column",
+      "transition_note": "Growth drivers are compelling, but the 2026 landscape is not without friction — the next slide quantifies the headwinds Android OEMs must navigate.",
       "semantic_type": "sequential",
       "key_metrics": [
-        "Premium PC CAGR: 13.19% (2026–2031)",
-        "AI PC growth acceleration expected from 2026",
-        "E-commerce channel CAGR: 14.25% (2026–2031)",
-        "Windows 11 refresh demand projected to push into 2026"
+        "38% cite AI as top upgrade trigger (2025)",
+        "57.43% of 2025 shipments are 5G",
+        "3.5B 5G subscriptions projected by 2026",
+        "Foldables: 6% growth projected in 2026"
       ]
     },
     {
       "slide_number": 6,
-      "slide_title": "Risks and Headwinds: Supply, Pricing, and Volatility",
+      "slide_title": "Headwinds: Supply, Price, and Competition",
       "slide_type": "content",
       "key_points": [
-        "PC memory and storage costs rose 40–70% between Q1 and Q4 2025; Lenovo, HP, Dell, ASUS, and Acer have all signaled meaningful price hikes for 2026.",
-        "DRAM and NAND capacity is being redirected from consumer PC supply to high-margin AI server memory, creating structural supply tightness that will persist through 2026.",
-        "US import tariffs and macroeconomic uncertainty are suppressing consumer spending, with consumer PC shipments expected to decline even as commercial demand holds.",
-        "Smaller OEM brands face existential procurement risk — scale and supplier credibility will be the decisive differentiator for securing memory allocation in 2026."
+        "Global memory component shortages are expected to constrain supply and disproportionately impact low-to-mid range Android devices in 2026.",
+        "DRAM spot prices climbed roughly 20% in late 2024, forcing entry-level Android vendors to reduce memory configurations and delay launches.",
+        "Average smartphone replacement cycles have extended to 3.5 years globally, reducing annual upgrade volumes and pressuring new device demand.",
+        "The refurbished smartphone market grew 12% YoY, with certified programs from Samsung and others cannibalizing new Android device sales."
       ],
-      "visual_suggestion": "2x2 risk matrix chart: x-axis = likelihood (low to high), y-axis = impact (low to high); plot four risks: Memory Shortage (high/high), Tariff Volatility (medium/high), Consumer Demand Drop (high/medium), Smaller Vendor Viability (medium/high); use red-to-yellow gradient fill",
-      "transition_note": "With risks mapped, the final slide converts intelligence into a targeted set of strategic sales priorities for 2026.",
+      "visual_suggestion": "Risk matrix SmartArt (2x2 grid: Likelihood vs Impact) plotting: Memory Shortage, Extended Replacement Cycles, Refurbished Market Cannibalization, and Trade Tariffs; use red-amber-green color coding for severity",
+      "transition_note": "Risks are real but manageable — close with the strategic outlook and the exponential opportunity curve for Android through 2026 and beyond.",
       "semantic_type": "comparative",
       "key_metrics": [
-        "Memory/storage cost increase: +40% to +70% (Q1–Q4 2025)",
-        "Consumer PC shipments: expected -4% decline",
-        "Commercial PC shipments: expected +8% growth",
-        "39% of OEMs report GPU/CPU shipment delays"
+        "~1% projected unit shipment decline in 2026 (IDC)",
+        "DRAM prices up ~20% in late 2024",
+        "3.5-year global replacement cycle (up from 2.4)",
+        "Refurbished market: +12% YoY growth"
       ]
     },
     {
       "slide_number": 7,
-      "slide_title": "Strategic Sales Priorities for 2026",
+      "slide_title": "Strategic Outlook: The Exponential Curve",
       "slide_type": "closing",
       "key_points": [
-        "Prioritize commercial and enterprise accounts: commercial PC demand is forecast to grow 8% while consumer demand declines, making B2B the primary revenue engine in 2026.",
-        "Shift portfolio mix toward premium and AI-enabled SKUs to protect margins and capitalize on accelerating ASP trends driven by memory cost inflation.",
-        "Invest in supply chain relationships and memory procurement leverage now — vendor credibility with suppliers will be the decisive factor in fulfilling 2026 demand.",
-        "Accelerate regional focus on Asia-Pacific (9.32% CAGR) and target post-Windows-10 enterprise refresh cycles in North America and Europe for near-term pipeline velocity."
+        "Android is projected to maintain 71–73% global OS market share through 2026, with the Android segment expected to reach 80.4% revenue share by 2035.",
+        "Record market value of $578.9B in 2026 confirms a structural shift: fewer units sold at higher prices signals a maturing, premium-driven ecosystem.",
+        "OEMs that pivot toward AI-differentiated mid-range and premium foldable devices will outperform those reliant on legacy budget volume strategies.",
+        "The Exponential Linear Curve favors brands accelerating software longevity, AI capability, and ecosystem lock-in as primary competitive moats in 2026."
       ],
-      "visual_suggestion": "Four-quadrant action grid (2x2): label each quadrant with a priority pillar (Commercial Focus / Premium Mix / Supply Leverage / Regional Expansion); use bold header text per quadrant with 2–3 bullet sub-actions and a Project Goal brand accent border; add a bottom CTA banner in brand color",
-      "transition_note": "End with a call-to-action: schedule a pipeline review against these four pillars for Q2 2026 planning.",
+      "visual_suggestion": "Line chart overlaid with an exponential curve: X-axis = 2022–2035, dual Y-axis showing unit volume (declining then stabilizing) vs market value (rising); annotate 2026 as the inflection point with brand color highlight; closing brand logo lockup at bottom",
+      "transition_note": "End with a clear call-to-action: stakeholders should position now for the value-over-volume transition defining the next phase of Android's growth curve.",
       "semantic_type": "sequential",
       "key_metrics": [
-        "Commercial growth target: +8% YoY",
-        "Asia-Pacific CAGR: 9.32% through 2031",
-        "57% of channel partners forecast 2026 growth — opportunity is real for prepared vendors",
-        "Project Goal: set quarterly milestones aligned to Windows refresh pipeline and AI SKU launches"
+        "71–73% Android OS share through 2026",
+        "80.4% Android revenue share target by 2035",
+        "$578.9B record market value in 2026",
+        "7.8% CAGR forecast through 2035"
       ]
     }
   ]
 }
-Saved global context: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/storyboard/global_context.md
+Saved global context: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/storyboard/global_context.md
 [VERBOSE] Slide 1 storyboard:
 ## Slide 1
-**Title:** PC OEM Sales Outlook 2026
+**Title:** Android 2026: The Curve Ahead
 **Type:** title
 **Semantic Type:** hero
-**Key Metrics:** 278.7M units shipped globally in 2025 (+9.1% YoY), PC market value: USD 242.63B in 2026, 57% of B2B channel partners forecast 2026 growth (Omdia, Nov 2025)
+**Key Metrics:** 72.77% global Android OS share, 3.9B active Android devices, $578.9B projected market value in 2026, ~1% unit shipment decline forecast (IDC)
 **Key Points:**
-- The global PC market enters 2026 valued at USD 242.63 billion, following a strong 9.1% shipment surge in 2025.
-- Supply-side headwinds and premium demand tailwinds are reshaping the competitive landscape for all OEM vendors.
-- This presentation defines where growth will come from, who will win, and what strategic moves are required.
-- Project Goal: align sales priorities to the highest-opportunity segments before market dynamics harden in H2 2026.
-**Visual Suggestion:** Full-bleed hero image of a modern, premium laptop on a clean desk with a bold title overlay; use Project Goal brand color palette with a strong accent gradient bar at bottom
+- Android commands 72.77% of global mobile OS market share as of late 2025, powering 3.9 billion active devices worldwide.
+- 2026 marks a pivotal inflection: volume softens while market value reaches a record high of $578.9 billion.
+- AI integration and 5G expansion are redefining the growth curve for Android OEMs in 2026.
+- This deck examines the sales outlook, regional momentum, competitive dynamics, and strategic risks ahead.
+**Visual Suggestion:** Full-bleed hero image of a sleek Android flagship device overlaid with a bold exponential curve graphic in brand colors; title text centered with a subtle grid/data-line background motif
 
 [VERBOSE] Slide 2 storyboard:
 ## Slide 2
-**Title:** Agenda: Navigating 2026 Priorities
-**Type:** agenda
-**Semantic Type:** sequential
+**Title:** Market Snapshot: Scale and Dominance
+**Type:** data
+**Semantic Type:** metrics
+**Key Metrics:** 79% Android quarterly sales share (Q3 2025), $656B projected 2026 smartphone market size, 1.25B units shipped in 2025, 5.12B global smartphone users in 2026
 **Key Points:**
-- Section 1 — Market Snapshot: 2025 performance baseline and 2026 size projections.
-- Section 2 — Vendor Landscape: Market share standings and competitive dynamics among top OEMs.
-- Section 3 — Key Growth Drivers: Windows refresh wave, AI PC adoption, and premium segment expansion.
-- Section 4 — Risks and Headwinds: Memory supply constraints, tariff volatility, and pricing pressure.
-- Section 5 — Regional Opportunities: Geographic demand pockets and growth differentials.
-- Section 6 — Strategic Priorities: Recommended sales and portfolio actions for 2026.
-**Visual Suggestion:** Numbered vertical agenda list with icon per section; use brand accent color for section numbers and a subtle dividing line between items
+- Android controls 79% of quarterly worldwide smartphone sales as of Q3 2025, far outpacing iOS at 17%.
+- The global smartphone market is estimated at $609 billion in 2025 and projected to reach $656 billion in 2026.
+- Total smartphone shipments reached 1.25 billion units in 2025 with 1.5% YoY growth before expected 2026 softening.
+- Global smartphone users are projected to surpass 5.12 billion in 2026, adding approximately 440 million new users YoY.
+**Visual Suggestion:** SmartArt dashboard layout: large donut chart showing Android vs iOS OS share (72.77% vs 26.82%); paired KPI metric cards for market value, unit shipments, and user base
 
 [VERBOSE] Slide 3 storyboard:
 ## Slide 3
-**Title:** 2025 Baseline and 2026 Market Size
-**Type:** data
-**Semantic Type:** metrics
-**Key Metrics:** 2025 shipments: 278.7M units (+9.1% YoY), 2026 market value: USD 242.63B, 2031 projected value: USD 372.68B (CAGR 8.98%), Desktop growth in 2025: +14.5% YoY
+**Title:** Regional Hotspots: Where Android Wins
+**Type:** content
+**Semantic Type:** comparative
+**Key Metrics:** 95.21% Android penetration in India, 82.03% Android share in Asia-Pacific, 86.8% Android penetration in Indonesia, 48% of global growth contribution from APAC
 **Key Points:**
-- Full-year 2025 PC shipments totaled 278.7 million units, a 9.1% increase over 2024, marking the market's strongest recovery year.
-- The PC market is projected at USD 242.63 billion in 2026, growing at an 8.98% CAGR toward USD 372.68 billion by 2031.
-- Desktop shipments grew 14.5% in 2025 to 59.1 million units, outpacing notebook growth for the first time in years.
-- Even with potential unit volume softness in 2026, higher average selling prices driven by memory costs are expected to sustain or grow total market value.
-**Visual Suggestion:** Dual-axis combo chart: bar chart showing annual PC shipments (2022–2026E) in millions of units on left axis; line chart overlaying market value in USD billions on right axis; highlight 2026 bar with brand accent color
+- India leads global Android adoption at 95.21% penetration and is expected to reach 1 billion smartphone users by 2026.
+- Asia-Pacific commands 82.03% Android market share and is estimated to contribute 48% to global market growth.
+- Indonesia follows with 86.8% Android penetration, fueled by a growing e-commerce and digital services sector.
+- Emerging markets in Asia and Africa are forecasted to lead volume growth due to increasing affordability and connectivity.
+**Visual Suggestion:** World map choropleth (heat map) with color intensity indicating Android market share by country/region; callout bubbles for India, Indonesia, Brazil, and Africa with their respective penetration percentages
 
 [VERBOSE] Slide 4 storyboard:
 ## Slide 4
-**Title:** Vendor Landscape: Who Is Winning in 2026
+**Title:** Vendor Landscape: Who Leads Android
 **Type:** data
 **Semantic Type:** comparative
-**Key Metrics:** Lenovo: 71M units in 2025, 25.3% Q4 market share (+14.6% YoY), Apple: 28M units shipped in 2025, fastest full-year growth at +16.4%, Top 5 OEMs: Lenovo, HP, Dell, Apple, Asus
+**Key Metrics:** Samsung: 30.8% Android vendor share, Chinese OEMs: 42%+ of Android shipments, Xiaomi: 15.9% Android share, Google/Nothing: 25–31% YoY growth
 **Key Points:**
-- Lenovo holds the top position with 71 million units shipped in 2025 and 25.3% Q4 market share, growing 14.6% YoY — the largest absolute gain among peers.
-- HP ranked second in Q4 2025, recording growth on both a sequential and annual basis, reinforcing its commercial market stronghold.
-- Apple stood out as the fastest-growing full-year vendor, recording 16.4% growth with 28 million units shipped in 2025.
-- Large, well-established OEMs will widen their lead in 2026 as their procurement scale provides privileged access to constrained memory supply.
-**Visual Suggestion:** Horizontal bar chart: top 5 OEM vendors ranked by 2025 full-year shipment volume (units in millions); include YoY growth % as a data label per bar; color-code bars by brand tier (market leader vs. challengers) using brand palette
+- Samsung leads Android OEMs with 30.8% vendor market share within the ecosystem, shipping 58 million units in Q2 2025.
+- Chinese manufacturers — Xiaomi, Vivo, Oppo, and Transsion — collectively account for over 42% of Android device shipments.
+- Xiaomi holds 15.9% of Android vendor share, with Vivo at 11.2% and Oppo at 10.1% rounding out the top tier.
+- Emerging brands like Nothing and Google Pixel saw 25–31% YoY growth in 2025, signaling a premium Android resurgence.
+**Visual Suggestion:** Horizontal stacked bar chart showing Android vendor market share breakdown (Samsung, Xiaomi, Vivo, Oppo, Realme, Others); secondary SmartArt process diagram showing OEM tier segmentation from flagship to budget
 
 [VERBOSE] Slide 5 storyboard:
 ## Slide 5
-**Title:** 2026 Growth Drivers: Refresh, AI, and Premium
+**Title:** Growth Catalysts: AI, 5G, and Foldables
 **Type:** content
 **Semantic Type:** sequential
-**Key Metrics:** Premium PC CAGR: 13.19% (2026–2031), AI PC growth acceleration expected from 2026, E-commerce channel CAGR: 14.25% (2026–2031), Windows 11 refresh demand projected to push into 2026
+**Key Metrics:** 38% cite AI as top upgrade trigger (2025), 57.43% of 2025 shipments are 5G, 3.5B 5G subscriptions projected by 2026, Foldables: 6% growth projected in 2026
 **Key Points:**
-- The Windows 10 end-of-support deadline (October 2025) is fueling a multi-year enterprise refresh cycle, with meaningful procurement demand extending well into 2026.
-- Significant growth in the AI PC market is expected from 2026, driven by new AI chipsets and NPUs from major silicon vendors, lifting average selling prices.
-- Premium PC segments (above USD 1,200) are accelerating at a 13.19% CAGR, creating higher-margin revenue opportunities that offset unit volume compression.
-- E-commerce and direct-to-consumer channels are growing at 14.25% CAGR, enabling OEMs to capture premium buyers and reduce channel margin dilution.
-**Visual Suggestion:** Three-column icon card layout: Card 1 = Windows Refresh (icon: refresh arrows, stat: enterprise refresh wave), Card 2 = AI PC (icon: chip/brain, stat: new AI chipset launches), Card 3 = Premium Segment (icon: upward trend line, stat: 13.19% CAGR); brand accent colors per card
+- 38% of North American and European consumers in 2025 cited on-device AI features as their primary reason to upgrade smartphones.
+- 5G shipments already represent 57.43% of 2025 volume, advancing at a 4.54% CAGR with Ericsson projecting 3.5 billion 5G subscriptions by 2026.
+- Foldable Android devices are projected to grow 6% in 2026, supported by Samsung and emerging competitors entering the segment.
+- AI integration in mid-range Android devices is expanding intelligent features into more affordable price points, broadening upgrade demand.
+**Visual Suggestion:** Three-column SmartArt pyramid or icon grid: Column 1 — AI (brain/chip icon, stat callout); Column 2 — 5G (signal tower icon, stat callout); Column 3 — Foldables (device fold icon, stat callout); use brand accent colors per column
 
 [VERBOSE] Slide 6 storyboard:
 ## Slide 6
-**Title:** Risks and Headwinds: Supply, Pricing, and Volatility
+**Title:** Headwinds: Supply, Price, and Competition
 **Type:** content
 **Semantic Type:** comparative
-**Key Metrics:** Memory/storage cost increase: +40% to +70% (Q1–Q4 2025), Consumer PC shipments: expected -4% decline, Commercial PC shipments: expected +8% growth, 39% of OEMs report GPU/CPU shipment delays
+**Key Metrics:** ~1% projected unit shipment decline in 2026 (IDC), DRAM prices up ~20% in late 2024, 3.5-year global replacement cycle (up from 2.4), Refurbished market: +12% YoY growth
 **Key Points:**
-- PC memory and storage costs rose 40–70% between Q1 and Q4 2025; Lenovo, HP, Dell, ASUS, and Acer have all signaled meaningful price hikes for 2026.
-- DRAM and NAND capacity is being redirected from consumer PC supply to high-margin AI server memory, creating structural supply tightness that will persist through 2026.
-- US import tariffs and macroeconomic uncertainty are suppressing consumer spending, with consumer PC shipments expected to decline even as commercial demand holds.
-- Smaller OEM brands face existential procurement risk — scale and supplier credibility will be the decisive differentiator for securing memory allocation in 2026.
-**Visual Suggestion:** 2x2 risk matrix chart: x-axis = likelihood (low to high), y-axis = impact (low to high); plot four risks: Memory Shortage (high/high), Tariff Volatility (medium/high), Consumer Demand Drop (high/medium), Smaller Vendor Viability (medium/high); use red-to-yellow gradient fill
+- Global memory component shortages are expected to constrain supply and disproportionately impact low-to-mid range Android devices in 2026.
+- DRAM spot prices climbed roughly 20% in late 2024, forcing entry-level Android vendors to reduce memory configurations and delay launches.
+- Average smartphone replacement cycles have extended to 3.5 years globally, reducing annual upgrade volumes and pressuring new device demand.
+- The refurbished smartphone market grew 12% YoY, with certified programs from Samsung and others cannibalizing new Android device sales.
+**Visual Suggestion:** Risk matrix SmartArt (2x2 grid: Likelihood vs Impact) plotting: Memory Shortage, Extended Replacement Cycles, Refurbished Market Cannibalization, and Trade Tariffs; use red-amber-green color coding for severity
 
 [VERBOSE] Slide 7 storyboard:
 ## Slide 7
-**Title:** Strategic Sales Priorities for 2026
+**Title:** Strategic Outlook: The Exponential Curve
 **Type:** closing
 **Semantic Type:** sequential
-**Key Metrics:** Commercial growth target: +8% YoY, Asia-Pacific CAGR: 9.32% through 2031, 57% of channel partners forecast 2026 growth — opportunity is real for prepared vendors, Project Goal: set quarterly milestones aligned to Windows refresh pipeline and AI SKU launches
+**Key Metrics:** 71–73% Android OS share through 2026, 80.4% Android revenue share target by 2035, $578.9B record market value in 2026, 7.8% CAGR forecast through 2035
 **Key Points:**
-- Prioritize commercial and enterprise accounts: commercial PC demand is forecast to grow 8% while consumer demand declines, making B2B the primary revenue engine in 2026.
-- Shift portfolio mix toward premium and AI-enabled SKUs to protect margins and capitalize on accelerating ASP trends driven by memory cost inflation.
-- Invest in supply chain relationships and memory procurement leverage now — vendor credibility with suppliers will be the decisive factor in fulfilling 2026 demand.
-- Accelerate regional focus on Asia-Pacific (9.32% CAGR) and target post-Windows-10 enterprise refresh cycles in North America and Europe for near-term pipeline velocity.
-**Visual Suggestion:** Four-quadrant action grid (2x2): label each quadrant with a priority pillar (Commercial Focus / Premium Mix / Supply Leverage / Regional Expansion); use bold header text per quadrant with 2–3 bullet sub-actions and a Project Goal brand accent border; add a bottom CTA banner in brand color
+- Android is projected to maintain 71–73% global OS market share through 2026, with the Android segment expected to reach 80.4% revenue share by 2035.
+- Record market value of $578.9B in 2026 confirms a structural shift: fewer units sold at higher prices signals a maturing, premium-driven ecosystem.
+- OEMs that pivot toward AI-differentiated mid-range and premium foldable devices will outperform those reliant on legacy budget volume strategies.
+- The Exponential Linear Curve favors brands accelerating software longevity, AI capability, and ecosystem lock-in as primary competitive moats in 2026.
+**Visual Suggestion:** Line chart overlaid with an exponential curve: X-axis = 2022–2035, dual Y-axis showing unit volume (declining then stabilizing) vs market value (rising); annotate 2026 as the inflection point with brand color highlight; closing brand logo lockup at bottom
 
-Saved 7 slide storyboard files to: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/storyboard
-[TIMING] step_optimize_and_plan completed in 120.4s
+Saved 7 slide storyboard files to: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/storyboard
+[TIMING] step_optimize_and_plan completed in 123.3s
 
 ============================================================
 Step 2: Generating presentation chunks...
@@ -283,276 +287,270 @@ Total slides: 7 | Chunk size: 3 | Number of chunks: 3
 [GENERATE] Chunk 1/3: Starting at Tier 2 (LLM code generation).
 [CHUNK 0 TIER2] Starting LLM code generation fallback (slides 1-3)...
   [TEMPLATE CTX] Template context injected into Tier 2 prompt (bg_dark=False, bg_hex=#FFFFFF).
-[VERBOSE] Chunk 0 Tier 2 code-gen prompt length: 6426 chars
-[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1606 estimated input tokens | window so far: ~0 / 50000 tokens/min
-[33mWARNING [0m PythonTools can run arbitrary code, please provide human supervision.                                     
-[34mINFO[0m Saved:                                                                                                        
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[34mINFO[0m Running                                                                                                       
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[TIMING] Chunk 0 Tier 2 code generation: 23.9s
-[CHUNK 0 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-[TIMING] Chunk 1/3 done in 24.3s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-[GENERATE] --- Inter-chunk delay before Chunk 2/3: 71.1s (rate limit safety jitter: 60–120s range) ---
-[GENERATE] Waiting... 71s remaining (71s total)
-[GENERATE] Waiting... 56s remaining (71s total)
-[GENERATE] Waiting... 41s remaining (71s total)
-[GENERATE] Waiting... 26s remaining (71s total)
-[GENERATE] Final 11s...
+[VERBOSE] Chunk 0 Tier 2 code-gen prompt length: 6547 chars
+[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1636 estimated input tokens | window so far: ~0 / 50000 tokens/min
+[33mWARNING [0m PythonTools can run arbitrary code, please provide human supervision.                                                                        
+[34mINFO[0m Saved: [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_presentation.py[0m                     
+[34mINFO[0m Running [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_presentation.py[0m                    
+[1;31mERROR   [0m Error saving and running code: [1;35m_BaseGroupShapes.add_chart[0m[1m([0m[1m)[0m missing [1;36m1[0m required positional argument: [32m'chart_data'[0m                             
+[34mINFO[0m Saved: [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_presentation.py[0m                     
+[34mINFO[0m Running [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_presentation.py[0m                    
+[TIMING] Chunk 0 Tier 2 code generation: 51.9s
+[CHUNK 0 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000.pptx
+[TIMING] Chunk 1/3 done in 53.4s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000.pptx
+[GENERATE] --- Inter-chunk delay before Chunk 2/3: 73.5s (rate limit safety jitter: 60–120s range) ---
+[GENERATE] Waiting... 74s remaining (74s total)
+[GENERATE] Waiting... 59s remaining (74s total)
+[GENERATE] Waiting... 44s remaining (74s total)
+[GENERATE] Waiting... 29s remaining (74s total)
+[GENERATE] Final 14s...
 [GENERATE] Inter-chunk delay complete. Resuming Chunk 2/3.
 [GENERATE] Chunk 2/3: slides 4-6
 [GENERATE] Chunk 2/3: Starting at Tier 2 (LLM code generation).
 [CHUNK 1 TIER2] Starting LLM code generation fallback (slides 4-6)...
   [TEMPLATE CTX] Template context injected into Tier 2 prompt (bg_dark=False, bg_hex=#FFFFFF).
-[VERBOSE] Chunk 1 Tier 2 code-gen prompt length: 7024 chars
-[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1756 estimated input tokens | window so far: ~0 / 50000 tokens/min
-[34mINFO[0m Saved:                                                                                                        
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[34mINFO[0m Running                                                                                                       
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[TIMING] Chunk 1 Tier 2 code generation: 34.6s
-[CHUNK 1 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-[TIMING] Chunk 2/3 done in 35.9s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-[GENERATE] --- Inter-chunk delay before Chunk 3/3: 73.2s (rate limit safety jitter: 60–120s range) ---
-[GENERATE] Waiting... 73s remaining (73s total)
-[GENERATE] Waiting... 58s remaining (73s total)
-[GENERATE] Waiting... 43s remaining (73s total)
-[GENERATE] Waiting... 28s remaining (73s total)
-[GENERATE] Final 13s...
+[VERBOSE] Chunk 1 Tier 2 code-gen prompt length: 6877 chars
+[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1719 estimated input tokens | window so far: ~0 / 50000 tokens/min
+[34mINFO[0m Saved: [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_android_pptx.py[0m                     
+[34mINFO[0m Running [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_android_pptx.py[0m                    
+[TIMING] Chunk 1 Tier 2 code generation: 37.0s
+[CHUNK 1 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001.pptx
+[TIMING] Chunk 2/3 done in 38.1s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001.pptx
+[GENERATE] --- Inter-chunk delay before Chunk 3/3: 114.4s (rate limit safety jitter: 60–120s range) ---
+[GENERATE] Waiting... 114s remaining (114s total)
+[GENERATE] Waiting... 99s remaining (114s total)
+[GENERATE] Waiting... 84s remaining (114s total)
+[GENERATE] Waiting... 69s remaining (114s total)
+[GENERATE] Waiting... 54s remaining (114s total)
+[GENERATE] Waiting... 39s remaining (114s total)
+[GENERATE] Waiting... 24s remaining (114s total)
+[GENERATE] Final 9s...
 [GENERATE] Inter-chunk delay complete. Resuming Chunk 3/3.
 [GENERATE] Chunk 3/3: slides 7-7
 [GENERATE] Chunk 3/3: Starting at Tier 2 (LLM code generation).
 [CHUNK 2 TIER2] Starting LLM code generation fallback (slides 7-7)...
   [TEMPLATE CTX] Template context injected into Tier 2 prompt (bg_dark=False, bg_hex=#FFFFFF).
-[VERBOSE] Chunk 2 Tier 2 code-gen prompt length: 5127 chars
-[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1281 estimated input tokens | window so far: ~0 / 50000 tokens/min
-[34mINFO[0m Saved:                                                                                                        
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[34mINFO[0m Running                                                                                                       
-     [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_pptx.py[0m 
-[TIMING] Chunk 2 Tier 2 code generation: 17.5s
-[CHUNK 2 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002.pptx
-[TIMING] Chunk 3/3 done in 18.0s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002.pptx
+[VERBOSE] Chunk 2 Tier 2 code-gen prompt length: 5299 chars
+[RATE TRACKER] [generate_chunk_pptx_v2/Tier2] claude-haiku-4-5 — ~1324 estimated input tokens | window so far: ~0 / 50000 tokens/min
+[34mINFO[0m Saved: [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_android_pptx.py[0m                     
+[34mINFO[0m Running [35m/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/[0m[95mgenerate_android_pptx.py[0m                    
+[TIMING] Chunk 2 Tier 2 code generation: 20.7s
+[CHUNK 2 TIER2] Successfully generated via LLM code execution: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002.pptx
+[TIMING] Chunk 3/3 done in 21.7s -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002.pptx
 
-[TIMING] step_generate_chunks completed in 222.5s (3 chunks: 3 succeeded, 0 failed)
+[TIMING] step_generate_chunks completed in 283.8s (3 chunks: 3 succeeded, 0 failed)
 
 ============================================================
 Step 3: Processing chunks (images + template assembly)...
 ============================================================
 
-[PROCESS] Chunk 0 (1/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx: shape is not a placeholder
+[PROCESS] Chunk 0 (1/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000.pptx
+[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000.pptx: shape is not a placeholder
 [VERBOSE] Chunk 0 session state keys: ['assembly_knowledge', 'brand_style_intent', 'chunk_files', 'chunk_size', 'chunk_slide_groups', 'current_run_id', 'current_session_id', 'date_text', 'footer_text', 'generated_file', 'generated_images', 'inter_chunk_delay_max', 'inter_chunk_delay_min', 'llm_provider', 'max_retries', 'min_images', 'no_images', 'output_dir', 'output_path', 'processed_chunks', 'quality_report', 'rate_limit_hit', 'reviewed_chunks', 'show_slide_numbers', 'slides_data', 'src_slide_height', 'src_slide_width', 'start_tier', 'storyboard', 'storyboard_dir', 'stream', 'template_path', 'total_slides', 'use_fallback_generator', 'user_prompt', 'verbose', 'visual_passes', 'visual_review', 'workflow_id', 'workflow_name']
 [PROCESS] Chunk 0: running template assembly...
 
 ============================================================
 Step 4: Assembling final presentation with template...
 ============================================================
-Template: ./templates/Agile-Project-Plan-Template.pptx
-Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000_assembled.pptx
+Template: ./templates/AI Strategy.pptx
+Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000.pptx
+Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 [VERBOSE] Generated presentation has 3 slides
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Building assembly knowledge file (template deep analysis)...
-/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py:6154: FutureWarning: Truth-testing of elements was a source of confusion and will always return True in future versions. Use specific 'len(elem)' or 'elem is not None' test instead.
+/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py:6153: FutureWarning: Truth-testing of elements was a source of confusion and will always return True in future versions. Use specific 'len(elem)' or 'elem is not None' test instead.
   bgPr = bg.find(ns_p + "bgPr") or bg.find(ns_p + "bgRef") or bg
 [VERBOSE] Template deep analysis complete:
-[VERBOSE]   Total layouts analyzed: 11
-[VERBOSE]   Accent palette: #3469DF, #00A5FD, #FFA406
-[VERBOSE]   Heading font: Lato Black  |  Body font: Lato
+[VERBOSE]   Total layouts analyzed: 2
+[VERBOSE]   Accent palette: #7728A7, #9340D1, #B056F6
+[VERBOSE]   Heading font: Arial  |  Body font: Arial
 [VERBOSE]   Typical title: 28pt  |  Typical body: 18pt
 [VERBOSE]   Layouts with picture placeholders: 1
 [VERBOSE]   Layouts with decorative shapes: 0
-  Knowledge file: 11 layouts analyzed, 6 accent color(s), heading font 'Lato Black', body font 'Lato'.
+  Knowledge file: 2 layouts analyzed, 6 accent color(s), heading font 'Arial', body font 'Arial'.
 [VERBOSE] Assembly knowledge file built — 0 slides, 0 AI image(s)
-[VERBOSE] Template layouts available: ['Title Slide', 'Title and Content', 'Section Header', 'Two Content', 'Comparison', 'Title Only', 'Blank', 'Content with Caption', 'Picture with Caption', 'Title and Vertical Text', 'Vertical Title and Text']
+[VERBOSE] Template layouts available: ['Title Slide', '1_Title Slide']
 Cleared template slides. Building final presentation...
-[VERBOSE] Slide 1 chose layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-  Slide 1: layout 'Title and Content' | title: 'PC OEM Sales Outlook 2026' | text only
-[VERBOSE] Layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-[VERBOSE] Region map: layout_type=full text=(838200,1825625,10515600,4351338) visual=(838200,1825625,10515600,4351338)
+[VERBOSE] Slide 1 chose layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 1: layout 'Title Slide' | title: '' | text only
+[VERBOSE] Layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=full text=(609600,1714500,10972800,4457700) visual=(609600,1714500,10972800,4457700)
+[VERBOSE] Slide 2 chose layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 2: layout 'Title Slide' | title: 'Market Snapshot: Scale and Dominance' | 1 chart(s)
+[VERBOSE] Layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=split_vertical text=(609600,1714500,10972800,1114425) visual=(609600,3072765,10972800,3099435)
+[VERBOSE] Exception suppressed: unsupported operating system
+[VERBOSE] Chart transfer region: (609600,3072765,10972800,3099435) chart_placeholder=no
+[VERBOSE] Slide 3 chose layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 3: layout '1_Title Slide' | title: 'Regional Hotspots: Where Android Wins' | img placeholder(s)
+[VERBOSE] Layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=full text=(609600,1714500,10972800,4457700) visual=(609600,1714500,10972800,4457700)
 [SEMANTIC] Routing to SlideSemanticType.HERO builder (confidence: 0.70)
 [SEMANTIC] Built HERO LAYOUT
-[VERBOSE] Exception suppressed: unsupported operating system
-  [OVERLAP FIX] Reflowing shape from top=2478325 to top=6245543 (was overlapping by 3698638 EMU)
-  [OVERLAP FIX] Reflowing shape from top=4726517 to top=8707358 (was overlapping by 3912261 EMU)
-  [OVERLAP FIX] Reflowing shape from top=4944712 to top=9646205 (was overlapping by 4632913 EMU)
-  [OVERLAP FIX] Scaled shapes down by 42% to fit slide
+  [OVERLAP FIX] Reflowing shape from top=1737360 to top=6240780 (was overlapping by 4434840 EMU)
+  [OVERLAP FIX] Reflowing shape from top=2383155 to top=2400300 (was overlapping by -51435 EMU)
+  [OVERLAP FIX] Reflowing shape from top=2834640 to top=4920615 (was overlapping by 2017395 EMU)
+  [OVERLAP FIX] Scaled shapes down by 5% to fit slide
   [OVERLAP FIX] Resolved 3 overlapping shape(s) via vertical reflow.
+[VERBOSE] Low contrast detected: text=FFFFFF bg=FFFFFF ratio=1.0, fixing to 000000
   [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Text contrast check failed: _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Slide 2 chose layout 'Blank' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-  Slide 2: layout 'Blank' | title: 'Agenda: Navigating 2026 Priorities' | text only
-[VERBOSE] Layout 'Blank' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-[VERBOSE] Region map: layout_type=full text=(4038600,6356350,4114800,365125) visual=(4038600,6356350,4114800,365125)
-[SEMANTIC] Routing to SlideSemanticType.HERO builder (confidence: 0.70)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Shape too narrow (487680 EMU → 975360 EMU minimum)
-  [OVERLAP FIX] Reflowing shape from top=1097280 to top=1531620 (was overlapping by 365760 EMU)
-  [OVERLAP FIX] Reflowing shape from top=1965960 to top=2400300 (was overlapping by 365760 EMU)
-  [OVERLAP FIX] Reflowing shape from top=2834639 to top=2834640 (was overlapping by -68579 EMU)
-  [OVERLAP FIX] Reflowing shape from top=2834639 to top=3268980 (was overlapping by 365761 EMU)
-  [OVERLAP FIX] Reflowing shape from top=3703320 to top=4137660 (was overlapping by 365760 EMU)
-  [OVERLAP FIX] Reflowing shape from top=4572000 to top=5006340 (was overlapping by 365760 EMU)
-  [OVERLAP FIX] Reflowing shape from top=5440680 to top=5875020 (was overlapping by 365760 EMU)
-  [OVERLAP FIX] Scaled shapes down by 6% to fit slide
-  [OVERLAP FIX] Resolved 7 overlapping shape(s) via vertical reflow.
   [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Text contrast check failed: _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Slide 3 chose layout 'Blank' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-  Slide 3: layout 'Blank' | title: '2025 Baseline and 2026 Market Size' | 1 chart(s)
-[VERBOSE] Layout 'Blank' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-[VERBOSE] Region map: layout_type=split_vertical text=(4038600,6356350,4114800,91281) visual=(4038600,6691471,4114800,30004)
-[VERBOSE] Exception suppressed: unsupported operating system
-[PROCESS] Chunk 0: template assembly failed: cannot access local variable 'PP_PLACEHOLDER' where it is not associated with a value
-Traceback (most recent call last):
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py", line 2633, in step_process_chunks
-    step_assemble_template(mock_assemble_input, chunk_session)  # noqa: F405
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py", line 6921, in step_assemble_template
-    _populate_slide(
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py", line 5046, in _populate_slide
-    new_slide.slide_layout, {PP_PLACEHOLDER.CHART}, min_area=0
-                             ^^^^^^^^^^^^^^
-UnboundLocalError: cannot access local variable 'PP_PLACEHOLDER' where it is not associated with a value
-[TIMING] Chunk 0 processing done in 2.5s
-[PROCESS] Chunk 0: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
 
-[PROCESS] Chunk 1 (2/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx: shape is not a placeholder
+Saved final presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+[TIMING] Step 4 Template Assembly: completed in 6.73s
+[PROCESS] Chunk 0: assembled -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+[TIMING] Chunk 0 processing done in 7.0s
+[PROCESS] Chunk 0: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+
+[PROCESS] Chunk 1 (2/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001.pptx
+[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001.pptx: shape is not a placeholder
 [VERBOSE] Chunk 1 session state keys: ['assembly_knowledge', 'brand_style_intent', 'chunk_files', 'chunk_size', 'chunk_slide_groups', 'current_run_id', 'current_session_id', 'date_text', 'footer_text', 'generated_file', 'generated_images', 'inter_chunk_delay_max', 'inter_chunk_delay_min', 'llm_provider', 'max_retries', 'min_images', 'no_images', 'output_dir', 'output_path', 'processed_chunks', 'quality_report', 'rate_limit_hit', 'reviewed_chunks', 'show_slide_numbers', 'slides_data', 'src_slide_height', 'src_slide_width', 'start_tier', 'storyboard', 'storyboard_dir', 'stream', 'template_path', 'total_slides', 'use_fallback_generator', 'user_prompt', 'verbose', 'visual_passes', 'visual_review', 'workflow_id', 'workflow_name']
 [PROCESS] Chunk 1: running template assembly...
 
 ============================================================
 Step 4: Assembling final presentation with template...
 ============================================================
-Template: ./templates/Agile-Project-Plan-Template.pptx
-Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001_assembled.pptx
+Template: ./templates/AI Strategy.pptx
+Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001.pptx
+Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 [VERBOSE] Generated presentation has 3 slides
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Building assembly knowledge file (template deep analysis)...
 [VERBOSE] Template deep analysis complete:
-[VERBOSE]   Total layouts analyzed: 11
-[VERBOSE]   Accent palette: #3469DF, #00A5FD, #FFA406
-[VERBOSE]   Heading font: Lato Black  |  Body font: Lato
+[VERBOSE]   Total layouts analyzed: 2
+[VERBOSE]   Accent palette: #7728A7, #9340D1, #B056F6
+[VERBOSE]   Heading font: Arial  |  Body font: Arial
 [VERBOSE]   Typical title: 28pt  |  Typical body: 18pt
 [VERBOSE]   Layouts with picture placeholders: 1
 [VERBOSE]   Layouts with decorative shapes: 0
-  Knowledge file: 11 layouts analyzed, 6 accent color(s), heading font 'Lato Black', body font 'Lato'.
+  Knowledge file: 2 layouts analyzed, 6 accent color(s), heading font 'Arial', body font 'Arial'.
 [VERBOSE] Assembly knowledge file built — 0 slides, 0 AI image(s)
-[VERBOSE] Template layouts available: ['Title Slide', 'Title and Content', 'Section Header', 'Two Content', 'Comparison', 'Title Only', 'Blank', 'Content with Caption', 'Picture with Caption', 'Title and Vertical Text', 'Vertical Title and Text']
+[VERBOSE] Template layouts available: ['Title Slide', '1_Title Slide']
 Cleared template slides. Building final presentation...
-[VERBOSE] Slide 1 chose layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-  Slide 1: layout 'Title and Content' | title: 'Vendor Landscape: Who Is Winning in 2026' | 1 chart(s)
-[VERBOSE] Layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-[VERBOSE] Region map: layout_type=native text=(838200,1825625,10515600,4351338) visual=(838200,1825625,10515600,4351338)
+[VERBOSE] Slide 1 chose layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 1: layout 'Title Slide' | title: 'Vendor Landscape: Who Leads Android' | 1 chart(s)
+[VERBOSE] Layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=split_vertical text=(609600,1714500,10972800,1114425) visual=(609600,3072765,10972800,3099435)
 [VERBOSE] Exception suppressed: unsupported operating system
-[VERBOSE] Exception suppressed: unsupported operating system
-[PROCESS] Chunk 1: template assembly failed: cannot access local variable 'PP_PLACEHOLDER' where it is not associated with a value
-Traceback (most recent call last):
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_chunked_workflow.py", line 2633, in step_process_chunks
-    step_assemble_template(mock_assemble_input, chunk_session)  # noqa: F405
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py", line 6921, in step_assemble_template
-    _populate_slide(
-  File "/mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/powerpoint_template_workflow.py", line 5046, in _populate_slide
-    new_slide.slide_layout, {PP_PLACEHOLDER.CHART}, min_area=0
-                             ^^^^^^^^^^^^^^
-UnboundLocalError: cannot access local variable 'PP_PLACEHOLDER' where it is not associated with a value
-[TIMING] Chunk 1 processing done in 1.7s
-[PROCESS] Chunk 1: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+[VERBOSE] Chart transfer region: (609600,3072765,10972800,3099435) chart_placeholder=no
+[VERBOSE] Slide 2 chose layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 2: layout '1_Title Slide' | title: 'Growth Catalysts: AI, 5G, and Foldables' | img placeholder(s)
+[VERBOSE] Layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=full text=(609600,1714500,10972800,4457700) visual=(609600,1714500,10972800,4457700)
+[SEMANTIC] Routing to SlideSemanticType.HERO builder (confidence: 0.70)
+[SEMANTIC] Built HERO LAYOUT
+  [OVERLAP FIX] Reflowing shape from top=1714500 to top=5646420 (was overlapping by 3863340 EMU)
+  [OVERLAP FIX] Reflowing shape from top=2383155 to top=10172700 (was overlapping by 7720965 EMU)
+  [OVERLAP FIX] Resolved 2 overlapping shape(s) via vertical reflow.
+[VERBOSE] Low contrast detected: text=FFFFFF bg=FFFFFF ratio=1.0, fixing to 000000
+[VERBOSE] Slide 3 chose layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 3: layout '1_Title Slide' | title: 'Headwinds: Supply, Price, and Competitio' | img placeholder(s)
+[VERBOSE] Layout '1_Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 1, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=full text=(609600,1714500,10972800,4457700) visual=(609600,1714500,10972800,4457700)
+[SEMANTIC] Routing to SlideSemanticType.HERO builder (confidence: 0.70)
+[SEMANTIC] Built HERO LAYOUT
+  [OVERLAP FIX] Reflowing shape from top=1714500 to top=3817620 (was overlapping by 2034540 EMU)
+  [OVERLAP FIX] Reflowing shape from top=2383155 to top=8343900 (was overlapping by 5892165 EMU)
+  [OVERLAP FIX] Reflowing shape from top=3886200 to top=10864215 (was overlapping by 6909435 EMU)
+  [OVERLAP FIX] Resolved 3 overlapping shape(s) via vertical reflow.
+[VERBOSE] Low contrast detected: text=FFFFFF bg=FFFFFF ratio=1.0, fixing to 000000
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
 
-[PROCESS] Chunk 2 (3/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002.pptx
-[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002.pptx: shape is not a placeholder
+Saved final presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+[TIMING] Step 4 Template Assembly: completed in 4.28s
+[PROCESS] Chunk 1: assembled -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+[TIMING] Chunk 1 processing done in 5.4s
+[PROCESS] Chunk 1: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+
+[PROCESS] Chunk 2 (3/3): processing /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002.pptx
+[WARNING] Could not extract slides data from /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002.pptx: shape is not a placeholder
 [VERBOSE] Chunk 2 session state keys: ['assembly_knowledge', 'brand_style_intent', 'chunk_files', 'chunk_size', 'chunk_slide_groups', 'current_run_id', 'current_session_id', 'date_text', 'footer_text', 'generated_file', 'generated_images', 'inter_chunk_delay_max', 'inter_chunk_delay_min', 'llm_provider', 'max_retries', 'min_images', 'no_images', 'output_dir', 'output_path', 'processed_chunks', 'quality_report', 'rate_limit_hit', 'reviewed_chunks', 'show_slide_numbers', 'slides_data', 'src_slide_height', 'src_slide_width', 'start_tier', 'storyboard', 'storyboard_dir', 'stream', 'template_path', 'total_slides', 'use_fallback_generator', 'user_prompt', 'verbose', 'visual_passes', 'visual_review', 'workflow_id', 'workflow_name']
 [PROCESS] Chunk 2: running template assembly...
 
 ============================================================
 Step 4: Assembling final presentation with template...
 ============================================================
-Template: ./templates/Agile-Project-Plan-Template.pptx
-Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002.pptx
-Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
+Template: ./templates/AI Strategy.pptx
+Generated: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002.pptx
+Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
 [VERBOSE] Generated presentation has 1 slides
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Building assembly knowledge file (template deep analysis)...
 [VERBOSE] Template deep analysis complete:
-[VERBOSE]   Total layouts analyzed: 11
-[VERBOSE]   Accent palette: #3469DF, #00A5FD, #FFA406
-[VERBOSE]   Heading font: Lato Black  |  Body font: Lato
+[VERBOSE]   Total layouts analyzed: 2
+[VERBOSE]   Accent palette: #7728A7, #9340D1, #B056F6
+[VERBOSE]   Heading font: Arial  |  Body font: Arial
 [VERBOSE]   Typical title: 28pt  |  Typical body: 18pt
 [VERBOSE]   Layouts with picture placeholders: 1
 [VERBOSE]   Layouts with decorative shapes: 0
-  Knowledge file: 11 layouts analyzed, 6 accent color(s), heading font 'Lato Black', body font 'Lato'.
+  Knowledge file: 2 layouts analyzed, 6 accent color(s), heading font 'Arial', body font 'Arial'.
 [VERBOSE] Assembly knowledge file built — 0 slides, 0 AI image(s)
-[VERBOSE] Template layouts available: ['Title Slide', 'Title and Content', 'Section Header', 'Two Content', 'Comparison', 'Title Only', 'Blank', 'Content with Caption', 'Picture with Caption', 'Title and Vertical Text', 'Vertical Title and Text']
+[VERBOSE] Template layouts available: ['Title Slide', '1_Title Slide']
 Cleared template slides. Building final presentation...
-[VERBOSE] Slide 1 chose layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-  Slide 1: layout 'Title and Content' | title: '' | text only
-[VERBOSE] Layout 'Title and Content' placeholders: {'title': 1, 'subtitle': 0, 'body': 0, 'object': 1, 'picture': 0, 'chart': 0, 'table': 0, 'other': 3}
-[VERBOSE] Region map: layout_type=full text=(838200,1825625,10515600,4351338) visual=(838200,1825625,10515600,4351338)
-  [OVERLAP FIX] Shape too short (232071 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (145044 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (232071 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (145044 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (232071 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (145044 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (232071 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (145044 EMU → 274320 EMU minimum)
-  [OVERLAP FIX] Shape too short (208864 EMU → 274320 EMU minimum)
-  [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Text contrast check failed: _relative_luminance() takes 3 positional arguments but 6 were given
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
+[VERBOSE] Slide 1 chose layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+  Slide 1: layout 'Title Slide' | title: '' | 1 chart(s)
+[VERBOSE] Layout 'Title Slide' placeholders: {'title': 0, 'subtitle': 0, 'body': 0, 'object': 0, 'picture': 0, 'chart': 0, 'table': 0, 'other': 0}
+[VERBOSE] Region map: layout_type=split_vertical text=(609600,1714500,10972800,1114425) visual=(609600,3072765,10972800,3099435)
+[VERBOSE] Exception suppressed: unsupported operating system
+[VERBOSE] Chart transfer region: (609600,3072765,10972800,3099435) chart_placeholder=no
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
 
-Saved final presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
-[TIMING] Step 4 Template Assembly: completed in 2.08s
-[PROCESS] Chunk 2: assembled -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
-[TIMING] Chunk 2 processing done in 2.2s
-[PROCESS] Chunk 2: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
+Saved final presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+[TIMING] Step 4 Template Assembly: completed in 3.21s
+[PROCESS] Chunk 2: assembled -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+[TIMING] Chunk 2 processing done in 3.5s
+[PROCESS] Chunk 2: result -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
 
-[TIMING] step_process_chunks completed in 6.3s (3 chunks processed)
+[TIMING] step_process_chunks completed in 15.9s (3 chunks processed)
 
 ============================================================
 Step 4 (Optional): Visual review per chunk...
 ============================================================
 
-[VISUAL REVIEW] Chunk 0: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+[VISUAL REVIEW] Chunk 0: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 [VISUAL REVIEW] Chunk 0: pass 1/3 starting...
 
 ============================================================
@@ -564,48 +562,74 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    CRITICAL [score: 4/10]: ['overlap']
+    moderate [score: 3/10]: ['typography_hierarchy', 'visual_enrichment_needed']
   Reviewing slide 2 / 3...
-    CRITICAL [score: 2/10]: ['overlap', 'text_overflow']
+[1;31mERROR   [0m Error from Gemini API: [1;36m503[0m UNAVAILABLE. [1m{[0m[32m'error'[0m: [1m{[0m[32m'code'[0m: [1;36m503[0m, [32m'message'[0m: [32m'This model is currently experiencing high demand. Spikes in [0m     
+         [32mdemand are usually temporary. Please try again later.'[0m, [32m'status'[0m: [32m'UNAVAILABLE'[0m[1m}[0m[1m}[0m                                                            
+[1;31mERROR   [0m Error in Agent run: [1m{[0m                                                                                                                        
+           [32m"error"[0m: [1m{[0m                                                                                                                                 
+             [32m"code"[0m: [1;36m503[0m,                                                                                                                             
+             [32m"message"[0m: [32m"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later."[0m,          
+             [32m"status"[0m: [32m"UNAVAILABLE"[0m                                                                                                                  
+           [1m}[0m                                                                                                                                          
+         [1m}[0m                                                                                                                                            
+                                                                                                                                                      
+    OK [score: 5/10].
   Reviewing slide 3 / 3...
-    moderate [score: 6/10]: ['low_contrast', 'footer_inconsistent', 'color_underutilized']
-  Applying corrections (3 critical, 6 moderate design fixes)...
+    CRITICAL [score: 3/10]: ['overlap']
+  Applying corrections (1 critical, 4 moderate design fixes)...
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Correction skipped (slide 2, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Correction skipped (slide 2, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
+[VERBOSE] Spacing fix: shape moved from (609600,259288) to (609600,342900)
+[VERBOSE] Slide 2: spacing clamped to safe margins
+[VERBOSE] Slide 2: visual enrichment applied (enrich_header_bar)
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 
-  [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
+  [DESIGN NOTE] 2 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 4.0/10, 3 critical + 6 moderate fixes, 1 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 68.01s
-[VERBOSE] Chunk 0 pass 1 slide 0: 3 issues
-[VERBOSE]   severity=critical fix=fix_spacing desc=The subtitle text 'Navigating Supply Constraints, Premium Demand, and Strategic 
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The title slide is visually bland, consisting only of text on a white background
-[VERBOSE]   severity=minor fix=apply_accent_color_body desc=The subtitle text is plain black. Applying an accent color from the template pal
-[VERBOSE] Chunk 0 pass 1 slide 1: 5 issues
-[VERBOSE]   severity=critical fix=fix_spacing desc=List items 5 ('Regional Opportunities...') and 6 ('Strategic Priorities...') are
-[VERBOSE]   severity=critical fix=fix_spacing desc=The text for list items 5 and 6 is entirely covered by the large blue title, mak
-[VERBOSE]   severity=moderate fix=fix_spacing desc=The overall slide layout is highly imbalanced with content clustered awkwardly i
-[VERBOSE]   severity=moderate fix=fix_alignment desc=The large blue title 'AGENDA: NAVIGATING 2026 PRIORITIES' is poorly positioned i
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually sparse and bland, primarily composed of plain text and sim
+  UI/UX review: 3 slides, avg design score 3.7/10, 1 critical + 4 moderate fixes, 1 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 62.13s
+[VERBOSE] Chunk 0 pass 1 slide 0: 4 issues
+[VERBOSE]   severity=moderate fix=none desc=The slide lacks a clear visual hierarchy. There is no distinct title, and all co
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually unengaging, consisting solely of plain black text on a whi
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The main content area of the slide does not utilize any of the template's accent
+[VERBOSE]   severity=minor fix=fix_spacing desc=The main text block is vertically centered on the slide, leaving an excessive am
+[VERBOSE] Chunk 0 pass 1 slide 1: 0 issues
 [VERBOSE] Chunk 0 pass 1 slide 2: 5 issues
-[VERBOSE]   severity=moderate fix=increase_contrast desc=The footer text is a very light grey on a white background, making it extremely 
-[VERBOSE]   severity=moderate fix=increase_contrast desc=The footer text is significantly smaller and uses a low-contrast color, making i
-[VERBOSE]   severity=moderate fix=none desc=The red color used for the 'Market Value (USD B)' series in the bar chart is not
-[VERBOSE]   severity=minor fix=fix_spacing desc=There is a significant amount of empty whitespace on the right side of the slide
-[VERBOSE]   severity=minor fix=enrich_accent_strip desc=While a chart is present, the overall slide lacks additional visual elements fro
-[TIMING] Chunk 0 pass 1: 68.0s
+[VERBOSE]   severity=critical fix=remove_element desc=The title 'Regional Hotspots: Where Android Wins' is duplicated on the slide, ap
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The main title 'Regional Hotspots: Where Android Wins' is positioned too low on 
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The explanatory text 'Emerging markets in Asia and Africa...' is very small, ita
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually bland, consisting almost entirely of black text on a white
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The main title and body text are entirely in black, failing to leverage the temp
+[TIMING] Chunk 0 pass 1: 62.2s
 [VISUAL REVIEW] Chunk 0: pass 1/3 — corrections applied. Re-checking...
 [VISUAL REVIEW] Chunk 0: pass 2/3 starting...
 
@@ -618,53 +642,75 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    CRITICAL [score: 3/10]: ['text_overflow']
+    moderate [score: 3/10]: ['visual_enrichment_needed', 'typography_hierarchy', 'poor_spacing']
   Reviewing slide 2 / 3...
-    CRITICAL [score: 2/10]: ['overlap', 'element_clipped']
+    moderate [score: 4/10]: ['poor_spacing', 'visual_enrichment_needed', 'color_underutilized']
   Reviewing slide 3 / 3...
-    moderate [score: 6/10]: ['low_contrast', 'typography_hierarchy', 'poor_spacing']
-  Applying corrections (3 critical, 7 moderate design fixes)...
-[VERBOSE] Slide 0: reduced font sizes by 15%
+    CRITICAL [score: 2/10]: ['ghost_text']
+  Applying corrections (1 critical, 9 moderate design fixes)...
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 1: reduced font sizes by 15%
-[VERBOSE] Slide 1: reduced font sizes by 15%
-[VERBOSE] Correction skipped (slide 2, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Spacing fix: shape moved from (731520,6217920) to (731520,5966460)
-[VERBOSE] Slide 2: spacing clamped to safe margins
+[VERBOSE] Spacing fix: shape moved from (0,0) to (609600,342900)
+[VERBOSE] Slide 0: spacing clamped to safe margins
+[VERBOSE] Spacing fix: shape moved from (609600,274320) to (609600,342900)
+[VERBOSE] Slide 1: spacing clamped to safe margins
+[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
+[VERBOSE] Slide 2: cleared ghost text / empty placeholders
 [VERBOSE] Slide 2: visual enrichment applied (enrich_header_bar)
+[VERBOSE] Spacing fix: shape moved from (0,0) to (609600,342900)
+[VERBOSE] Slide 2: spacing clamped to safe margins
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 
   [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 3.7/10, 3 critical + 7 moderate fixes, 1 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 66.05s
-[VERBOSE] Chunk 0 pass 2 slide 0: 3 issues
-[VERBOSE]   severity=critical fix=reduce_font_size desc=The subtitle text lines are overlapping, making parts of the text unreadable. Th
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The title slide is visually stark and does not leverage the template's design vo
-[VERBOSE]   severity=minor fix=apply_accent_color_body desc=Only the main title uses an accent color. The subtitle remains in plain black, a
-[VERBOSE] Chunk 0 pass 2 slide 1: 7 issues
-[VERBOSE]   severity=critical fix=reduce_font_size desc=The oversized blue title text "AGENDA: NAVIGATING 2026 PRIORITIES" significantly
-[VERBOSE]   severity=critical fix=reduce_font_size desc=The large blue title text "AGENDA: NAVIGATING 2026 PRIORITIES" is clipped by the
-[VERBOSE]   severity=moderate fix=fix_spacing desc=There is insufficient vertical spacing between the intended slide title and the 
-[VERBOSE]   severity=moderate fix=fix_alignment desc=The large blue text "PRIORITIES" is not left-aligned with "AGENDA: NAVIGATING 20
-[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The dominant, overlapping blue text "AGENDA: NAVIGATING 2026 PRIORITIES" severel
-[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The slide underutilizes the template's accent colors; only red numbers and the p
-[VERBOSE]   severity=minor fix=enrich_header_bar desc=The slide is visually bland, consisting only of text and numbered boxes. It lack
+  UI/UX review: 3 slides, avg design score 3.0/10, 1 critical + 9 moderate fixes, 1 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 67.34s
+[VERBOSE] Chunk 0 pass 2 slide 0: 5 issues
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually barren, lacking any graphical elements or layout structure
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The slide lacks a clear visual hierarchy; there's no distinct title, and all par
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The text content is confined to the left side of the slide, occupying only about
+[VERBOSE]   severity=moderate fix=apply_accent_color_body desc=The slide is almost entirely monochrome, with no use of the template's accent co
+[VERBOSE]   severity=minor fix=none desc=The 'POWERSLIDES' text in the footer appears bold and in a dark color, while 'WW
+[VERBOSE] Chunk 0 pass 2 slide 1: 5 issues
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The slide's layout is significantly unbalanced, with a small data block in the t
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide appears very plain and lacks engaging design elements to break up the 
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The slide predominantly uses black text and purple in the pie chart, failing to 
+[VERBOSE]   severity=minor fix=increase_title_font_size desc=The 'Market Share' subtitle's font size and weight do not provide enough visual 
+[VERBOSE]   severity=minor fix=fix_alignment desc=The market data text block on the left is not aligned with any other significant
 [VERBOSE] Chunk 0 pass 2 slide 2: 4 issues
-[VERBOSE]   severity=moderate fix=increase_contrast desc=The footer text uses a light gray color, which offers insufficient contrast agai
-[VERBOSE]   severity=moderate fix=none desc=The footer text is too small and light, diminishing its readability and reducing
-[VERBOSE]   severity=moderate fix=fix_spacing desc=There is significant empty whitespace on the right side of the slide, indicating
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide consists solely of a chart, title, and footer on a plain white backgro
-[TIMING] Chunk 0 pass 2: 66.1s
+[VERBOSE]   severity=critical fix=remove_element desc=A duplicate title, 'Regional Hotspots: Where Android Wins', is prominently displ
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is extremely sparse, containing only the title and a single line of fo
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The large empty area in the slide's central region, a consequence of the missing
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The main slide title is in plain black. The template's accent colors (#7728A7, #
+[TIMING] Chunk 0 pass 2: 67.5s
 [VISUAL REVIEW] Chunk 0: pass 2/3 — corrections applied. Re-checking...
 [VISUAL REVIEW] Chunk 0: pass 3/3 starting...
 
@@ -677,54 +723,73 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    CRITICAL [score: 3/10]: ['overlap', 'poor_spacing']
+    moderate [score: 4/10]: ['typography_hierarchy', 'color_underutilized', 'visual_enrichment_needed']
   Reviewing slide 2 / 3...
-    CRITICAL [score: 2/10]: ['overlap', 'text_overflow']
+    moderate [score: 4/10]: ['poor_spacing', 'typography_hierarchy', 'visual_enrichment_needed']
   Reviewing slide 3 / 3...
-    CRITICAL [score: 4/10]: ['overlap']
-  Applying corrections (5 critical, 5 moderate design fixes)...
+    CRITICAL [score: 2/10]: ['overlap']
+  Applying corrections (1 critical, 7 moderate design fixes)...
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 2: reduced font sizes by 15%
+[VERBOSE] Slide 1: visual enrichment applied (enrich_title_card)
+[VERBOSE] Slide 2: visual enrichment applied (enrich_header_bar)
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 
   [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 3.0/10, 5 critical + 5 moderate fixes, 4 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 55.53s
+  UI/UX review: 3 slides, avg design score 3.3/10, 1 critical + 7 moderate fixes, 2 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 61.08s
 [VERBOSE] Chunk 0 pass 3 slide 0: 4 issues
-[VERBOSE]   severity=critical fix=fix_spacing desc=The subtitle text 'Navigating Supply Constraints, Premium Demand, and Strategic 
-[VERBOSE]   severity=critical fix=fix_spacing desc=Severe lack of appropriate vertical spacing between the main title and the subti
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is a plain white background with only text, lacking any visual element
-[VERBOSE]   severity=minor fix=apply_accent_color_body desc=While the main title uses a template accent color, the subtitle text remains bla
-[VERBOSE] Chunk 0 pass 3 slide 1: 6 issues
-[VERBOSE]   severity=critical fix=none desc=The large blue slide title "AGENDA: NAVIGATING 2026 PRIORITIES" significantly ov
-[VERBOSE]   severity=critical fix=none desc=The text for agenda item 5, "Regional Opportunities • Geographic demand pockets 
-[VERBOSE]   severity=moderate fix=none desc=The misplacement and size of the large blue title text create severely cramped s
-[VERBOSE]   severity=moderate fix=none desc=The large blue text "AGENDA: NAVIGATING 2026 PRIORITIES" is likely intended as t
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The numbered red boxes used for the agenda items are not consistent with the tem
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually bland, relying solely on a basic numbered list and a mispl
-[VERBOSE] Chunk 0 pass 3 slide 2: 4 issues
-[VERBOSE]   severity=critical fix=reduce_font_size desc=The informative footer text at the bottom of the slide ('Desktop shipments +14.5
-[VERBOSE]   severity=moderate fix=fix_spacing desc=The vertical spacing on the slide is unbalanced, with excessive empty space abov
-[VERBOSE]   severity=moderate fix=fix_alignment desc=The slide title '2025 Baseline and 2026 Market Size' is left-aligned, but the da
-[VERBOSE]   severity=minor fix=enrich_header_bar desc=While the data visualization is clear, the slide itself is visually bland. It do
-[TIMING] Chunk 0 pass 3: 55.6s
+[VERBOSE]   severity=moderate fix=none desc=The slide entirely lacks a distinct title or primary heading, presenting all con
+[VERBOSE]   severity=moderate fix=apply_accent_color_body desc=The main content of the slide uses only black text on a white background, comple
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide consists solely of plain text, offering no visual anchors, structural 
+[VERBOSE]   severity=minor fix=fix_spacing desc=The main text block is positioned too low and has unbalanced margins, particular
+[VERBOSE] Chunk 0 pass 3 slide 1: 4 issues
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The slide suffers from very poor spacing and content distribution. There is an e
+[VERBOSE]   severity=moderate fix=none desc=The left-aligned data block (Market Size, Unit Shipments, Global Users) is prese
+[VERBOSE]   severity=moderate fix=enrich_title_card desc=The left-aligned data block is essentially raw text. It would benefit significan
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The main title 'Market Snapshot: Scale and Dominance' and the chart title 'Marke
+[VERBOSE] Chunk 0 pass 3 slide 2: 6 issues
+[VERBOSE]   severity=critical fix=remove_element desc=The slide contains two identical and overlapping title text boxes, 'Regional Hot
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The slide features an excessive amount of empty whitespace and poor distribution
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=With two large, identical titles (one redundant) and a very small body text, the
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually bland, consisting primarily of black text on a white backg
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The template's accent colors are only used minimally in the footer. The main tit
+[VERBOSE]   severity=minor fix=fix_alignment desc=The purple line in the footer is inconsistently aligned and its length creates a
+[TIMING] Chunk 0 pass 3: 61.1s
 [VISUAL REVIEW] Chunk 0: pass 3/3 — corrections applied. Re-checking...
-[TIMING] Chunk 0 total review: 189.7s
-[VISUAL REVIEW] Chunk 0: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
+[TIMING] Chunk 0 total review: 190.8s
+[VISUAL REVIEW] Chunk 0: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
 
-[VISUAL REVIEW] Chunk 1: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+[VISUAL REVIEW] Chunk 1: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 [VISUAL REVIEW] Chunk 1: pass 1/3 starting...
 
 ============================================================
@@ -736,43 +801,23 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    moderate [score: 6/10]: ['color_underutilized', 'visual_enrichment_needed', 'typography_hierarchy']
+    moderate [score: 5/10]: ['alignment_off', 'poor_spacing', 'color_underutilized']
   Reviewing slide 2 / 3...
-    CRITICAL [score: 3/10]: ['low_contrast']
+    moderate [score: 7/10]: ['color_underutilized']
   Reviewing slide 3 / 3...
-    CRITICAL [score: 3/10]: ['visual_enrichment_needed']
-  Applying corrections (2 critical, 6 moderate design fixes)...
-[VERBOSE] Slide 0: applied accent color #3469DF to title
+    moderate [score: 6/10]: ['typography_hierarchy', 'color_underutilized', 'visual_enrichment_needed']
+  Applying corrections (0 critical, 8 moderate design fixes)...
+[VERBOSE] Spacing fix: shape moved from (609600,274320) to (609600,342900)
+[VERBOSE] Slide 0: spacing clamped to safe margins
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-  [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Correction skipped (slide 1, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
 [VERBOSE] Slide 2: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 2: applied accent color #3469DF to title
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
@@ -781,29 +826,29 @@ Step 5 (Optional): UI/UX Design Review...
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 
-  [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
+  [DESIGN NOTE] 1 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 4.0/10, 2 critical + 6 moderate fixes, 2 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 59.79s
-[VERBOSE] Chunk 1 pass 1 slide 0: 5 issues
-[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The slide predominantly uses black text and a single shade of blue for the chart
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide, while containing a chart, lacks any additional visual elements from t
-[VERBOSE]   severity=moderate fix=none desc=The 'YoY Growth' footer text is very small and difficult to read, deemphasizing 
-[VERBOSE]   severity=minor fix=fix_alignment desc=The main title is centered, while the chart and the footer text are left-aligned
-[VERBOSE]   severity=minor fix=fix_spacing desc=The 'YoY Growth' footer text is positioned too close to the bottom edge of the s
-[VERBOSE] Chunk 1 pass 1 slide 1: 4 issues
-[VERBOSE]   severity=critical fix=increase_contrast desc=The body text below each icon ('October 2025...', 'ASP uplift...', 'Above $1,200
-[VERBOSE]   severity=moderate fix=fix_spacing desc=There is a significant amount of unused whitespace at the bottom of the slide, m
-[VERBOSE]   severity=moderate fix=apply_accent_color_body desc=The template's accent colors (#3469DF, #00A5FD, #FFA406) are not utilized in the
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide relies on simple icons and plain text. The content points would benefi
-[VERBOSE] Chunk 1 pass 1 slide 2: 3 issues
-[VERBOSE]   severity=critical fix=enrich_header_bar desc=The slide is predominantly blank, featuring only a title, a footnote, and two fl
-[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=No accent colors from the template palette (#3469DF, #00A5FD, #FFA406) are used 
-[VERBOSE]   severity=moderate fix=none desc=The elements 'Impact' and 'Likelihood' are floating with vast, unbalanced whites
-[TIMING] Chunk 1 pass 1: 59.8s
+  UI/UX review: 3 slides, avg design score 6.0/10, 0 critical + 8 moderate fixes, 1 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 65.48s
+[VERBOSE] Chunk 1 pass 1 slide 0: 6 issues
+[VERBOSE]   severity=moderate fix=fix_alignment desc=The chart area and its title ('Market Share %') are not left-aligned with the ma
+[VERBOSE]   severity=moderate fix=fix_spacing desc=There is excessive vertical whitespace between the introductory text block and t
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The slide predominantly uses black text on a white background. While the chart b
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The top half of the slide, particularly above the chart, is very plain and text-
+[VERBOSE]   severity=minor fix=enforce_typography_hierarchy desc=While the main title is adequately sized, the secondary title 'Market Share %' i
+[VERBOSE]   severity=minor fix=none desc=The page number '1' is presented as a colored circular shape, which visually con
+[VERBOSE] Chunk 1 pass 1 slide 1: 1 issues
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The card titles ('AI Integration', '5G Adoption', 'Foldable Growth') and their c
+[VERBOSE] Chunk 1 pass 1 slide 2: 5 issues
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The titles within the content boxes (e.g., 'Memory Component Shortage') are not 
+[VERBOSE]   severity=moderate fix=apply_accent_color_body desc=The main content boxes and their headings use custom red/yellow colors. While co
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide uses simple colored boxes for content segmentation. It could benefit f
+[VERBOSE]   severity=minor fix=fix_spacing desc=The overall layout feels a bit cramped and the spacing between content blocks (t
+[VERBOSE]   severity=minor fix=fix_alignment desc=The three content boxes are not perfectly aligned on a consistent grid, particul
+[TIMING] Chunk 1 pass 1: 65.6s
 [VISUAL REVIEW] Chunk 1: pass 1/3 — corrections applied. Re-checking...
 [VISUAL REVIEW] Chunk 1: pass 2/3 starting...
 
@@ -816,46 +861,35 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    moderate [score: 5/10]: ['poor_spacing', 'visual_enrichment_needed', 'color_underutilized']
+[1;31mERROR   [0m Error from Gemini API: [1;36m503[0m UNAVAILABLE. [1m{[0m[32m'error'[0m: [1m{[0m[32m'code'[0m: [1;36m503[0m, [32m'message'[0m: [32m'This model is currently experiencing high demand. Spikes in demand are usually [0m     
+         [32mtemporary. Please try again later.'[0m, [32m'status'[0m: [32m'UNAVAILABLE'[0m[1m}[0m[1m}[0m                                                                                                  
+[1;31mERROR   [0m Error in Agent run: [1m{[0m                                                                                                                                           
+           [32m"error"[0m: [1m{[0m                                                                                                                                                    
+             [32m"code"[0m: [1;36m503[0m,                                                                                                                                                
+             [32m"message"[0m: [32m"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later."[0m,                             
+             [32m"status"[0m: [32m"UNAVAILABLE"[0m                                                                                                                                     
+           [1m}[0m                                                                                                                                                             
+         [1m}[0m                                                                                                                                                               
+                                                                                                                                                                         
+    OK [score: 5/10].
   Reviewing slide 2 / 3...
-    CRITICAL [score: 3/10]: ['low_contrast']
+    moderate [score: 7/10]: ['color_underutilized', 'visual_enrichment_needed']
   Reviewing slide 3 / 3...
-    CRITICAL [score: 2/10]: ['visual_enrichment_needed']
-  Applying corrections (2 critical, 6 moderate design fixes)...
-[VERBOSE] Spacing fix: shape moved from (457200,6217920) to (457200,6057900)
-[VERBOSE] Slide 0: spacing clamped to safe margins
-[VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 0: applied accent color #3469DF to title
-  [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Correction skipped (slide 1, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
-[VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Slide 1: applied accent color #3469DF to title
-[VERBOSE] Spacing fix: shape moved from (0,0) to (457200,342900)
-[VERBOSE] Slide 1: spacing clamped to safe margins
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
+    moderate [score: 5/10]: ['color_underutilized', 'low_contrast', 'alignment_off']
+  Applying corrections (0 critical, 5 moderate design fixes)...
+[VERBOSE] Slide 1: visual enrichment applied (enrich_accent_strip)
+[VERBOSE] Slide 2: applied increase_contrast
+[VERBOSE] Alignment fix: shape left 609600 -> 746760 (anchor)
+[VERBOSE] Alignment fix: shape left 731520 -> 746760 (anchor)
+[VERBOSE] Alignment fix: shape left 731520 -> 746760 (anchor)
+[VERBOSE] Slide 2: alignment snapped to majority left edge
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
@@ -864,31 +898,25 @@ Step 5 (Optional): UI/UX Design Review...
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 
-  [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
+  [DESIGN NOTE] 2 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 3.3/10, 2 critical + 6 moderate fixes, 5 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 69.94s
-[VERBOSE] Chunk 1 pass 2 slide 0: 5 issues
-[VERBOSE]   severity=moderate fix=fix_spacing desc=There is a significant vertical gap between the main title and the top of the ch
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide lacks additional visual elements from the template's design vocabulary
-[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=Only a single blue accent color is used for the title and chart bars. The templa
-[VERBOSE]   severity=minor fix=fix_alignment desc=The 'YoY Growth' text at the bottom left is positioned too far to the left and i
-[VERBOSE]   severity=minor fix=none desc=The 'YoY Growth' text is very small, making it a challenge to read. While supple
-[VERBOSE] Chunk 1 pass 2 slide 1: 5 issues
-[VERBOSE]   severity=critical fix=increase_contrast desc=The body text under each icon is rendered in a very light grey color against a w
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is visually bland, relying solely on text and simple icons. It lacks a
-[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The template's accent colors (#3469DF, #00A5FD, #FFA406) are not used anywhere o
-[VERBOSE]   severity=moderate fix=fix_spacing desc=The main content (icons and accompanying text) is condensed towards the upper mi
-[VERBOSE]   severity=minor fix=none desc=While the title is prominent, the body text is too small even if its contrast we
-[VERBOSE] Chunk 1 pass 2 slide 2: 4 issues
-[VERBOSE]   severity=critical fix=none desc=The slide is fundamentally incomplete, appearing as a blank canvas with only axi
-[VERBOSE]   severity=moderate fix=none desc=There is a vast amount of empty, unused space in the central area of the slide, 
-[VERBOSE]   severity=minor fix=apply_accent_color_body desc=Only the main title utilizes an accent color. The axis labels ("Impact", "Likeli
-[VERBOSE]   severity=minor fix=none desc=The "Key Insight" text at the bottom is rendered in a very small font size, maki
-[TIMING] Chunk 1 pass 2: 70.0s
+  UI/UX review: 3 slides, avg design score 5.7/10, 0 critical + 5 moderate fixes, 1 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 56.75s
+[VERBOSE] Chunk 1 pass 2 slide 0: 0 issues
+[VERBOSE] Chunk 1 pass 2 slide 1: 2 issues
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The card titles use blue, orange, and green borders and text, but these colors a
+[VERBOSE]   severity=moderate fix=enrich_accent_strip desc=While functional, the slide primarily relies on plain text within simple bordere
+[VERBOSE] Chunk 1 pass 2 slide 2: 6 issues
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The slide entirely uses red and yellow for its content boxes and associated text
+[VERBOSE]   severity=moderate fix=increase_contrast desc=The 'Likelihood | Impact' text inside the red boxes is a light red on a light re
+[VERBOSE]   severity=moderate fix=fix_alignment desc=The bottom yellow content box is misaligned horizontally relative to the left-ha
+[VERBOSE]   severity=minor fix=none desc=Within the content boxes, the bolded primary point (e.g., 'Memory Component Shor
+[VERBOSE]   severity=minor fix=fix_spacing desc=The content boxes have inconsistent spacing, particularly the vertical distance 
+[VERBOSE]   severity=minor fix=enrich_accent_strip desc=While color is used for the boxes, the shapes themselves are very generic rounde
+[TIMING] Chunk 1 pass 2: 56.8s
 [VISUAL REVIEW] Chunk 1: pass 2/3 — corrections applied. Re-checking...
 [VISUAL REVIEW] Chunk 1: pass 3/3 starting...
 
@@ -901,44 +929,22 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 3 per-slide PNG(s) via PDF pipeline.
   Rendered 3 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 3...
-    moderate [score: 6/10]: ['poor_spacing', 'visual_enrichment_needed']
+    moderate [score: 6/10]: ['poor_spacing', 'alignment_off', 'color_underutilized']
   Reviewing slide 2 / 3...
-    CRITICAL [score: 4/10]: ['low_contrast']
+    moderate [score: 7/10]: ['color_underutilized']
   Reviewing slide 3 / 3...
-    CRITICAL [score: 3/10]: ['visual_enrichment_needed']
-  Applying corrections (2 critical, 7 moderate design fixes)...
+    CRITICAL [score: 6/10]: ['low_contrast']
+  Applying corrections (1 critical, 7 moderate design fixes)...
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
-  [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Correction skipped (slide 1, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
 [VERBOSE] Slide 1: visual enrichment applied (enrich_header_bar)
-[VERBOSE] Spacing fix: shape moved from (3657600,6400800) to (3657600,6149340)
-[VERBOSE] Spacing fix: shape moved from (182880,2743200) to (457200,2743200)
-[VERBOSE] Slide 2: spacing clamped to safe margins
-[VERBOSE] Slide 2: visual enrichment applied (enrich_header_bar)
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
+[VERBOSE] Slide 2: applied increase_contrast
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
@@ -947,32 +953,34 @@ Step 5 (Optional): UI/UX Design Review...
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 
   [DESIGN NOTE] 3 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 3 slides, avg design score 4.3/10, 2 critical + 7 moderate fixes, 1 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 61.79s
-[VERBOSE] Chunk 1 pass 3 slide 0: 2 issues
-[VERBOSE]   severity=moderate fix=fix_spacing desc=The 'YoY Growth' footer text is positioned too close to the X-axis labels, creat
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=Despite containing a clear chart, the slide lacks additional template-specific d
-[VERBOSE] Chunk 1 pass 3 slide 1: 4 issues
-[VERBOSE]   severity=critical fix=increase_contrast desc=The body text under each icon is extremely light (e.g., #F0F0F0 or similar) on a
-[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The body text is extremely small in size, making it difficult to read and signif
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide is very sparse, consisting only of a title, three icons, and small, fa
-[VERBOSE]   severity=minor fix=fix_spacing desc=There is a noticeable vertical gap between the icons and their corresponding bod
+  UI/UX review: 3 slides, avg design score 6.3/10, 1 critical + 7 moderate fixes, 0 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 65.48s
+[VERBOSE] Chunk 1 pass 3 slide 0: 5 issues
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The slide has large empty regions on the right side and inconsistent spacing, ma
+[VERBOSE]   severity=moderate fix=fix_alignment desc=The title, the explanatory text block, and the chart components (Y-axis labels, 
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=Accent colors from the template (#7728A7, #9340D1, #B056F6) are only used in the
+[VERBOSE]   severity=minor fix=apply_accent_color_body desc=The bullet point text could use an accent color on key phrases or the leading pa
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide lacks visual structure and interest beyond plain text and a basic char
+[VERBOSE] Chunk 1 pass 3 slide 1: 3 issues
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide primarily uses black text for the main title and body content. While t
+[VERBOSE]   severity=minor fix=apply_accent_color_title desc=The main slide title 'Growth Catalysts: AI, 5G, and Foldables' is currently blac
+[VERBOSE]   severity=minor fix=fix_spacing desc=The body text within each content box appears somewhat cramped with tight line s
 [VERBOSE] Chunk 1 pass 3 slide 2: 4 issues
-[VERBOSE]   severity=critical fix=none desc=The central area of the slide is completely empty, despite the title and axis la
-[VERBOSE]   severity=moderate fix=fix_spacing desc=The 'Key Insight' text is positioned too close to the bottom edge of the slide, 
-[VERBOSE]   severity=moderate fix=fix_alignment desc=The 'Impact' and 'Likelihood' axis labels are not clearly aligned to a consisten
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=Beyond the title, the slide uses only black text and a white background. Templat
-[TIMING] Chunk 1 pass 3: 61.8s
+[VERBOSE]   severity=critical fix=increase_contrast desc=The 'Likelihood | Impact' text in all content boxes (red text on light red, yell
+[VERBOSE]   severity=moderate fix=fix_alignment desc=The left edge of the 'Geopolitical & Tariff Pressures' content box is slightly m
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The slide predominantly uses black text and muted background colors, failing to 
+[VERBOSE]   severity=minor fix=enrich_accent_strip desc=The slide's visual structure is simple, consisting of colored boxes and text. It
+[TIMING] Chunk 1 pass 3: 65.6s
 [VISUAL REVIEW] Chunk 1: pass 3/3 — corrections applied. Re-checking...
-[TIMING] Chunk 1 total review: 191.6s
-[VISUAL REVIEW] Chunk 1: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
+[TIMING] Chunk 1 total review: 188.0s
+[VISUAL REVIEW] Chunk 1: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
 
-[VISUAL REVIEW] Chunk 2: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
+[VISUAL REVIEW] Chunk 2: starting review of /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
 [VISUAL REVIEW] Chunk 2: pass 1/3 starting...
 
 ============================================================
@@ -984,46 +992,32 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 1 per-slide PNG(s) via PDF pipeline.
   Rendered 1 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 1...
-    moderate [score: 5/10]: ['low_contrast', 'color_underutilized', 'visual_enrichment_needed']
-  Applying corrections (0 critical, 3 moderate design fixes)...
-  [BG DETECT] Background color from slide master: #FFFFFF
-[VERBOSE] Correction skipped (slide 0, fix=increase_contrast): _relative_luminance() takes 3 positional arguments but 6 were given
+    moderate [score: 4/10]: ['typography_hierarchy', 'poor_spacing', 'color_underutilized']
+  Applying corrections (0 critical, 4 moderate design fixes)...
 [VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
   [BG DETECT] Background color from slide master: #FFFFFF
   [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
-  [BG DETECT] Background color from slide master: #FFFFFF
 
-Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
-  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
 
   [DESIGN NOTE] 1 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-  UI/UX review: 1 slides, avg design score 5.0/10, 0 critical + 3 moderate fixes, 0 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 25.60s
+  UI/UX review: 1 slides, avg design score 4.0/10, 0 critical + 4 moderate fixes, 0 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 33.71s
 [VERBOSE] Chunk 2 pass 1 slide 0: 4 issues
-[VERBOSE]   severity=moderate fix=increase_contrast desc=The sub-headings (e.g., "Primary Revenue Engine", "Margin Protection") are rende
-[VERBOSE]   severity=minor fix=enforce_typography_hierarchy desc=While main titles and section titles have good hierarchy, the sub-headings are t
-[VERBOSE]   severity=moderate fix=apply_accent_color_body desc=The template's secondary accent colors (#00A5FD, #FFA406) are not used anywhere 
-[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The slide consists solely of text on a plain white background, lacking any visua
-[TIMING] Chunk 2 pass 1: 25.7s
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The main title 'Strategic Outlook: The Exponential Curve' is too similar in font
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The text content and the chart are heavily concentrated on the left side of the 
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The title and body text are entirely in black, making the slide appear monochrom
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The upper section of the slide containing the title and bullet points is purely 
+[TIMING] Chunk 2 pass 1: 33.7s
 [VISUAL REVIEW] Chunk 2: pass 1/3 — corrections applied. Re-checking...
 [VISUAL REVIEW] Chunk 2: pass 2/3 starting...
 
@@ -1036,85 +1030,121 @@ Step 5 (Optional): UI/UX Design Review...
   [RENDER] Successfully rendered 1 per-slide PNG(s) via PDF pipeline.
   Rendered 1 slide(s).
 [VERBOSE] Extracted template styles:
-[VERBOSE]   Theme accent colors: ['3469DF', '00A5FD', 'FFA406', 'A759BA', 'FF0C6F', 'D9D9D9']
-[VERBOSE]   Theme fonts: major=Lato Black minor=Lato
-[VERBOSE]   Reference tables found: 1
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
 [VERBOSE]   Reference charts found: 0
 [VERBOSE]   Title font family: 
 [VERBOSE]   Body font family: 
   Reviewing slide 1 / 1...
-    OK [score: 8/10].
-  No corrections needed.
+    moderate [score: 5/10]: ['typography_hierarchy', 'color_underutilized', 'poor_spacing']
+  Applying corrections (0 critical, 3 moderate design fixes)...
+  No corrections were applicable (all programmatic_fix='none').
 
-  UI/UX review: 1 slides, avg design score 8.0/10, 0 critical + 0 moderate fixes, 0 recommendations.
-[TIMING] Step 5 Visual Quality Review: completed in 21.41s
-[VERBOSE] Chunk 2 pass 2 slide 0: 1 issues
-[VERBOSE]   severity=minor fix=fix_spacing desc=The italicized descriptor text (e.g., "Primary Revenue Engine", "Margin Protecti
-[TIMING] Chunk 2 pass 2: 21.4s
-[VISUAL REVIEW] Chunk 2: pass 2/3 — no changes needed. Done.
-[TIMING] Chunk 2 total review: 47.1s
-[VISUAL REVIEW] Chunk 2: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
+  [DESIGN NOTE] 1 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
 
-[TIMING] step_visual_review_chunks completed in 428.5s (3 chunks reviewed)
+  UI/UX review: 1 slides, avg design score 5.0/10, 0 critical + 3 moderate fixes, 0 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 16.66s
+[VERBOSE] Chunk 2 pass 2 slide 0: 5 issues
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The main title "Strategic Outlook: The Exponential Curve" and the subtitle "2026
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The title and all body text are presented in plain black, which makes the slide 
+[VERBOSE]   severity=moderate fix=fix_spacing desc=There is significant empty space at the top of the slide, and the combined text 
+[VERBOSE]   severity=minor fix=fix_alignment desc=The main text block and the chart's Y-axis are slightly misaligned horizontally.
+[VERBOSE]   severity=minor fix=enrich_header_bar desc=The slide lacks visual elements to frame the content or add visual interest beyo
+[TIMING] Chunk 2 pass 2: 16.7s
+[VISUAL REVIEW] Chunk 2: pass 2/3 — corrections applied. Re-checking...
+[VISUAL REVIEW] Chunk 2: pass 3/3 starting...
+
+============================================================
+Step 5 (Optional): UI/UX Design Review...
+============================================================
+  Rendering slides to PNG with LibreOffice...
+  [RENDER] PPTX has 1 slide(s) to render.
+  [RENDER] Using PPTX→PDF→PNG pipeline (pdftoppm available).
+  [RENDER] Successfully rendered 1 per-slide PNG(s) via PDF pipeline.
+  Rendered 1 slide(s).
+[VERBOSE] Extracted template styles:
+[VERBOSE]   Theme accent colors: ['7728A7', '9340D1', 'B056F6', '5E58F8', 'BF74F8', '601C8E']
+[VERBOSE]   Theme fonts: major=Arial minor=Arial
+[VERBOSE]   Reference tables found: 2
+[VERBOSE]   Reference charts found: 0
+[VERBOSE]   Title font family: 
+[VERBOSE]   Body font family: 
+  Reviewing slide 1 / 1...
+    moderate [score: 5/10]: ['typography_hierarchy', 'poor_spacing', 'color_underutilized']
+  Applying corrections (0 critical, 4 moderate design fixes)...
+[VERBOSE] Slide 0: visual enrichment applied (enrich_header_bar)
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+
+Fallback presentation generation successful: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+  Corrections saved: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+
+  [DESIGN NOTE] 1 slide(s) are visually bland and could benefit from AI-generated images or richer layout.
+
+  UI/UX review: 1 slides, avg design score 5.0/10, 0 critical + 4 moderate fixes, 0 recommendations.
+[TIMING] Step 5 Visual Quality Review: completed in 21.70s
+[VERBOSE] Chunk 2 pass 3 slide 0: 4 issues
+[VERBOSE]   severity=moderate fix=enforce_typography_hierarchy desc=The main title 'Strategic Outlook: The Exponential Curve' lacks sufficient visua
+[VERBOSE]   severity=moderate fix=fix_spacing desc=The overall layout has unbalanced margins, with excessive empty space on the rig
+[VERBOSE]   severity=moderate fix=apply_accent_color_title desc=The primary title and all descriptive text are rendered in plain black. The temp
+[VERBOSE]   severity=moderate fix=enrich_header_bar desc=The upper section of the slide, containing the title and bullet points, is visua
+[TIMING] Chunk 2 pass 3: 21.7s
+[VISUAL REVIEW] Chunk 2: pass 3/3 — corrections applied. Re-checking...
+[TIMING] Chunk 2 total review: 72.2s
+[VISUAL REVIEW] Chunk 2: reviewed -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+
+[TIMING] step_visual_review_chunks completed in 451.0s (3 chunks reviewed)
 
 ============================================================
 Step 5 (Final): Merging chunks into final presentation...
 ============================================================
 Merging from: reviewed (template + visual review) (3 total, 3 valid)
 [VERBOSE] Ordered chunk files for merge:
-[VERBOSE]   0. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-[VERBOSE]   1. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-[VERBOSE]   2. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
-[MERGE] Merging 3 PPTX files into /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx
-[VERBOSE][MERGE] Source 0: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_000.pptx
-[VERBOSE][MERGE] Source 1: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_001.pptx
-[VERBOSE][MERGE] Source 2: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/chunk_002_assembled.pptx
-[MERGE] Saved merged presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx
-[TIMING] merge_pptx_files completed in 0.4s
-[MERGE] Auto-repair via LibreOffice succeeded: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx
-[TIMING] step_merge_chunks completed in 4.7s (final: pcoem_deck.pptx)
-[MERGE] Merged 3 chunks (reviewed (template + visual review)) -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx. Duration: 4.7s
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-  [BG DETECT] Background color from slide master: #ffffff
-    [CONTRAST] Fixed 28 low-contrast text run(s) in final output
+[VERBOSE]   0. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+[VERBOSE]   1. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+[VERBOSE]   2. /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+[MERGE] Merging 3 PPTX files into /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx
+[VERBOSE][MERGE] Source 0: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_000_assembled.pptx
+[VERBOSE][MERGE] Source 1: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_001_assembled.pptx
+[VERBOSE][MERGE] Source 2: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/chunk_002_assembled.pptx
+[MERGE] Saved merged presentation: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx
+[TIMING] merge_pptx_files completed in 0.7s
+[MERGE] Auto-repair via LibreOffice succeeded: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx
+[TIMING] step_merge_chunks completed in 4.1s (final: smartphone_deck.pptx)
+[MERGE] Merged 3 chunks (reviewed (template + visual review)) -> /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx. Duration: 4.1s
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+  [BG DETECT] Background color from slide master: #FFFFFF
+    [CONTRAST] Fixed 21 low-contrast text run(s) in final output
 
 ============================================================
-[TIMING] Total workflow: 785.1s
-Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_6375a417_20260306_120810/pcoem_deck.pptx
+[TIMING] Total workflow: 880.2s
+Output: /mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/output_chunked/chunked_workflow_work/session_92569bbd_20260310_065230/smartphone_deck.pptx
 ============================================================

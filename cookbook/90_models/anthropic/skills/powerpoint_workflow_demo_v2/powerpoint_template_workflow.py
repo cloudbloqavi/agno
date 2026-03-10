@@ -3447,17 +3447,26 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
     """
     # Collect non-placeholder shapes with position
     movable_shapes = []
+    # Fix 8: Also include placeholder shapes with visible text as "anchors"
+    # for overlap detection. These won't be moved but free-floating shapes
+    # that collide with them will be reflowed.
+    anchor_shapes = []
     for shape in list(slide.shapes):
         try:
-            if shape.is_placeholder:
-                continue
             # Only process shapes that have meaningful dimensions
-            if shape.width > 0 and shape.height > 0:
+            if shape.width <= 0 or shape.height <= 0:
+                continue
+            if shape.is_placeholder:
+                # Include placeholders with visible text as anchors
+                if getattr(shape, "has_text_frame", False) and shape.text.strip():
+                    anchor_shapes.append(shape)
+            else:
                 movable_shapes.append(shape)
         except Exception:
             continue
 
-    if len(movable_shapes) < 2:
+    all_shapes = anchor_shapes + movable_shapes
+    if len(all_shapes) < 2:
         return False
 
     modified = False
@@ -3489,36 +3498,40 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
 
     # --- Phase 2: Sort shapes by vertical position and fix overlaps ---
     # Sort by top position for natural reading order
+    # Fix 8: Use all_shapes for detection (anchors + movable) but only move non-placeholders
+    movable_set = set(id(s) for s in movable_shapes)
     try:
-        movable_shapes.sort(key=lambda s: (s.top, s.left))
+        all_shapes.sort(key=lambda s: (s.top, s.left))
     except Exception:
         return modified
 
     MARGIN = int(slide_height * 0.01)  # 1% gap between shapes
     overlap_count = 0
-    for i in range(len(movable_shapes) - 1):
+    for i in range(len(all_shapes) - 1):
         try:
-            upper = movable_shapes[i]
-            lower = movable_shapes[i + 1]
+            upper = all_shapes[i]
+            lower = all_shapes[i + 1]
 
             upper_bottom = upper.top + upper.height
             # Check for vertical overlap (shapes on similar x-axis range)
-            x_overlap = (
-                lower.left < upper.left + upper.width
-                and lower.left + lower.width > upper.left
-            )
+            # Fix 8: Use 30% horizontal overlap threshold instead of any overlap
+            x_overlap_amount = min(upper.left + upper.width, lower.left + lower.width) - max(upper.left, lower.left)
+            min_width = min(upper.width, lower.width)
+            x_overlap = x_overlap_amount > 0 and (min_width <= 0 or x_overlap_amount / min_width > 0.30)
 
             if x_overlap and lower.top < upper_bottom + MARGIN:
-                new_top = upper_bottom + MARGIN
-                if VERBOSE:
-                    print(
-                        "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
-                        "(was overlapping by %d EMU)"
-                        % (lower.top, new_top, upper_bottom - lower.top)
-                    )
-                lower.top = new_top
-                overlap_count += 1
-                modified = True
+                # Only move the lower shape if it's a movable (non-placeholder) shape
+                if id(lower) in movable_set:
+                    new_top = upper_bottom + MARGIN
+                    if VERBOSE:
+                        print(
+                            "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
+                            "(was overlapping by %d EMU)"
+                            % (lower.top, new_top, upper_bottom - lower.top)
+                        )
+                    lower.top = new_top
+                    overlap_count += 1
+                    modified = True
         except Exception:
             continue
 
@@ -5062,6 +5075,10 @@ def _populate_slide(
     _transfer_charts(
         new_slide, content.charts, visual_area, template_style=template_style
     )
+    # --- Fix 6a: Enable data labels on all transferred charts ---
+    _ensure_chart_data_labels(new_slide)
+    # --- Fix 6b: Enlarge undersized charts to fill available visual area ---
+    _ensure_chart_fills_area(new_slide, slide_width, slide_height, visual_area)
     # Check if layout has actual content placeholders (body/object)
     # If it's a Blank or Title-only layout, transferring LLM shapes into
     # the restricted safe-margin box squashes them. Use the full slide dimensions.
@@ -5104,6 +5121,8 @@ def _populate_slide(
 
     # --- Fix 4: Post-transfer overlap detection and reflow ---
     _fix_overlapping_shapes(new_slide, slide_width, slide_height)
+    # --- Fix 7: Remove duplicate title textboxes ---
+    _remove_duplicate_titles(new_slide)
 
     # ------------------------------------------------------------------
     # Insert generated images into picture placeholders.
@@ -7785,6 +7804,33 @@ def _apply_visual_corrections(
                                 % report.slide_index
                             )
 
+                elif fix == "resize_chart":
+                    if _ensure_chart_fills_area(slide, slide_width, slide_height):
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: chart resized to fill visual area"
+                                % report.slide_index
+                            )
+
+                elif fix == "add_data_labels":
+                    if _ensure_chart_data_labels(slide) > 0:
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: chart data labels enabled"
+                                % report.slide_index
+                            )
+
+                elif fix == "remove_duplicate_title":
+                    if _remove_duplicate_titles(slide) > 0:
+                        modified = True
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Slide %d: duplicate title removed"
+                                % report.slide_index
+                            )
+
             except Exception as e:
                 if VERBOSE:
                     print(
@@ -9017,6 +9063,212 @@ def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
     rPr_elem.insert(insert_idx, new_fill)
 
 
+def _ensure_chart_data_labels(slide) -> int:
+    """Fix 6a: Enable data labels on all charts in a slide.
+
+    For every chart shape:
+      - Enables data labels on plot 0 (has_data_labels = True)
+      - For PIE charts: shows category names + percentage in each label
+      - Sets a minimum font size (Pt(10)) on data labels via XML
+
+    Returns number of charts that were updated.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    ns_c = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+    updated = 0
+
+    for shape in list(slide.shapes):
+        try:
+            if not getattr(shape, "has_chart", False):
+                continue
+
+            chart = shape.chart
+            for plot in chart.plots:
+                try:
+                    if not plot.has_data_labels:
+                        plot.has_data_labels = True
+                        updated += 1
+
+                    dl = plot.data_labels
+                    # Enable value display by default
+                    dl.show_value = True
+
+                    # For PIE charts: show category name + percentage
+                    try:
+                        from pptx.enum.chart import XL_CHART_TYPE
+
+                        chart_type = chart.chart_type
+                        _pie_types = {
+                            XL_CHART_TYPE.PIE,
+                            XL_CHART_TYPE.PIE_EXPLODED,
+                            XL_CHART_TYPE.PIE_OF_PIE,
+                        }
+                        if chart_type in _pie_types:
+                            dl.show_category_name = True
+                            dl.show_percentage = True
+                            dl.show_value = False  # percentage is more useful for pie
+                    except Exception:
+                        pass
+
+                    # Set minimum font size on data labels via XML
+                    try:
+                        chart_elem = chart._chartSpace
+                        for dLbl_rPr in chart_elem.iter(ns_a + "defRPr"):
+                            sz = dLbl_rPr.get("sz")
+                            if sz is None or int(sz) < 1000:  # < Pt(10)
+                                dLbl_rPr.set("sz", "1000")
+                    except Exception:
+                        pass
+
+                except Exception:
+                    continue
+
+        except Exception:
+            continue
+
+    if updated > 0 and VERBOSE:
+        print("  [CHART LABELS] Enabled data labels on %d chart(s)." % updated)
+
+    return updated
+
+
+def _ensure_chart_fills_area(
+    slide, slide_width: int, slide_height: int, visual_area: "ContentArea | None" = None
+) -> bool:
+    """Fix 6b: Enlarge undersized charts to fill available visual area.
+
+    If a chart occupies less than 40% of the visual area, resizes it to
+    fill ~60% while respecting safe margins. Repositions centrally in the
+    visual region.
+
+    Args:
+        slide:        The pptx slide object.
+        slide_width:  Presentation width in EMU.
+        slide_height: Presentation height in EMU.
+        visual_area:  Optional ContentArea for the visual region. If None,
+                      uses safe-margin defaults (8% top/bottom, 5% left/right).
+
+    Returns True if any chart was resized.
+    """
+    if visual_area is None:
+        # Default safe-margin content area
+        margin_x = int(slide_width * 0.05)
+        margin_y = int(slide_height * 0.08)
+        visual_area = ContentArea(
+            left=margin_x,
+            top=margin_y,
+            width=slide_width - 2 * margin_x,
+            height=slide_height - 2 * margin_y,
+        )
+
+    total_visual_pixels = visual_area.width * visual_area.height
+    if total_visual_pixels <= 0:
+        return False
+
+    modified = False
+
+    for shape in list(slide.shapes):
+        try:
+            if not getattr(shape, "has_chart", False):
+                continue
+
+            chart_pixels = shape.width * shape.height
+            fill_ratio = chart_pixels / total_visual_pixels
+
+            if fill_ratio < 0.40:
+                # Enlarge to ~60% of visual area, maintaining aspect ratio
+                target_w = int(visual_area.width * 0.85)
+                target_h = int(visual_area.height * 0.65)
+
+                # Center in visual area
+                new_left = visual_area.left + (visual_area.width - target_w) // 2
+                new_top = visual_area.top + (visual_area.height - target_h) // 2
+
+                if VERBOSE:
+                    print(
+                        "  [CHART SIZE] Enlarging chart from %.0f%% to ~60%% fill "
+                        "(was %dx%d, now %dx%d EMU)"
+                        % (fill_ratio * 100, shape.width, shape.height, target_w, target_h)
+                    )
+
+                shape.left = new_left
+                shape.top = new_top
+                shape.width = target_w
+                shape.height = target_h
+                modified = True
+
+        except Exception:
+            continue
+
+    return modified
+
+
+def _remove_duplicate_titles(slide) -> int:
+    """Fix 7: Remove free-floating textboxes that duplicate the title placeholder.
+
+    When Tier 2 LLM creates a title textbox AND the template assembly also
+    fills the title placeholder (idx=0), both end up on the slide. This
+    function detects and removes the redundant free-floating copy.
+
+    Algorithm:
+      1. Get title text from placeholder idx=0.
+      2. Scan non-placeholder text shapes for matching text (case-insensitive,
+         whitespace-normalized).
+      3. Remove duplicates from the shape tree.
+
+    Returns number of duplicate shapes removed.
+    """
+    title_text = ""
+    title_ph = None
+
+    for shape in list(slide.placeholders):
+        try:
+            if shape.placeholder_format.idx == 0 and getattr(shape, "has_text_frame", False):
+                title_text = shape.text.strip()
+                title_ph = shape
+                break
+        except Exception:
+            continue
+
+    if not title_text:
+        return 0
+
+    title_norm = " ".join(title_text.lower().split())
+    if len(title_norm) < 3:
+        return 0
+
+    spTree = slide.shapes._spTree
+    to_remove = []
+
+    for shape in list(slide.shapes):
+        try:
+            if shape.is_placeholder:
+                continue
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            shape_text = shape.text.strip()
+            shape_norm = " ".join(shape_text.lower().split())
+
+            if shape_norm == title_norm:
+                to_remove.append(shape._element)
+        except Exception:
+            continue
+
+    for elem in to_remove:
+        try:
+            spTree.remove(elem)
+        except Exception:
+            pass
+
+    if to_remove:
+        print(
+            "  [DEDUP] Removed %d duplicate title textbox(es) matching '%s'."
+            % (len(to_remove), title_text[:50])
+        )
+
+    return len(to_remove)
+
+
 def _fix_chart_text_contrast(shape, slide, min_ratio: float = 3.0) -> int:
     """Fix text contrast inside chart elements (axis labels, data labels, legend, title).
 
@@ -9357,3 +9609,24 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                 spTree.remove(element)
             except Exception:
                 pass
+
+        # --- Fix 6a: Ensure chart data labels are enabled ---
+        try:
+            _ensure_chart_data_labels(slide)
+        except Exception:
+            pass
+
+        # --- Fix 6b: Enlarge undersized charts ---
+        try:
+            slide_w = int(prs.slide_width)
+            slide_h = int(prs.slide_height)
+            _ensure_chart_fills_area(slide, slide_w, slide_h)
+        except Exception:
+            pass
+
+        # --- Fix 7: Remove duplicate title textboxes ---
+        try:
+            _remove_duplicate_titles(slide)
+        except Exception:
+            pass
+
