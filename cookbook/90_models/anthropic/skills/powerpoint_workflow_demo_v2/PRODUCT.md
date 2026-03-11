@@ -61,20 +61,22 @@ Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. 
 | Agent Role | Claude (Default) | OpenAI | Gemini |
 |------------|------------------|--------|--------|
 | **Brand Analysis** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Storyboard / Plan** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Fallback (Tier 2)** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Storyboard / Plan** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Fallback (Tier 2)** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
 | **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Search Tool** | `web_search_20250305` | `web_search_preview`| `search=True` |
 
 *(Note: The core Content Generator (Tier 1) is hard-locked to **Claude Opus** to utilize its native PPTX skill capabilities. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
 
-### 4. 3-Tier Fallback System
-| Tier | Generator | Quality | Speed |
-|------|-----------|---------|-------|
-| 1 | Claude PPTX skill (`opus`) | 100% | 30s–5min/chunk |
-| 2 | LLM code gen (`haiku` fallback) | 80–92% | 10–30s/chunk |
-| 3 | Text-only (deterministic) | Structural | <1s/chunk |
+### 4. 3-Tier Fallback System with Universal HA
+| Tier | Generator | Quality | Speed | Condition |
+|------|-----------|---------|-------|-----------|
+| 1 | Claude PPTX skill (`opus`) | 100% | 30s–5min/chunk | Primary |
+| 2 | LLM code gen (1st: Primary w/ visuals, 2nd: OpenAI 4-step) | 80–92% | 15–45s/chunk | Tier 1 Failure |
+| 3 | Text-only (deterministic) | Structural | <1s/chunk | Complete LLM Failure |
+
+*(High Availability Note: If the primary provider hits a 429 Rate Limit or 529 Overloaded error, or experiences persistent errors, the system automatically intercepts the failure and routes the chunk to the **Universal OpenAI Fallback** layer. This layer uses a 4-step visual context stripping hierarchy (Pro w/ images -> Lite w/ images -> Pro stripped -> Lite stripped) to avoid OpenAI token limits, ensuring presentation building continues uninterrupted.)*
 
 ### 5. Template-Faithful Assembly
 Fully deterministic Step 3 builds a comprehensive **assembly knowledge file** — combining user intent, content plan, deep per-layout template analysis, and AI image assets — then maps content onto template layouts, fonts, colors, and placeholder regions. No LLM in the loop.
@@ -89,12 +91,12 @@ Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), 
 An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random `60–120s`) inter-chunk sleeps with live countdowns.
 
 ### 9. Template Quality Safeguards
-When using `--template`, five automatic safeguards protect presentation quality:
-- **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually (not just slide 1) so the visual review inspects all slides
-- **Background detection** — 6-layer cascade (shape→slide→layout→master→theme→large shapes) correctly identifies dark template backgrounds for proper text contrast
-- **Minimum font size** — Enforces 10pt body / 14pt title floor to prevent `fit_text()` from shrinking text to unreadable sizes
-- **Overlap reflow** — Post-transfer detection resolves shape collisions by vertical stacking with minimum dimension enforcement
+When using `--template`, these automatic safeguards protect presentation quality:
+- **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
+- **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
+- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, and shape overlap reflow
 - **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, and layout constraints
+- **Single-Slide Visual References** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
 
 Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 
@@ -153,7 +155,7 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | **Capacity** | Scalable (chunked architecture via `powerpoint_chunked_workflow.py`) |
 | **Steps** | 6 (Step 4 optional, Step 5 visual review optional) |
 | **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
-| **Template Safeguards** | 5 (rendering, background detection, font guard, overlap reflow, prompt constraints) |
+| **Template Safeguards** | 5 (rendering, background detection, font guard, layout sanitization, prompt constraints) |
 | **Tests** | Brand parsing: 10 unit tests, template fixes: 14 integration tests |
 | **Last Updated** | 2026-03-05 |
 
@@ -165,6 +167,6 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 |--------|--------|
 | **Reliability** | 3-tier fallback → ~100% completion rate per chunk |
 | **Template Fidelity** | Knowledge-file-driven assembly matches template fonts, colors, layouts |
-| **Visual Quality** | WCAG contrast ≥3.0, ghost-text removal, fit-text auto-sizing, 10pt/14pt font guard, overlap reflow |
+| **Visual Quality** | WCAG contrast ≥3.0, ghost-text removal, fit-text auto-sizing, 10pt/14pt font guard, layout sanitization |
 | **Performance** | Tier 1: 2-5 min/chunk; Tier 2: 10-30s; Tier 3: <100ms |
 | **Brand Accuracy** | Autonomous web search + structured `BrandStyleIntent` |

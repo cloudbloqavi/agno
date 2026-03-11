@@ -13,6 +13,7 @@ step_optimize_and_plan()
 step_generate_chunks()
   ├── Claude PPTX Skill Agent  (Tier 1)  → raw .pptx
   ├── fallback_code_agent      (Tier 2)  → code-gen .pptx
+  ├── Universal OpenAI Fallback(Tier 1/2)→ gpt-5.4 / o3-mini .pptx
   └── (deterministic fallback) (Tier 3)  → text-only .pptx
 
 step_plan_images()
@@ -55,11 +56,11 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package |
 | **Variable** | `query_optimizer` |
-| **Model** | Swappable via `--llm-provider`: Claude (`claude-opus-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3-pro-preview`) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3-pro-preview`) |
 | **Tools** | Provider-native web search (`web_search_20250305`, `web_search_preview`, or native `search=True`) |
 | **Output** | `StoryboardPlan` (via prompt instructions + manual JSON parse) |
 | **Purpose** | Takes the user prompt + brand context and produces a researched, structured storyboard that guides all downstream chunk generation. Plans slide count, narrative flow, tone, brand voice, and per-slide content outline. |
-| **Note** | `output_schema` is intentionally omitted — `claude-opus-4-6` does not support structured outputs, which causes Agno to make an internal non-streaming extraction call that the `context-1m` beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
+| **Note** | `output_schema` is intentionally omitted — `claude-sonnet-4-6` with `context-1m` beta does not support structured outputs efficiently as Agno makes an internal non-streaming extraction call that the beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
 
 **Output fields:**
 - `total_slides` — Planned count (respects user-specified count, else 8-15)
@@ -87,11 +88,11 @@ step_visual_quality_review()
 | Property | Value |
 |----------|-------|
 | **File** | `agents/` package |
-| **Variable** | `fallback_code_agent` |
-| **Model** | Swappable via `--llm-provider`: Claude (`claude-haiku-4-5`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
+| **Variable** | `fallback_code_agent` (primary) and `fallback_code_agent_lite` (fallback) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6` & `claude-haiku-4-5`), OpenAI (`gpt-5.2` & `gpt-5-mini`), Gemini (`gemini-3-pro-preview` & `gemini-3-flash-preview`) |
 | **Tools** | `PythonTools` (code execution — `save_and_run_python_code`) |
 | **Output** | `.pptx` file generated via python-pptx + matplotlib code |
-| **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. No internal retry — escalates to Tier 3 on failure. |
+| **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. Uses a two-stage fallback chain (e.g., Sonnet -> Haiku) for maximum reliability. Escalates to Tier 3 on failure. |
 | **Quality** | 80–92% of Tier 1 quality |
 | **Brand injection** | Brand context appended to `GLOBAL CONTEXT` in code-gen prompt |
 
@@ -117,6 +118,18 @@ step_visual_quality_review()
 | **Purpose** | Inspects rendered slide PNGs for visual defects. Reports issues with severity (critical/moderate/minor) and suggests programmatic fixes. |
 | **Correction scope** | Auto-fixes: `low_contrast`, `ghost_text`, `empty_placeholder`, `text_overflow` · Detect-only: visual blandness · Deferred: `overlap` repositioning |
 | **Prerequisite** | LibreOffice headless (for PNG rendering). Fully non-blocking — skips gracefully if unavailable. |
+
+### 7. Universal Fallback Agents (Pro & Lite)
+
+| Property | Value |
+|----------|-------|
+| **File** | `agents/fallback_openai_agents.py` |
+| **Variable** | `fallback_content_generator`, `fallback_code_agent`, `fallback_code_agent_lite` |
+| **Model** | OpenAI Pro (`gpt-5.4`) and Lite (`o3-mini` / `gpt-5.3-instant`) |
+| **Tools** | `PythonTools` (code execution) & web search when appropriate |
+| **Purpose** | Provides global high-availability. Intercepts `429 RateLimitError` and `529 OverloadedError` thrown by the primary provider (Claude or Gemini) during heavy traffic. Seamlessly steps in using a 4-step retry hierarchy: 1. Pro w/ visuals, 2. Lite w/ visuals, 3. Pro (stripped visuals), 4. Lite (stripped visuals). This dynamic stripping avoids OpenAI context limits. |
+| **Trigger** | Catch blocks in `generate_chunk_pptx` (Tier 1) and `generate_chunk_pptx_v2` (Tier 2) |
+| **Design Choice** | Standalone global fallback file to segregate dependency imports safely. |
 
 ---
 
@@ -172,7 +185,7 @@ These functions execute without any LLM call:
 
 | Strategy | Implementation |
 |----------|---------------|
-| **3-Tier Fallback** | Tier 1 → Tier 2 → Tier 3 per chunk; session-level flag bypasses Tier 1 after first failure |
+| **3-Tier Fallback w/ HA** | Tier 1 → Global HA (OpenAI) → Tier 2 → Tier 3 per chunk. Intercepts 429/529 capacity errors |
 | **Per-attempt Timeout** | 300s via `ThreadPoolExecutor.result(timeout=...)` |
 | **Configurable Retries** | `--max-retries` per chunk (default: 2) with exponential backoff |
 | **Start Tier Override** | `--start-tier 2` skips Tier 1 entirely (useful when skill is known to be down) |

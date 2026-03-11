@@ -47,11 +47,11 @@ Prerequisites:
 
 Template Quality Safeguards:
   When a template is provided, these safeguards prevent common styling issues:
-  - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review
+  - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review and prompt context
   - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
-  - Minimum font size: 10pt body / 14pt title floor prevents unreadable text from fit_text() shrinkage
-  - Overlap reflow: Post-transfer overlap detection moves colliding shapes apart
+  - Layout sanitization: 3-pass boundary clamping, min size enforcement, and shape overlap reflow
   - Template-aware LLM prompts: Tier 2 prompt includes template constraints (bg color, text color, max shapes)
+  - Template visual references: Injects rendered template PNGs into chunk prompts for spatial layout context
 
 Usage:
     # Basic usage with a template:
@@ -9629,4 +9629,177 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
             _remove_duplicate_titles(slide)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Layout Sanitization (Concern 2 — universal, all tiers)
+# ---------------------------------------------------------------------------
+# These functions run AFTER visual cleanup to fix spatial layout problems
+# (overlapping shapes, out-of-bounds elements, undersized shapes) that
+# the contrast/cleanup pass does not address.
+
+
+def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
+    """Sanitize a single slide's shape layout to fix spatial defects.
+
+    Performs three passes:
+        1. **Boundary clamping**: Ensures all shapes are within 5% safe margin.
+        2. **Minimum size enforcement**: Shapes must be at least 1 inch wide
+           and 0.5 inch tall to remain visible and interactive.
+        3. **Overlap detection & reflow**: If two non-placeholder shapes
+           overlap by more than 30% of the smaller shape's area, the lower
+           shape is pushed down below the upper shape with a small gap.
+
+    Args:
+        slide:        The pptx slide object.
+        slide_width:  Presentation width in EMU (e.g. 12192000 for 13.33 in).
+        slide_height: Presentation height in EMU (e.g. 6858000 for 7.5 in).
+
+    Returns:
+        Number of shape adjustments made.
+    """
+    from pptx.util import Inches
+
+    adjustments = 0
+
+    # Safe margins (5% each side)
+    margin_x = int(slide_width * 0.05)
+    margin_y = int(slide_height * 0.05)
+    max_right = slide_width - margin_x
+    max_bottom = slide_height - margin_y
+
+    min_width = Inches(1.0)
+    min_height = Inches(0.5)
+
+    shapes = list(slide.shapes)
+
+    # --- Pass 1: Boundary clamping ---
+    for shape in shapes:
+        try:
+            if not hasattr(shape, "left") or shape.left is None:
+                continue
+
+            # Clamp left edge
+            if shape.left < margin_x:
+                shape.left = margin_x
+                adjustments += 1
+            # Clamp top edge
+            if shape.top < margin_y:
+                shape.top = margin_y
+                adjustments += 1
+            # Clamp right edge (shrink width if needed)
+            if shape.left + shape.width > max_right:
+                overflow = (shape.left + shape.width) - max_right
+                if overflow > shape.width * 0.5:
+                    # Too much overflow — move shape left instead
+                    shape.left = max(margin_x, max_right - shape.width)
+                else:
+                    shape.width = max(min_width, shape.width - overflow)
+                adjustments += 1
+            # Clamp bottom edge
+            if shape.top + shape.height > max_bottom:
+                overflow = (shape.top + shape.height) - max_bottom
+                if overflow > shape.height * 0.5:
+                    shape.top = max(margin_y, max_bottom - shape.height)
+                else:
+                    shape.height = max(min_height, shape.height - overflow)
+                adjustments += 1
+        except Exception:
+            continue
+
+    # --- Pass 2: Minimum size enforcement ---
+    for shape in shapes:
+        try:
+            if not hasattr(shape, "width") or shape.width is None:
+                continue
+            if shape.width < min_width:
+                shape.width = min_width
+                adjustments += 1
+            if shape.height < min_height:
+                shape.height = min_height
+                adjustments += 1
+        except Exception:
+            continue
+
+    # --- Pass 3: Overlap detection & vertical reflow ---
+    # Sort shapes top-to-bottom by their top edge
+    movable = []
+    for s in shapes:
+        try:
+            if not hasattr(s, "left") or s.left is None:
+                continue
+            # Skip placeholder shapes (they are positioned by the layout)
+            if getattr(s, "is_placeholder", False):
+                continue
+            movable.append(s)
+        except Exception:
+            continue
+
+    movable.sort(key=lambda s: (s.top, s.left))
+
+    for i in range(len(movable)):
+        for j in range(i + 1, len(movable)):
+            try:
+                a = movable[i]
+                b = movable[j]
+
+                # Calculate overlap rectangle
+                overlap_left = max(a.left, b.left)
+                overlap_top = max(a.top, b.top)
+                overlap_right = min(a.left + a.width, b.left + b.width)
+                overlap_bottom = min(a.top + a.height, b.top + b.height)
+
+                if overlap_left < overlap_right and overlap_top < overlap_bottom:
+                    overlap_area = (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
+                    smaller_area = min(a.width * a.height, b.width * b.height)
+
+                    if smaller_area > 0 and overlap_area > smaller_area * 0.30:
+                        # Push shape b below shape a with a small gap
+                        gap = Inches(0.15)
+                        new_top = a.top + a.height + gap
+                        if new_top + b.height <= max_bottom:
+                            b.top = new_top
+                            adjustments += 1
+            except Exception:
+                continue
+
+    return adjustments
+
+
+def sanitize_presentation(prs) -> int:
+    """Run layout sanitization on every slide in a presentation.
+
+    This is a universal post-generation safety net that fixes spatial layout
+    problems regardless of which tier generated the content.
+
+    Args:
+        prs: A python-pptx Presentation object.
+
+    Returns:
+        Total number of shape adjustments made across all slides.
+    """
+    slide_w = int(prs.slide_width)
+    slide_h = int(prs.slide_height)
+    total = 0
+
+    for slide_idx, slide in enumerate(prs.slides):
+        try:
+            n = sanitize_slide_layout(slide, slide_w, slide_h)
+            if n > 0 and VERBOSE:
+                print(
+                    "  [LAYOUT] Slide %d: %d spatial adjustment(s) applied."
+                    % (slide_idx + 1, n)
+                )
+            total += n
+        except Exception:
+            continue
+
+    if total > 0:
+        print(
+            "[LAYOUT SANITIZE] Applied %d spatial fix(es) across %d slide(s)."
+            % (total, len(prs.slides))
+        )
+
+    return total
+
 

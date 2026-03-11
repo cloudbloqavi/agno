@@ -77,6 +77,18 @@ def create_agents() -> Dict[str, Agent]:
         markdown=False,
     )
 
+    fallback_code_agent_lite = Agent(
+        name="PPTX Code Generator (Lite)",
+        model=OpenAIResponses(id="gpt-5-mini"),
+        instructions=PPTX_CODE_GEN_INSTRUCTIONS,
+        tools=[
+            PythonTools(
+                base_dir=Path("."),
+            )
+        ],
+        markdown=False,
+    )
+
     image_planner = Agent(
         name="Image Planner",
         model=OpenAIResponses(id="gpt-5-mini"),
@@ -97,6 +109,7 @@ def create_agents() -> Dict[str, Agent]:
         "brand_style_analyzer": brand_style_analyzer,
         "query_optimizer": query_optimizer,
         "fallback_code_agent": fallback_code_agent,
+        "fallback_code_agent_lite": fallback_code_agent_lite,
         "image_planner": image_planner,
         "slide_quality_reviewer": slide_quality_reviewer,
     }

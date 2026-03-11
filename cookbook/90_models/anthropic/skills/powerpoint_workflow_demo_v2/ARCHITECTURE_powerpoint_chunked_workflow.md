@@ -140,7 +140,10 @@ if not args.template and args.visual_passes != 3:
 
 ## 3-Tier Fallback Architecture Details
 
-To ensure production reliability when generating individual presentation chunks, `powerpoint_chunked_workflow.py` implements a robust 3-tier fallback mechanism. This guarantees that if the primary high-quality method fails (due to API timeouts, rate limits, or skill errors), the system gracefully degrades to faster, more resilient methods to ensure the user always receives a complete presentation.
+To ensure production reliability when generating individual presentation chunks, `powerpoint_chunked_workflow.py` implements a robust 3-tier fallback mechanism with an integrated cross-provider fallback layer. This guarantees that if the primary high-quality method fails (due to API timeouts, rate limits, or skill errors), the system gracefully degrades to faster, more resilient methods to ensure the user always receives a complete presentation.
+
+### Universal OpenAI Fallback Mechanism (Global)
+Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchestrator explicitly catches capacity/traffic errors (e.g. HTTP 429 RateLimit, HTTP 529 Overloaded) from the active primary provider (Claude or Gemini). When a capacity wall is hit, the system dynamically spins up the **Universal OpenAI Fallback** layer (using GPT-5.4 Pro or o3-mini Lite) as a direct, seamless replacement for the failing tier, ensuring task continuity without dropping quality or failing the chunk.
 
 ### Tier 1: Claude PPTX Skill (Primary)
 
@@ -160,7 +163,7 @@ To ensure production reliability when generating individual presentation chunks,
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `search=True` | 200,000 max context |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `web_search_20250305` | 200,000 max context |
 | 3 | **Chunk Generator** | `claude-opus-4-6` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
 | 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
@@ -203,8 +206,8 @@ To ensure production reliability when generating individual presentation chunks,
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `search=True` | 200,000 max context |
-| 3 | **PPTX Code Generator** | `claude-haiku-4-5` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `web_search_20250305` | 200,000 max context |
+| 3 | **PPTX Code Generator** | `claude-sonnet-4-6` & `haiku` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
 | 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
 
@@ -213,7 +216,7 @@ To ensure production reliability when generating individual presentation chunks,
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-5-mini` | OpenAI JSON Output | 128,000 max context |
 | 2 | **Query Optimizer** | `gpt-5.2` | `web_search_preview` | 400,000 max context, 128,000 output limit |
-| 3 | **PPTX Code Generator** | `gpt-5.2` | `PythonTools` | 400,000 max context |
+| 3 | **PPTX Code Generator** | `gpt-5.2` & `gpt-5-mini` | `PythonTools` | 400,000 max context |
 | 4 | **Image Planner** | `gpt-5-mini` | Structured Schema output | 128,000 max context |
 | 5 | **Slide Quality Reviewer** | `gpt-5-mini` | LibreOffice Vision QA | 128,000 max context |
 
@@ -222,7 +225,7 @@ To ensure production reliability when generating individual presentation chunks,
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` | `search=True` | 1,000,000 max context |
 | 2 | **Query Optimizer** | `gemini-3-pro-preview` | `search=True` | 1,000,000 max context |
-| 3 | **PPTX Code Generator** | `gemini-3-pro-preview` | `PythonTools` | 1,000,000 max context |
+| 3 | **PPTX Code Generator** | `gemini-3-pro-preview` & `flash` | `PythonTools` | 1,000,000 max context |
 | 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
 
@@ -392,7 +395,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
 | `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
 | `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
-| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill (opus), 2=LLM code gen (haiku), 3=text-only |
+| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill (opus), 2=LLM code gen (sonnet/haiku), 3=text-only |
 | `--verbose` / `-v` | Verbose/debug logging | Off | |
 | `--inter-chunk-delay-min` | Minimum random delay between chunks | 60 | |
 | `--inter-chunk-delay-max` | Maximum random delay between chunks | 120 | |
@@ -972,8 +975,8 @@ The workflow implements a **Swappable Agent Pattern** controlled by the `--llm-p
 | Agent Role | Claude Mode (Default) | OpenAI Mode | Gemini Mode |
 |------------|-----------------------|-------------|-------------|
 | **Brand Style Analyzer** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Query Optimizer** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Fallback Code (Tier 2)** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Query Optimizer** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Fallback Code (Tier 2)** | `sonnet` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
 | **Image Planner** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Visual QA (Step 5)** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
 | **Web Search Tool** | `web_search_20250305` | `web_search_preview` | `search=True` (native) |
@@ -1055,7 +1058,7 @@ The chunked workflow uses an extended `session_state` that includes all the stan
 # Additional keys in powerpoint_chunked_workflow.py session_state
 {
     # Chunk orchestration (set before workflow runs)
-    "chunk_size": int,          # Slides per Claude API call (default: 3)
+    "chunk_size": int,          # Slides per LLM API call (default: 1)
     "max_retries": int,         # Max retries per chunk (default: 2)
     "visual_passes": int,       # Max visual QA passes per chunk (0 when no template)
 
@@ -1118,15 +1121,26 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 | Tier | Function | Quality | Trigger |
 |------|----------|---------|---------|
 | **Tier 1** | [`generate_chunk_pptx()`](powerpoint_chunked_workflow.py) — Claude PPTX skill | 100% | Primary; used unless `use_fallback_generator=True` |
-| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation (`claude-opus-4-6` + `PythonTools`) | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
-| **Tier 3** | [`generate_chunk_pptx_fallback()`](powerpoint_chunked_workflow.py) — text-only python-pptx | ~100% reliable | Tier 2 failure; last resort, <100ms, zero network I/O |
+| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation (`claude-sonnet-4-6` & `haiku` + `PythonTools`) | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
+| **Global** | Universal OpenAI Fallback (`gpt-5.4` & `o3-mini`) | 95-100% | 429/529 API capacity errors on Claude/Gemini |
+| **Tier 3** | [`generate_chunk_pptx_fallback()`](powerpoint_chunked_workflow.py) — text-only python-pptx | ~100% reliable | Tier 2/Global failure; last resort, <100ms, zero network I/O |
 
 **Tier 1 — Claude PPTX skill:**
 - Runs inside a `ThreadPoolExecutor` via `_run_chunk_agent()` with a 300-second per-attempt timeout (`CHUNK_TIMEOUT_SECONDS = 300`)
-- On timeout or all retries exhausted: sets `session_state["use_fallback_generator"] = True`
+- On timeout or all general retries exhausted: sets `session_state["use_fallback_generator"] = True`
+- On 429/529 capacity errors: Immediately triggers Global HA OpenAI fallback without exhausting Tier 2.
+
+**Global HA — Universal OpenAI Fallback:**
+- `fallback_content_generator`, `fallback_code_agent`, `fallback_code_agent_lite`: OpenAI `gpt-5.4` and `o3-mini`
+- Seamlessly processes payloads intended for Tier 1 or Tier 2 if the primary Anthropic/Gemini provider locks out due to traffic.
+- **4-Step Context Stripping Hierarchy:** To bypass strict OpenAI token limits (e.g., 400k TPM) when dealing with visual templates, the fallback executes a rigorous cascade:
+  1. `gpt-5.4` (Pro) WITH 72-DPI visual template references
+  2. `o3-mini` (Lite) WITH 72-DPI visual template references
+  3. `gpt-5.4` (Pro) STRIPPED of visual references (text-only prompt)
+  4. `o3-mini` (Lite) STRIPPED of visual references (text-only prompt)
 
 **Tier 2 — LLM code generation:**
-- `fallback_code_agent`: Claude `claude-opus-4-6` + `PythonTools`
+- `fallback_code_agent`: Claude `claude-sonnet-4-6` & `haiku` + `PythonTools`
 - Generates and immediately executes a `python-pptx` + `matplotlib` script
 - Produces real Office charts (via `ChartData`), matplotlib PNG embeds, and tables
 - No internal retry — callers escalate directly to Tier 3 on any failure
@@ -1137,13 +1151,35 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 - Uses `FALLBACK_SLIDE_LAYOUT_MAP` for layout selection: `title→0`, `agenda→2`, `content→1`, `data→3`, `closing→0`
 
 **Dispatch logic in `step_generate_chunks()`:**
-```
-for each chunk:
-    if use_fallback_generator:
-        skip Tier 1
-    else:
-        attempt Tier 1 → on failure → set use_fallback_generator=True
-    attempt Tier 2 → on failure → attempt Tier 3
+
+```mermaid
+flowchart TD
+    Start["New Chunk"] --> CheckTier1{"use_fallback_generator?"}
+    
+    CheckTier1 -->|No| T1["Tier 1 (Primary Skill)"]
+    CheckTier1 -->|Yes| T2["Tier 2 (Primary Code Gen)"]
+    
+    T1 -->|Success| End["Chunk Generated"]
+    T1 -->|Capacity Error 429/529| OAI1["OpenAI Pro (w/ visuals)"]
+    T1 -->|General Failure/Timeout| SetFallback["Set use_fallback_generator=True"] --> T2
+    
+    T2 -->|Success| End
+    T2 -->|Capacity Error 429/529| OAI1
+    T2 -->|General Failure| OAI1
+    
+    OAI1 -->|Success| End
+    OAI1 -->|Failure| OAI2["OpenAI Lite (w/ visuals)"]
+    
+    OAI2 -->|Success| End
+    OAI2 -->|Failure| OAI3["OpenAI Pro (No visuals)"]
+    
+    OAI3 -->|Success| End
+    OAI3 -->|Failure| OAI4["OpenAI Lite (No visuals)"]
+    
+    OAI4 -->|Success| End
+    OAI4 -->|Failure| T3["Tier 3 (Text-Only Fallback)"]
+    
+    T3 --> End
 ```
 
 **Downstream compatibility:** Tier 2 and Tier 3 output files are standard `.pptx` files and are fully compatible with the downstream `step_process_chunks()` template assembly pipeline and `_merge_pptx_zip_level()` merge step — no special handling is needed.
@@ -1154,7 +1190,7 @@ for each chunk:
 |--------|---------|
 | `CHUNK_TIMEOUT_SECONDS` | Per-attempt timeout (300s) enforced via `ThreadPoolExecutor.result(timeout=...)` |
 | `_run_chunk_agent()` | Wraps Tier 1 agent call in `ThreadPoolExecutor`; raises `TimeoutError` on expiry |
-| `fallback_code_agent` | `claude-opus-4-6` (without `context-1m` beta) + `PythonTools`; powers Tier 2 |
+| `fallback_code_agent` | `claude-sonnet-4-6` & `haiku` + `PythonTools`; powers Tier 2 |
 | `FALLBACK_SLIDE_LAYOUT_MAP` | Dict mapping slide type keywords to layout indices for Tier 3 |
 | `use_fallback_generator` | `session_state` bool; once `True`, Tier 1 is bypassed for all remaining chunks |
 

@@ -1,19 +1,21 @@
 """
 Claude-specific agent definitions for PowerPoint workflow.
 
-Provides the 5 swappable agents using Anthropic Claude models and native tools.
+Provides the 5+1 swappable agents using Anthropic Claude models and native tools.
 The Content Generator agent (with PPTX skill) is NOT included — it stays
 in the main workflow files because it is always Claude regardless of provider.
 
 Models used (optimised to preserve the claude-opus-4-6 30K input-token/min budget):
-    brand_style_analyzer    -> gpt-4o-mini  (OpenAI; completely separate rate-limit pool)
-    query_optimizer         -> claude-sonnet-4-6   (was Opus; Sonnet is sufficient for
-                                                    storyboarding and shares the same pool
-                                                    but is much more token-efficient)
-    fallback_code_agent     -> claude-haiku-4-5    (50K input tokens/min pool; Haiku is
-                                                    more than capable of python-pptx codegen)
-    image_planner           -> gemini-3-flash-preview (unchanged — already uses Gemini)
-    slide_quality_reviewer  -> gemini-2.5-flash       (unchanged — already uses Gemini)
+    brand_style_analyzer      -> gpt-4o-mini  (OpenAI; completely separate rate-limit pool)
+    query_optimizer           -> claude-sonnet-4-6   (was Opus; Sonnet is sufficient for
+                                                      storyboarding and shares the same pool
+                                                      but is much more token-efficient)
+    fallback_code_agent       -> claude-sonnet-4-6   (primary Tier 2; better code gen quality
+                                                      than haiku for native charts/infographics)
+    fallback_code_agent_lite  -> claude-haiku-4-5    (lite Tier 2 fallback; 50K token/min pool;
+                                                      used when sonnet fails or is rate-limited)
+    image_planner             -> gemini-3-flash-preview (unchanged — already uses Gemini)
+    slide_quality_reviewer    -> gemini-2.5-flash       (unchanged — already uses Gemini)
 
 Rate limit reference (Tier 1 as of 2026-03):
     claude-sonnet-4-6  : 50 RPM | 30K input tokens/min | 8K output tokens/min
@@ -107,13 +109,27 @@ def create_agents() -> Dict[str, Agent]:
         markdown=False,
     )
 
-    # Downgraded from claude-opus-4-6 → claude-haiku-4-5.
-    # Haiku has a SEPARATE 50K input-token/min budget — it doesn't compete with the
-    # 30K pool used by the Tier-1 chunk agent (Opus + PPTX skill).
-    # max_tokens capped at 16384: python-pptx scripts for 3 slides are ~500-1500 lines.
-    # context-1m beta intentionally omitted; haiku doesn't need it for code-gen prompts.
+    # Upgraded from claude-haiku-4-5 → claude-sonnet-4-6 for better python-pptx
+    # code generation quality (native charts, infographics, shaped layouts).
+    # Sonnet shares the 30K input-token/min pool with Opus and the query optimizer,
+    # so the rate tracker must account for Tier 2 calls consuming that budget.
+    # max_tokens capped at 16384: python-pptx scripts for 2 slides are ~500-1000 lines.
     fallback_code_agent = Agent(
         name="PPTX Code Generator",
+        model=Claude(id="claude-sonnet-4-6", max_tokens=16384, betas=["context-1m-2025-08-07"]),
+        instructions=PPTX_CODE_GEN_INSTRUCTIONS,
+        tools=[
+            PythonTools(
+                base_dir=Path("."),
+            )
+        ],
+        markdown=False,
+    )
+
+    # Lite fallback: used when sonnet fails (rate limit, error) before escalating
+    # to Tier 3. Haiku has a SEPARATE 50K input-token/min budget.
+    fallback_code_agent_lite = Agent(
+        name="PPTX Code Generator (Lite)",
         model=Claude(id="claude-haiku-4-5", max_tokens=16384),
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
@@ -144,6 +160,7 @@ def create_agents() -> Dict[str, Agent]:
         "brand_style_analyzer": brand_style_analyzer,
         "query_optimizer": query_optimizer,
         "fallback_code_agent": fallback_code_agent,
+        "fallback_code_agent_lite": fallback_code_agent_lite,
         "image_planner": image_planner,
         "slide_quality_reviewer": slide_quality_reviewer,
     }

@@ -20,11 +20,13 @@ Architecture:
                                     visual review, all helper functions (~6500 lines)
   powerpoint_chunked_workflow.py   — Chunked orchestration layer (~3200 lines, this file)
 
-Chunk generation uses a 3-tier fallback hierarchy per chunk:
-  Tier 1  Claude PPTX Skill    - Primary; native charts, tables, rich visuals
-  Tier 2  LLM Code Generation  - Fallback; LLM writes + executes python-pptx
-                                  code (native charts only); 80-92% quality parity
-  Tier 3  python-pptx Direct   - Last resort; text-only slides; 100% reliable
+Chunk generation uses a 3-tier fallback hierarchy per chunk with High Availability (HA) layer:
+  Tier 1      Claude PPTX Skill         - Primary; native charts, tables, rich visuals
+  Tier 2      LLM Code Gen (Primary)    - Fallback; LLM writes + executes python-pptx
+                                          code. Uses a two-stage chain (Sonnet → Haiku).
+  Global HA   Universal OpenAI Fallback - Dynamically invoked (GPT-5.4 / o3-mini) during API 
+                                          outages (HTTP 429/529) to replace Tier 1 or Tier 2.
+  Tier 3      python-pptx Direct        - Last resort; text-only slides; 100% reliable
 
 Brand/Style-Aware Query Parsing:
   Before the optimizer step, the workflow analyzes the user prompt for branding
@@ -52,7 +54,7 @@ Workflow steps:
   Step 1  Optimize & Plan    - LLM analyzes prompt, decides slide count, creates storyboard;
                                 brand context is injected into the optimizer prompt and search
   Step 2  Generate Chunks    - Call Claude pptx skill (Tier 1) for each chunk;
-                               auto-escalates to Tier 2 (LLM code gen) on timeout/
+                               auto-escalates to Tier 2 (Sonnet → Haiku code gen) on timeout/
                                failure, then Tier 3 (text-only) if Tier 2 fails.
                                Brand context is included in Tier 1 and Tier 2 prompts.
   Step 3  Process Chunks     - Apply template + image pipeline per chunk (if template provided)
@@ -71,9 +73,12 @@ Key Agents (all except Content Generator are swappable via --llm-provider):
   query_optimizer       - Default: Claude Opus + web_search (max 5); creates researched storyboard.
                           OpenAI: gpt-5.2 + web_search_preview
                           Gemini: gemini-3-pro-preview + search=True
-  fallback_code_agent   - Default: Claude Opus + PythonTools; Tier 2 code generation fallback.
+  fallback_code_agent   - Default: Claude Sonnet + PythonTools; Tier 2 code generation primary.
                           OpenAI: gpt-5.2 + PythonTools
                           Gemini: gemini-3-pro-preview + PythonTools
+  fallback_code_agent_lite - Default: Claude Haiku + PythonTools; Tier 2 fallback.
+                          OpenAI: gpt-5-mini + PythonTools
+                          Gemini: gemini-3-flash-preview + PythonTools
   image_planner         - Default: Gemini gemini-3-flash-preview; per-slide image decisions.
                           OpenAI: gpt-5-mini
   slide_quality_reviewer- Default: Gemini 2.5 Flash; visual defect detection + correction.
@@ -93,8 +98,9 @@ Template Quality Safeguards (active when --template is provided):
   - Per-slide rendering: PPTX→PDF→PNG pipeline via pdftoppm renders all slides for visual review
   - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
   - Minimum font size: 10pt body / 14pt title floor prevents unreadable 4pt text from fit_text()
-  - Overlap reflow: Post-transfer overlap detection moves colliding shapes and enforces min size
-  - Template-aware Tier 2 prompts: LLM code gen prompt includes template bg color/text color constraints
+  - Layout sanitization: 3-pass boundary clamping, min size enforcement, and shape overlap reflow
+  - Template-aware LLM prompts: Tier 2 code gen prompt includes template bg color/text color constraints
+  - Template visual references: Renders template slides as PNGs and injects into chunk prompts for layout context
 
 Usage:
     # Basic usage (auto-decide slide count, 3 slides per chunk):
@@ -159,7 +165,7 @@ CLI Flags:
     --date-text          Date text for footer date placeholder.
     --show-slide-numbers Preserve slide number placeholder on all slides.
     --verbose, -v        Enable verbose/debug logging.
-    --chunk-size         Number of slides per Claude API chunk call (default: 3).
+    --chunk-size         Number of slides per LLM API chunk call (default: 1).
     --max-retries        Max retries per chunk on failure (default: 2).
     NOTE: When all retries fail or a timeout (300s) occurs, the system
           automatically switches to Tier 2 (LLM code gen) fallback,
@@ -556,6 +562,262 @@ class BrandStyleIntent(BaseModel):
 # hard dependency on Claude's PPTX skill and cannot be swapped.
 
 
+# === AGENT TRACEABILITY ===
+
+
+def _log_agent_banner(
+    agent_name: str,
+    model_id: str,
+    provider: str,
+    step_name: str,
+) -> None:
+    """Print an always-on traceability banner before every agent invocation.
+
+    Shown regardless of --verbose so the user always knows which agent/LLM
+    is executing.  Format:
+        ┌─────────────────────────────────────────────────
+        │ 🤖 AGENT: Brand Style Analyzer
+        │ 📡 MODEL: gpt-4o-mini [OpenAI]
+        │ 📋 STEP:  step_optimize_and_plan / Brand Parse
+        └─────────────────────────────────────────────────
+    """
+    line = "─" * 50
+    print(
+        "\n┌%s\n"
+        "│ 🤖 AGENT: %s\n"
+        "│ 📡 MODEL: %s [%s]\n"
+        "│ 📋 STEP:  %s\n"
+        "└%s" % (line, agent_name, model_id, provider, step_name, line)
+    )
+
+# === TEMPLATE VISUAL REFERENCE (Concern 1+6) ===
+# Renders template slides to PNG and builds visual reference sections for
+# chunk prompts, giving the LLM actual visual context of the template layout.
+
+
+def _render_template_slides_to_png(
+    template_path: str, output_dir: str
+) -> Dict[int, str]:
+    """Render all template slides to PNG using the LibreOffice→PDF→PNG pipeline.
+
+    Uses the same pipeline as the visual review step. If LibreOffice or
+    pdftoppm is unavailable, returns an empty dict (graceful degradation).
+
+    PNGs are rendered at 72 DPI to produce ~80k chars of base64 per slide,
+    keeping the LLM prompt well within context window limits for all models
+    (including OpenAI fallback agents).
+
+    Args:
+        template_path: Path to the .pptx template file.
+        output_dir:    Directory to write PNG files into (a 'template_pngs'
+                       subdirectory is created automatically).
+
+    Returns:
+        Dict mapping 0-based slide index → PNG file path.
+        Empty dict if rendering is unavailable or fails.
+    """
+    import glob
+    import shutil as _shutil
+    import subprocess
+
+    png_dir = os.path.join(output_dir, "template_pngs")
+    os.makedirs(png_dir, exist_ok=True)
+
+    lo_cmd = _shutil.which("libreoffice") or _shutil.which("soffice")
+    if not lo_cmd:
+        print(
+            "[TEMPLATE REF] LibreOffice not found — skipping template visual references. "
+            "Install with: apt-get install libreoffice"
+        )
+        return {}
+
+    pdftoppm_cmd = _shutil.which("pdftoppm")
+    if not pdftoppm_cmd:
+        print(
+            "[TEMPLATE REF] pdftoppm not found — skipping template visual references. "
+            "Install with: apt-get install poppler-utils"
+        )
+        return {}
+
+    try:
+        # Step 1: PPTX → PDF
+        pdf_result = subprocess.run(
+            [lo_cmd, "--headless", "--convert-to", "pdf", "--outdir", png_dir, template_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if pdf_result.returncode != 0:
+            print("[TEMPLATE REF] PDF conversion failed: %s" % pdf_result.stderr[:200])
+            return {}
+
+        base = os.path.splitext(os.path.basename(template_path))[0]
+        pdf_path = os.path.join(png_dir, base + ".pdf")
+        if not os.path.isfile(pdf_path):
+            print("[TEMPLATE REF] PDF file not created.")
+            return {}
+
+        # Step 2: PDF → PNGs via pdftoppm (72 DPI for optimal context budget)
+        png_prefix = os.path.join(png_dir, "tmpl")
+        ppm_result = subprocess.run(
+            [pdftoppm_cmd, "-png", "-r", "72", pdf_path, png_prefix],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        # Cleanup PDF
+        try:
+            os.remove(pdf_path)
+        except OSError:
+            pass
+
+        if ppm_result.returncode != 0:
+            print("[TEMPLATE REF] pdftoppm failed: %s" % ppm_result.stderr[:200])
+            return {}
+
+        pngs = sorted(glob.glob(os.path.join(png_dir, "tmpl-*.png")))
+        result = {}
+        for idx, png_path in enumerate(pngs):
+            result[idx] = png_path
+
+        if result:
+            print(
+                "[TEMPLATE REF] Rendered %d template slide(s) as visual references."
+                % len(result)
+            )
+        return result
+
+    except Exception as e:
+        print("[TEMPLATE REF] Template rendering failed: %s" % e)
+        return {}
+
+
+def _match_storyboard_to_template_slide(
+    slide_type: str, template_pngs: Dict[int, str]
+) -> Optional[str]:
+    """Map a storyboard slide_type to the best-matching template slide PNG.
+
+    Matching strategy:
+        - 'title' / 'hero'    → template slide 0 (title slide)
+        - 'closing'           → last template slide
+        - 'section' / 'agenda' → template slide 2 (section header), or 0
+        - 'data' / 'metrics'  → template slide 3 if exists, else 1
+        - 'content' / default → template slide 1 (content layout), or 0
+
+    Args:
+        slide_type:     The semantic slide type from the storyboard.
+        template_pngs:  Dict of {slide_index: png_path} from rendering.
+
+    Returns:
+        Path to the best-matching template PNG, or None if no match.
+    """
+    if not template_pngs:
+        return None
+
+    n = len(template_pngs)
+    slide_type_lower = (slide_type or "content").lower().strip()
+
+    def _get(idx: int) -> Optional[str]:
+        return template_pngs.get(idx)
+
+    if slide_type_lower in ("title", "hero"):
+        return _get(0) or _get(min(template_pngs.keys()))
+    elif slide_type_lower in ("closing",):
+        return _get(n - 1) or _get(0)
+    elif slide_type_lower in ("section", "agenda"):
+        return _get(2) or _get(0)
+    elif slide_type_lower in ("data", "metrics"):
+        return _get(3) or _get(1) or _get(0)
+    else:  # content, comparative, sequential, etc.
+        return _get(1) or _get(0)
+
+
+def _build_visual_reference_section(
+    chunk_slides: List, template_pngs: Dict[int, str],
+    brand_style_intent: Optional["BrandStyleIntent"] = None,
+) -> str:
+    """Build a markdown prompt section with base64-encoded template slide references.
+
+    For each slide in the chunk, finds the best-matching template slide and
+    encodes it as a base64 data URI for inclusion in the LLM prompt.
+
+    With the default --chunk-size 1, this sends exactly one template image
+    per chunk prompt (~80k chars at 72 DPI), matching the Manus/Claude Addon
+    per-slide pattern for optimal template reproduction.
+
+    When brand_style_intent is provided, a compact textual metadata block
+    (theme colors, fonts) is prepended to give the LLM precise reproduction
+    parameters alongside the visual reference.
+
+    Args:
+        chunk_slides:       List of SlideSpec objects from the storyboard.
+        template_pngs:      Dict from _render_template_slides_to_png().
+        brand_style_intent: Optional BrandStyleIntent with extracted theme
+                            colors and fonts for textual metadata injection.
+
+    Returns:
+        Markdown section string (may be empty if no template or rendering unavailable).
+    """
+    import base64
+
+    if not template_pngs:
+        return ""
+
+    sections = []
+    used_refs = set()  # Deduplicate same template slide for multiple chunk slides
+
+    for slide_spec in chunk_slides:
+        slide_type = getattr(slide_spec, "slide_type", "content")
+        slide_num = getattr(slide_spec, "slide_number", "?")
+        ref_path = _match_storyboard_to_template_slide(slide_type, template_pngs)
+
+        if ref_path and ref_path not in used_refs and os.path.isfile(ref_path):
+            used_refs.add(ref_path)
+            try:
+                with open(ref_path, "rb") as f:
+                    img_data = base64.b64encode(f.read()).decode("ascii")
+                sections.append(
+                    "### Template Reference for Slide %s (type: %s)\n"
+                    "![Template slide](data:image/png;base64,%s)\n"
+                    "Reproduce this template's layout structure, color scheme, "
+                    "and visual hierarchy as closely as possible using native PPTX elements.\n"
+                    % (slide_num, slide_type, img_data)
+                )
+            except Exception:
+                continue
+
+    if not sections:
+        return ""
+
+    # Build optional theme metadata block for precise style reproduction
+    theme_metadata = ""
+    if brand_style_intent:
+        meta_parts = []
+        if getattr(brand_style_intent, "color_palette", None):
+            meta_parts.append(
+                "- **Theme Colors:** %s" % ", ".join(brand_style_intent.color_palette)
+            )
+        if getattr(brand_style_intent, "typography_hints", None):
+            meta_parts.append(
+                "- **Theme Fonts:** %s" % ", ".join(brand_style_intent.typography_hints)
+            )
+        if getattr(brand_style_intent, "brand_name", None):
+            meta_parts.append(
+                "- **Company/Brand:** %s" % brand_style_intent.brand_name
+            )
+        if meta_parts:
+            theme_metadata = (
+                "\n### Template Theme Metadata\n"
+                "Use these EXACT values when reproducing the template style:\n"
+                + "\n".join(meta_parts) + "\n"
+            )
+
+    return (
+        "\n## VISUAL REFERENCE — Template Slides\n"
+        "The following images show what the template slides look like. "
+        "Use them as visual reference for layout, positioning, and styling.\n"
+        + theme_metadata + "\n"
+        + "\n".join(sections)
+    )
+
+
 # === BRAND/STYLE HELPER FUNCTIONS ===
 
 
@@ -634,6 +896,12 @@ def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "
         return BrandStyleIntent()
 
     try:
+        _log_agent_banner(
+            agent_name=getattr(brand_agent, 'name', 'Brand Style Analyzer'),
+            model_id=getattr(getattr(brand_agent, 'model', None), 'id', 'unknown'),
+            provider='OpenAI',
+            step_name='step_optimize_and_plan / Brand Parse',
+        )
         response = brand_agent.run(user_prompt, stream=False)
 
         if response and response.content:
@@ -1049,7 +1317,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     user_prompt = session_state.get("user_prompt", "")
     output_dir = session_state.get("output_dir", ".")
-    chunk_size = session_state.get("chunk_size", 3)
+    chunk_size = session_state.get("chunk_size", 1)
     max_retries = session_state.get("max_retries", 2)
     template_path = session_state.get("template_path", "")
 
@@ -1082,6 +1350,14 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     session_state["brand_style_intent"] = brand_intent
     brand_parse_elapsed = time.time() - brand_parse_start
     print("[TIMING] Brand/style parsing completed in %.1fs" % brand_parse_elapsed)
+
+    # Render template slides to PNG for visual reference in chunk prompts
+    if template_path and os.path.isfile(template_path):
+        print("[STEP 1] Rendering template slides for visual reference...")
+        template_pngs = _render_template_slides_to_png(template_path, output_dir)
+        session_state["template_slide_pngs"] = template_pngs
+    else:
+        session_state["template_slide_pngs"] = {}
 
     # Build brand context section for injection into the optimizer prompt
     brand_context_section = _format_brand_context_for_prompt(brand_intent)
@@ -1182,6 +1458,12 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         response = None
         from agents import get_agents as _get_agents
         _query_optimizer = _get_agents(session_state.get("llm_provider", "claude")).get("query_optimizer")
+        _log_agent_banner(
+            agent_name=getattr(_query_optimizer, 'name', 'Presentation Strategist'),
+            model_id=getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-sonnet-4-6'),
+            provider=session_state.get('llm_provider', 'claude'),
+            step_name='step_optimize_and_plan / Storyboard Generation',
+        )
         # Check rate limits before calling — claude-sonnet-4-6 shares the 30K token/min pool
         _get_rate_tracker().check_and_wait(
             model="claude-sonnet-4-6",
@@ -1194,11 +1476,88 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             if isinstance(event, RunOutput):
                 response = event
     except Exception as e:
-        print("[ERROR] Query optimizer failed: %s" % str(e))
-        traceback.print_exc()
-        return StepOutput(
-            content="Query optimization failed: %s" % str(e), success=False
+        error_msg = str(e)
+        status_code = getattr(getattr(e, "response", None), "status_code", None)
+        
+        # Check for API capacity, credit limits, or rate limits
+        is_capacity_error = (
+            status_code in (400, 429, 529, 500, 503) 
+            or "credit" in error_msg.lower() 
+            or "rate limit" in error_msg.lower() 
+            or "overloaded" in error_msg.lower()
+            or "429" in error_msg
+            or "529" in error_msg
+            or "status 400" in error_msg.lower()
         )
+        
+        if is_capacity_error:
+            provider = session_state.get("llm_provider", "claude")
+            print("\n[OPENAI FALLBACK TRIGGERED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
+            print("[OPENAI FALLBACK TRIGGERED] Engaging Universal OpenAI Fallback (gpt-5.4) for storyboard generation...")
+            try:
+                from agents.fallback_openai_agents import get_openai_fallback_agents
+                _fallback_agents = get_openai_fallback_agents()
+                _fallback_query_optimizer = _fallback_agents["fallback_query_optimizer"]
+                
+                _log_agent_banner(
+                    agent_name=getattr(_fallback_query_optimizer, 'name', 'Universal Presentation Strategist (Fallback)'),
+                    model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'gpt-5.4'),
+                    provider="openai",
+                    step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
+                )
+                
+                for event in _fallback_query_optimizer.run(
+                    optimizer_prompt, stream=True, yield_run_output=True
+                ):
+                    if isinstance(event, RunOutput):
+                        response = event
+                        
+            except Exception as fallback_e:
+                print("[ERROR] Fallback query optimizer failed during exception fallback: %s" % str(fallback_e))
+                if VERBOSE:  # noqa: F405
+                    traceback.print_exc()
+                return StepOutput(
+                    content="Query optimization failed on both primary and fallback: %s" % str(fallback_e), success=False
+                )
+        else:
+            print("[ERROR] Query optimizer failed: %s" % str(e))
+            if VERBOSE:  # noqa: F405
+                traceback.print_exc()
+            return StepOutput(
+                content="Query optimization failed: %s" % str(e), success=False
+            )
+
+    # Agno catches API 400/429 limits internally and yields no response, bypassing exceptions.
+    # Therefore, we must also apply the fallback logic if response is None after execution.
+    if response is None:
+        provider = session_state.get("llm_provider", "claude")
+        print("\n[OPENAI FALLBACK TRIGGERED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
+        print("[OPENAI FALLBACK TRIGGERED] Engaging Universal OpenAI Fallback (gpt-5.4) for storyboard generation...")
+        try:
+            from agents.fallback_openai_agents import get_openai_fallback_agents
+            _fallback_agents = get_openai_fallback_agents()
+            _fallback_query_optimizer = _fallback_agents["fallback_query_optimizer"]
+            
+            _log_agent_banner(
+                agent_name=getattr(_fallback_query_optimizer, 'name', 'Universal Presentation Strategist (Fallback)'),
+                model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'gpt-5.4'),
+                provider="openai",
+                step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
+            )
+            
+            for event in _fallback_query_optimizer.run(
+                optimizer_prompt, stream=True, yield_run_output=True
+            ):
+                if isinstance(event, RunOutput):
+                    response = event
+                    
+        except Exception as fallback_e:
+            print("[ERROR] Fallback query optimizer failed: %s" % str(fallback_e))
+            if VERBOSE:  # noqa: F405
+                traceback.print_exc()
+            return StepOutput(
+                content="Query optimization failed on both primary and fallback: %s" % str(fallback_e), success=False
+            )
 
 
     # Parse the StoryboardPlan from response.
@@ -1330,6 +1689,11 @@ def generate_chunk_pptx(
     via ThreadPoolExecutor. On timeout, activates the session-level fallback flag
     and returns None immediately (no further retries for this chunk).
 
+    *Universal OpenAI Fallback*: If the primary provider (Claude/Gemini) throws explicit
+    HTTP 429 (Rate Limit) or HTTP 529 (Overloaded) errors, the function dynamically 
+    engages the corresponding OpenAI GPT-5.4 fallback agent to complete the chunk, 
+    preventing catastrophic failure before dropping to Tier 2.
+
     Brand/style context from session_state["brand_style_intent"] is injected into
     the chunk prompt as a '## Brand/Style Guidance' section when branding is present.
     This guides the Claude PPTX skill to use brand-appropriate tone, colors, and
@@ -1421,6 +1785,21 @@ def generate_chunk_pptx(
         chunk_idx,
     )
 
+    # Append template visual reference section (if template was rendered)
+    template_pngs = session_state.get("template_slide_pngs", {})
+    if template_pngs:
+        visual_ref = _build_visual_reference_section(
+            chunk_slides, template_pngs,
+            brand_style_intent=session_state.get("brand_style_intent"),
+        )
+        if visual_ref:
+            chunk_prompt += "\n" + visual_ref
+            if VERBOSE:  # noqa: F405
+                print(
+                    "[VERBOSE] Chunk %d: appended %d-char visual reference to prompt."
+                    % (chunk_idx, len(visual_ref))
+                )
+
     prompt_file = _save_prompt_to_file(
         chunk_prompt, "chunk", output_dir, "chunk_%03d" % chunk_idx
     )
@@ -1463,16 +1842,24 @@ def generate_chunk_pptx(
         attempt_start = time.time()
 
         if attempt > 0:
-            delay_ms = int(1000 * (2 ** (attempt - 1)))  # exponential: 1000ms, 2000ms
+            delay_secs = 60.0 + random.uniform(0, 30.0)  # 60-90s jitter to respect 30K tokens/min window
             print(
-                "[CHUNK %d] Retry %d/%d after %dms delay..."
-                % (chunk_idx, attempt, max_retries, delay_ms)
+                "[CHUNK %d] Retry %d/%d — cooling down for %.0fs (rate limit window reset)..."
+                % (chunk_idx, attempt, max_retries, delay_secs)
             )
-            time.sleep(delay_ms / 1000.0)
+            _countdown_sleep(delay_secs, label="[CHUNK %d RETRY]" % chunk_idx)
 
         print(
             "[CHUNK %d] API call attempt %d/%d (slides %d-%d)..."
             % (chunk_idx, attempt + 1, max_retries + 1, first_slide, last_slide)
+        )
+
+        _log_agent_banner(
+            agent_name='Chunk Generator %d' % chunk_idx,
+            model_id='claude-opus-4-6',
+            provider='Anthropic',
+            step_name='step_generate_chunks / Tier 1 PPTX Skill (attempt %d/%d)'
+                % (attempt + 1, max_retries + 1),
         )
 
         # Register this call with the rate tracker before executing.
@@ -1543,14 +1930,15 @@ def generate_chunk_pptx(
         except Exception as e:
             err_str = str(e)
             attempt_elapsed = time.time() - attempt_start
-            is_rate_limit = "rate_limit" in err_str or "429" in err_str or "rate limit" in err_str.lower()
+            is_rate_limit = "rate_limit" in err_str or "429" in err_str or "529" in err_str or "rate limit" in err_str.lower() or "overloaded" in err_str.lower()
+            is_overloaded = "529" in err_str or "overloaded" in err_str.lower()
 
             if is_rate_limit:
                 # 429 is a transient rate-limit error — mark it on session_state but
                 # do NOT permanently activate use_fallback_generator.  The inter-chunk
                 # delay in step_generate_chunks will apply max_delay before the next chunk.
                 print(
-                    "[CHUNK %d] Attempt %d/%d hit 429 rate limit: %s"
+                    "[CHUNK %d] Attempt %d/%d hit rate/capacity limit: %s"
                     % (chunk_idx, attempt + 1, max_retries + 1, err_str[:200])
                 )
                 session_state["rate_limit_hit"] = True
@@ -1565,14 +1953,57 @@ def generate_chunk_pptx(
                 % (
                     chunk_idx, attempt + 1, max_retries + 1,
                     attempt_elapsed,
-                    "rate limit" if is_rate_limit else "error",
+                    "rate/capacity limit" if is_rate_limit else "error",
                 )
             )
-            if attempt == max_retries:
-                print(
-                    "[CHUNK %d] All %d attempts failed. Skipping chunk."
-                    % (chunk_idx, max_retries + 1)
-                )
+            
+            # OpenAI Fallback for Provider Overload (529) or Final Retry Failure
+            if attempt == max_retries or (is_overloaded and attempt > 0):
+                if is_overloaded:
+                    print(
+                        "[CHUNK %d] Provider explicitly overloaded (529). Engaging Universal OpenAI Fallback before giving up entirely on Tier 1..."
+                        % chunk_idx
+                    )
+                else:
+                    print(
+                        "[CHUNK %d] All %d attempts failed. Engaging Universal OpenAI Fallback before giving up entirely on Tier 1..."
+                        % (chunk_idx, max_retries + 1)
+                    )
+                    
+                # Universal Fallback Logic for Tier 1
+                try:
+                    from agents.fallback_openai_agents import get_openai_fallback_agents
+                    _fallback_agents = get_openai_fallback_agents()
+                    _universal_generator = _fallback_agents["fallback_content_generator"]
+                    
+                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Tier 1 Fallback..." % chunk_idx)
+                    t1_univ_start = time.time()
+                    _log_agent_banner(
+                        agent_name=_universal_generator.name,
+                        model_id=_universal_generator.model.id,
+                        provider="openai (fallback)",
+                        step_name='step_generate_chunks / Tier 1 Universal Fallback (chunk %d)' % chunk_idx,
+                    )
+                    for _ in _universal_generator.run(chunk_prompt, stream=True):
+                        pass
+                    
+                    if os.path.exists(chunk_output_path):
+                        print("[TIMING] Chunk %d Universal Tier 1 fallback: %.1fs" % (chunk_idx, time.time() - t1_univ_start))
+                        
+                        try:
+                            prs = Presentation(chunk_output_path)
+                            clean_presentation_visual_noise_and_contrast(prs)
+                            sanitize_presentation(prs)  # noqa: F405
+                            prs.save(chunk_output_path)
+                        except Exception as clnp_e:
+                            print("[CHUNK %d] Fallback Cleanup failed: %s" % (chunk_idx, clnp_e))
+                            
+                        print("[CHUNK %d TIER1-FALLBACK] Successfully generated via Universal Fallback: %s" % (chunk_idx, chunk_output_path))
+                        return chunk_output_path
+                        
+                except Exception as e_univ:
+                    print("[CHUNK %d TIER1-FALLBACK] Universal OpenAI Fallback failed: %s" % (chunk_idx, str(e_univ)))
+
             continue
 
         # Try to download the generated file from message provider_data
@@ -1663,6 +2094,7 @@ def generate_chunk_pptx(
             try:
                 prs = Presentation(generated_file)
                 clean_presentation_visual_noise_and_contrast(prs)
+                sanitize_presentation(prs)  # noqa: F405
                 prs.save(generated_file)
             except Exception as e:
                 print("[CHUNK %d] Cleanup failed: %s" % (chunk_idx, e))
@@ -1745,9 +2177,10 @@ def generate_chunk_pptx_fallback(
     data with zero network I/O. Always produces a valid .pptx or returns None
     only on an extreme exception (e.g., disk full).
 
-    This is the last tier in the 3-tier fallback hierarchy:
-      Tier 1: Claude PPTX skill (generate_chunk_pptx)
-      Tier 2: LLM code generation (generate_chunk_pptx_v2)
+    This is the last tier in the fallback hierarchy:
+      Tier 1: Primary provider PPTX skill (generate_chunk_pptx)
+      Tier 2: Primary provider LLM code gen (generate_chunk_pptx_v2) 
+              -> Universal 4-step OpenAI fallback on failure
       Tier 3: This function — python-pptx direct, <100ms
 
     Output slides contain title text + bullet points. When a slide's
@@ -1951,6 +2384,7 @@ def generate_chunk_pptx_fallback(
 
         # Clean up empty placeholders and hardcoded contrast issues
         clean_presentation_visual_noise_and_contrast(prs)
+        sanitize_presentation(prs)  # noqa: F405
         prs.save(output_path)
         print(
             "[CHUNK %d FALLBACK] Generated %d slides via python-pptx fallback"
@@ -2029,16 +2463,17 @@ def generate_chunk_pptx_v2(
 
     Brand/style context from session_state["brand_style_intent"] is appended to the
     GLOBAL CONTEXT section of the code generation prompt when branding is present.
-    This guides the LLM to generate python-pptx code that reflects brand-appropriate
-    colors, tone, and terminology.
 
-    This is Tier 2 in the three-tier fallback hierarchy:
-      Tier 1: Claude PPTX skill (generate_chunk_pptx)            — 100% quality
-      Tier 2: LLM code generation (this function)                 — 80-92% quality
-      Tier 3: Text-only python-pptx (generate_chunk_pptx_fallback) — structural only
+    Hierarchy & Fallback Logic:
+    If the primary provider (Claude/Gemini) agents fail, this function engages the
+    Universal OpenAI Fallback layer (Stage 3). The 4-step retry hierarchy is:
+      1. OpenAI Pro (gpt-5.4) WITH visual base64 references
+      2. OpenAI Lite (o3-mini) WITH visual base64 references
+      3. OpenAI Pro WITHOUT visual references (payload stripped)
+      4. OpenAI Lite WITHOUT visual references
 
-    No retries are attempted within this function — callers escalate to Tier 3 on
-    failure. Use generate_chunk_pptx() for retry logic (Tier 1 only).
+    This ensures context limits (TPM/RPM) don't break generation. Only after all
+    4 attempts fail does it escalate to Tier 3 text-only generation.
 
     Args:
         chunk_slides: List of SlideStoryboard objects for this chunk.
@@ -2193,33 +2628,244 @@ def generate_chunk_pptx_v2(
             % (chunk_idx, len(code_gen_prompt))
         )
 
-    # stream=True is required: max_tokens=128000 causes the Anthropic SDK to enforce
-    # streaming for all calls that may take longer than 10 minutes, even without betas.
+    # Append template visual reference section for Tier 2 (if available)
+    template_pngs = session_state.get("template_slide_pngs", {})
+    if template_pngs:
+        visual_ref = _build_visual_reference_section(
+            chunk_slides, template_pngs,
+            brand_style_intent=session_state.get("brand_style_intent"),
+        )
+        if visual_ref:
+            code_gen_prompt += "\n" + visual_ref
+            if VERBOSE:  # noqa: F405
+                print(
+                    "[VERBOSE] Chunk %d Tier 2: appended %d-char visual reference."
+                    % (chunk_idx, len(visual_ref))
+                )
+
+    # === Tier 2 Model Chain: Primary (Sonnet) → Lite (Haiku) → Tier 3 ===
+    # stream=True is required: max_tokens=16384 causes the Anthropic SDK to enforce
+    # streaming for calls that may take longer than 10 minutes.
     # Tier 2 only cares whether the file was created on disk, not about the response
     # content, so we iterate through the stream and discard events.
     t2_start = time.time()
     from agents import get_agents as _get_agents
-    _fallback_agent = _get_agents(session_state.get("llm_provider", "claude")).get("fallback_code_agent")
-    # Register Tier 2 call with rate tracker — claude-haiku-4-5 has its own 50K token/min pool.
+    _all_agents = _get_agents(session_state.get("llm_provider", "claude"))
+    _fallback_agent = _all_agents.get("fallback_code_agent")
+    _fallback_agent_lite = _all_agents.get("fallback_code_agent_lite")
+
+    tier2_success = False
+
+    # --- Stage 1: Primary agent (Sonnet) ---
+    _log_agent_banner(
+        agent_name=getattr(_fallback_agent, 'name', 'PPTX Code Generator'),
+        model_id=getattr(getattr(_fallback_agent, 'model', None), 'id', 'claude-sonnet-4-6'),
+        provider=session_state.get('llm_provider', 'claude'),
+        step_name='step_generate_chunks / Tier 2 Primary (chunk %d)' % chunk_idx,
+    )
     _get_rate_tracker().check_and_wait(
-        model="claude-haiku-4-5",
+        model="claude-sonnet-4-6",
         prompt=code_gen_prompt,
-        caller="generate_chunk_pptx_v2/Tier2",
+        caller="generate_chunk_pptx_v2/Tier2-primary",
     )
     try:
         for _ in _fallback_agent.run(code_gen_prompt, stream=True):
             pass
         t2_elapsed = time.time() - t2_start
         print(
-            "[TIMING] Chunk %d Tier 2 code generation: %.1fs" % (chunk_idx, t2_elapsed)
+            "[TIMING] Chunk %d Tier 2 primary code generation: %.1fs" % (chunk_idx, t2_elapsed)
         )
+        tier2_success = True
     except Exception as e:
         t2_elapsed = time.time() - t2_start
         print(
-            "[CHUNK %d TIER2] Code generation agent failed after %.1fs: %s"
+            "[CHUNK %d TIER2] Primary agent (Sonnet) failed after %.1fs: %s"
             % (chunk_idx, t2_elapsed, str(e))
         )
-        print("[CHUNK %d TIER2] Falling back to Tier 3 (text-only)." % chunk_idx)
+
+    # If primary produced no file, also treat as failure
+    if tier2_success and not os.path.exists(chunk_output_path):
+        print(
+            "[CHUNK %d TIER2] Primary agent ran but produced no file. Trying lite agent..."
+            % chunk_idx
+        )
+        tier2_success = False
+
+    # --- Stage 2: Lite agent (Haiku/GPT-5-mini) — only if primary failed ---
+    if not tier2_success and _fallback_agent_lite is not None:
+        print(
+            "[CHUNK %d TIER2] Retrying with lite agent (%s)..." 
+            % (chunk_idx, getattr(_fallback_agent_lite, 'name', 'Fallback Lite'))
+        )
+        t2_lite_start = time.time()
+        _log_agent_banner(
+            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
+            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'unknown-lite'),
+            provider=session_state.get('llm_provider', 'claude'),
+            step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
+        )
+        
+        # Rate tracking only for Anthropic models
+        if session_state.get("llm_provider", "claude") == "claude":
+            _get_rate_tracker().check_and_wait(
+                model="claude-haiku-4-5",
+                prompt=code_gen_prompt,
+                caller="generate_chunk_pptx_v2/Tier2-lite",
+            )
+            
+        try:
+            for _ in _fallback_agent_lite.run(code_gen_prompt, stream=True):
+                pass
+            t2_lite_elapsed = time.time() - t2_lite_start
+            print(
+                "[TIMING] Chunk %d Tier 2 lite code generation: %.1fs"
+                % (chunk_idx, t2_lite_elapsed)
+            )
+            tier2_success = True
+        except Exception as e2:
+            t2_lite_elapsed = time.time() - t2_lite_start
+            print(
+                "[CHUNK %d TIER2] Lite agent also failed after %.1fs: %s"
+                % (chunk_idx, t2_lite_elapsed, str(e2))
+            )
+
+    # If Lite also produced no file
+    if tier2_success and not os.path.exists(chunk_output_path):
+        print(
+            "[CHUNK %d TIER2] Lite agent ran but produced no file."
+            % chunk_idx
+        )
+        tier2_success = False
+
+    # --- Stage 3: Universal OpenAI Fallback (GPT-5.4 -> o3-mini) ---
+    if not tier2_success:
+        print(
+            "[CHUNK %d TIER2] Primary and Lite agents failed. Engaging Universal OpenAI Fallback..."
+            % chunk_idx
+        )
+        try:
+            from agents.fallback_openai_agents import get_openai_fallback_agents
+            _fallback_agents = get_openai_fallback_agents()
+            _universal_pro = _fallback_agents["fallback_code_agent"]
+            _universal_lite = _fallback_agents["fallback_code_agent_lite"]
+
+            # 1. Try Universal Pro (GPT-5.4) WITH images
+            print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (with visual context)..." % chunk_idx)
+            t2_univ_start = time.time()
+            _log_agent_banner(
+                agent_name=_universal_pro.name,
+                model_id=_universal_pro.model.id,
+                provider="openai (fallback)",
+                step_name='step_generate_chunks / Universal Pro Fallback (chunk %d)' % chunk_idx,
+            )
+            try:
+                for _ in _universal_pro.run(code_gen_prompt, stream=True):
+                    pass
+            except Exception as e_pro:
+                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro failed with visual context: %s" % (chunk_idx, str(e_pro)))
+            
+            if os.path.exists(chunk_output_path):
+                print("[TIMING] Chunk %d Universal Pro fallback: %.1fs" % (chunk_idx, time.time() - t2_univ_start))
+                tier2_success = True
+            else:
+                # 2. Try Universal Lite (o3-mini) WITH images
+                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro produced no file. Attempting o3-mini Lite Fallback (with visual context)..." % chunk_idx)
+                t2_univ_lite_start = time.time()
+                _log_agent_banner(
+                    agent_name=_universal_lite.name,
+                    model_id=_universal_lite.model.id,
+                    provider="openai (fallback)",
+                    step_name='step_generate_chunks / Universal Lite Fallback (chunk %d)' % chunk_idx,
+                )
+                try:
+                    for _ in _universal_lite.run(code_gen_prompt, stream=True):
+                        pass
+                except Exception as e_lite:
+                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite failed with visual context: %s" % (chunk_idx, str(e_lite)))
+                
+                if os.path.exists(chunk_output_path):
+                    print("[TIMING] Chunk %d Universal Lite fallback: %.1fs" % (chunk_idx, time.time() - t2_univ_lite_start))
+                    tier2_success = True
+                    
+            # If both failed with images, strip images and try again
+            if not tier2_success and template_pngs and visual_ref:
+                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Fallbacks failed with visual context. Retrying without images..." % chunk_idx)
+                openai_fallback_code_gen_prompt_stripped = code_gen_prompt.replace("\n" + visual_ref, "")
+                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Stripped %d chars of base-64 visual reference to limit payload." % (chunk_idx, len(visual_ref)))
+
+                # 3. Try Universal Pro (GPT-5.4) WITHOUT images
+                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (stripped context)..." % chunk_idx)
+                t2_univ_stripped_start = time.time()
+                _log_agent_banner(
+                    agent_name=_universal_pro.name,
+                    model_id=_universal_pro.model.id,
+                    provider="openai (fallback)",
+                    step_name='step_generate_chunks / Universal Pro Fallback Stripped (chunk %d)' % chunk_idx,
+                )
+                try:
+                    for _ in _universal_pro.run(openai_fallback_code_gen_prompt_stripped, stream=True):
+                        pass
+                except Exception as e_pro_stripped:
+                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped failed: %s" % (chunk_idx, str(e_pro_stripped)))
+                
+                if os.path.exists(chunk_output_path):
+                    print("[TIMING] Chunk %d Universal Pro fallback stripped: %.1fs" % (chunk_idx, time.time() - t2_univ_stripped_start))
+                    tier2_success = True
+                else:
+                    # 4. Try Universal Lite (o3-mini) WITHOUT images
+                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped produced no file. Attempting o3-mini Lite Fallback (stripped context)..." % chunk_idx)
+                    t2_univ_lite_stripped_start = time.time()
+                    _log_agent_banner(
+                        agent_name=_universal_lite.name,
+                        model_id=_universal_lite.model.id,
+                        provider="openai (fallback)",
+                        step_name='step_generate_chunks / Universal Lite Fallback Stripped (chunk %d)' % chunk_idx,
+                    )
+                    try:
+                        for _ in _universal_lite.run(openai_fallback_code_gen_prompt_stripped, stream=True):
+                            pass
+                    except Exception as e_lite_stripped:
+                        print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite stripped failed: %s" % (chunk_idx, str(e_lite_stripped)))
+                    
+                    if os.path.exists(chunk_output_path):
+                        print("[TIMING] Chunk %d Universal Lite fallback stripped: %.1fs" % (chunk_idx, time.time() - t2_univ_lite_stripped_start))
+                        tier2_success = True
+
+        except Exception as e_univ:
+            print("[CHUNK %d TIER2] Universal OpenAI Fallback failed entirely: %s" % (chunk_idx, str(e_univ)))
+        print(
+            "[CHUNK %d TIER2] Retrying with lite agent (Haiku)..." % chunk_idx
+        )
+        t2_lite_start = time.time()
+        _log_agent_banner(
+            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
+            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'claude-haiku-4-5'),
+            provider=session_state.get('llm_provider', 'claude'),
+            step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
+        )
+        _get_rate_tracker().check_and_wait(
+            model="claude-haiku-4-5",
+            prompt=code_gen_prompt,
+            caller="generate_chunk_pptx_v2/Tier2-lite",
+        )
+        try:
+            for _ in _fallback_agent_lite.run(code_gen_prompt, stream=True):
+                pass
+            t2_lite_elapsed = time.time() - t2_lite_start
+            print(
+                "[TIMING] Chunk %d Tier 2 lite code generation: %.1fs"
+                % (chunk_idx, t2_lite_elapsed)
+            )
+            tier2_success = True
+        except Exception as e2:
+            t2_lite_elapsed = time.time() - t2_lite_start
+            print(
+                "[CHUNK %d TIER2] Lite agent (Haiku) also failed after %.1fs: %s"
+                % (chunk_idx, t2_lite_elapsed, str(e2))
+            )
+
+    if not tier2_success:
+        print("[CHUNK %d TIER2] Both agents failed. Falling back to Tier 3 (text-only)." % chunk_idx)
         return None
 
     # Verify the file was actually written by the executed code
@@ -2228,6 +2874,7 @@ def generate_chunk_pptx_v2(
             prs = Presentation(chunk_output_path)
             # Clean up empty placeholders and hardcoded contrast issues
             clean_presentation_visual_noise_and_contrast(prs)
+            sanitize_presentation(prs)  # noqa: F405
             prs.save(chunk_output_path)
             print(
                 "[CHUNK %d TIER2] Successfully generated via LLM code execution: %s"
@@ -2282,7 +2929,7 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
         print("[ERROR] No storyboard found in session_state.")
         return StepOutput(content="No storyboard found.", success=False)
 
-    chunk_size = session_state.get("chunk_size", 3)
+    chunk_size = session_state.get("chunk_size", 1)
     slides = storyboard.slides
 
     # Build chunk list
@@ -2579,6 +3226,12 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
 
                 from agents import get_agents as _get_agents
                 _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
+                _log_agent_banner(
+                    agent_name=getattr(_image_planner, 'name', 'Image Planner'),
+                    model_id=getattr(getattr(_image_planner, 'model', None), 'id', 'gemini-3-flash-preview'),
+                    provider=session_state.get('llm_provider', 'claude'),
+                    step_name='step_process_chunks / Image Planning (chunk %d)' % chunk_idx,
+                )
                 img_plan_response = _image_planner.run(combined_message, stream=False)
 
                 if img_plan_response and img_plan_response.content:
@@ -2740,6 +3393,14 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
         print(
             "\n[VISUAL REVIEW] Chunk %d: starting review of %s"
             % (chunk_idx, assembled_path)
+        )
+        from agents import get_agents as _get_agents_vr
+        _vr_reviewer = _get_agents_vr(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
+        _log_agent_banner(
+            agent_name=getattr(_vr_reviewer, 'name', 'Senior UI/UX Presentation Designer'),
+            model_id=getattr(getattr(_vr_reviewer, 'model', None), 'id', 'gemini-2.5-flash'),
+            provider=session_state.get('llm_provider', 'claude'),
+            step_name='step_visual_review_chunks / Visual QA (chunk %d)' % chunk_idx,
         )
 
         # Build a per-chunk session_state for the visual review step
@@ -3532,8 +4193,10 @@ def main() -> None:
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=3,
-        help="Number of slides per Claude API chunk call (default: 3).",
+        default=1,
+        help="Number of slides per LLM API chunk call (default: 1). "
+             "Using 1 ensures each chunk sends only the single best-matching "
+             "template slide image, keeping prompts within all model context windows.",
     )
     parser.add_argument(
         "--max-retries",

@@ -78,7 +78,7 @@ python powerpoint_chunked_workflow.py \
 | `--prompt, -p` | Presentation topic prompt | (required) |
 | `--template, -t` | Path to .pptx template file | None |
 | `--output, -o` | Output filename | `presentation_chunked.pptx` |
-| `--chunk-size` | Slides per Claude API call | 3 |
+| `--chunk-size` | Slides per API call | 1 |
 | `--llm-provider` | LLM provider for swappable agents (claude, openai, gemini) | claude |
 | `--max-retries` | Retries per chunk on failure | 2 |
 | `--start-tier` | Starting tier (1=PPTX skill, 2=LLM code, 3=text-only) | 1 |
@@ -98,9 +98,9 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 
 | Agent Role | Claude Mode (`claude`) | OpenAI Mode (`openai`) | Gemini Mode (`gemini`) |
 |------------|------------------------|------------------------|------------------------|
-| **Brand Parse** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Storyboard** | `claude-opus-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Code Fallback** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Brand Parse** | `gpt-4o-mini` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Storyboard** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
 | **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Visual QA** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
 | **Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
@@ -118,13 +118,13 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 | 4 | Visual Review | *(optional)* Gemini vision QA per chunk |
 | 5 | Merge Chunks | OPC-aware merge of all chunk PPTX files into final output |
 
-## 3-Tier Fallback System
+## 3-Tier Fallback System with Universal HA
 
 | Tier | Generator | Quality | Trigger |
 |------|-----------|---------|---------|
 | 1 | Claude PPTX skill | 100% — charts, tables, rich visuals | Primary |
-| 2 | LLM code generation | 80–92% — python-pptx native charts | Timeout >300s or all retries fail |
-| 3 | python-pptx text-only | Structural only | Tier 2 failure |
+| 2 | LLM code generation (OpenAI 4-step fallback on fail) | 80–92% — python-pptx native charts | Timeout >300s or all retries fail |
+| 3 | python-pptx text-only | Structural only | Complete LLM Failure |
 
 ## Brand/Style-Aware Parsing
 
@@ -240,5 +240,6 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Per-slide rendering** | Renders every slide to PNG via PPTX→PDF→PNG pipeline (`pdftoppm`) for visual review |
 | **Background detection** | 6-layer detection (shape → slide → layout → master → theme → large shapes) prevents wrong contrast |
 | **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
-| **Overlap reflow** | Post-transfer overlap detection moves colliding shapes apart and enforces minimum dimensions |
+| **Layout Sanitization** | 3-pass boundary clamping, min size enforcement, and shape overlap reflow |
 | **Template-aware prompts** | Tier 2 LLM prompt includes template constraints (background color, max shapes, text color guidance) |
+| **Single-Slide Visuals** | Injects exactly one 72-DPI template image + full textual theme metadata to precisely recreate styles without hitting 400k token limits |

@@ -32,6 +32,7 @@ AGENT_ROLES = [
     "brand_style_analyzer",
     "query_optimizer",
     "fallback_code_agent",
+    "fallback_code_agent_lite",
     "image_planner",
     "slide_quality_reviewer",
 ]
@@ -46,7 +47,7 @@ def get_agents(provider: str) -> Dict[str, Agent]:
     Returns:
         Dict mapping role name -> Agent instance. Keys are:
             brand_style_analyzer, query_optimizer, fallback_code_agent,
-            image_planner, slide_quality_reviewer.
+            fallback_code_agent_lite, image_planner, slide_quality_reviewer.
 
     Raises:
         ValueError: If provider is not recognized.
