@@ -61,10 +61,14 @@ Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. 
 | Agent Role | Claude (Default) | OpenAI | Gemini |
 |------------|------------------|--------|--------|
 | **Brand Analysis** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Brand Fallback** | `gpt-5-mini` | `gemini-3-flash-preview`| `gpt-4o-mini` |
 | **Storyboard / Plan** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Fallback (Tier 2)** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
+| **Storyboard Fallback**| `gpt-5.2` | `gemini-3-pro-preview` | `gpt-5.2` |
+| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
 | **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Image Plan Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-5-mini` |
 | **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
+| **Visual Review Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Search Tool** | `web_search_20250305` | `web_search_preview`| `search=True` |
 
 *(Note: The core Content Generator (Tier 1) is hard-locked to **Claude Opus** to utilize its native PPTX skill capabilities. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
@@ -96,7 +100,7 @@ When using `--template`, these automatic safeguards protect presentation quality
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
 - **Layout sanitization** — 3-pass boundary clamping, min size enforcement, and shape overlap reflow
 - **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, and layout constraints
-- **Single-Slide Visual References** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
+- **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
 
 Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 

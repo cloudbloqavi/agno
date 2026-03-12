@@ -30,11 +30,17 @@ SUPPORTED_PROVIDERS = list(_PROVIDER_MODULES.keys())
 
 AGENT_ROLES = [
     "brand_style_analyzer",
+    "brand_style_analyzer_fallback",
     "query_optimizer",
+    "query_optimizer_fallback",
     "fallback_code_agent",
+    "fallback_code_agent_fallback",
     "fallback_code_agent_lite",
+    "fallback_code_agent_lite_fallback",
     "image_planner",
+    "image_planner_fallback",
     "slide_quality_reviewer",
+    "slide_quality_reviewer_fallback",
 ]
 
 

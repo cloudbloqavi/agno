@@ -18,6 +18,7 @@ from typing import Dict
 
 from agno.agent import Agent
 from agno.models.google import Gemini
+from agno.models.openai import OpenAIResponses
 from agno.tools.python import PythonTools
 
 from agents._shared import (
@@ -99,11 +100,79 @@ def create_agents() -> Dict[str, Agent]:
         markdown=False,
     )
 
+    brand_style_analyzer_fallback = Agent(
+        name="Brand Style Analyzer (Fallback)",
+        model=OpenAIResponses(id="gpt-5-mini"),
+        description="Fallback agent for Brand Style Analyzer using OpenAI in case of rate limits or errors.",
+        instructions=BRAND_STYLE_ANALYZER_INSTRUCTIONS,
+        tools=[{"type": "web_search_preview"}],
+        output_schema=BrandStyleIntent,
+        markdown=False,
+    )
+
+    query_optimizer_fallback = Agent(
+        name="Presentation Strategist (Fallback)",
+        model=OpenAIResponses(id="gpt-5.2"),
+        description="Fallback agent for Presentation Strategist using OpenAI in case of rate limits or errors.",
+        tools=[{"type": "web_search_preview"}],
+        markdown=False,
+    )
+
+    fallback_code_agent_fallback = Agent(
+        name="PPTX Code Generator (Fallback)",
+        model=OpenAIResponses(id="gpt-5.2"),
+        description="Fallback agent for PPTX Code Generator using OpenAI in case of rate limits or errors.",
+        instructions=PPTX_CODE_GEN_INSTRUCTIONS,
+        tools=[
+            PythonTools(
+                base_dir=Path("."),
+            )
+        ],
+        markdown=False,
+    )
+
+    fallback_code_agent_lite_fallback = Agent(
+        name="PPTX Code Generator (Lite Fallback)",
+        model=OpenAIResponses(id="gpt-5-mini"),
+        description="Fallback agent for PPTX Code Generator (Lite) using OpenAI in case of rate limits or errors.",
+        instructions=PPTX_CODE_GEN_INSTRUCTIONS,
+        tools=[
+            PythonTools(
+                base_dir=Path("."),
+            )
+        ],
+        markdown=False,
+    )
+
+    image_planner_fallback = Agent(
+        name="Image Planner (Fallback)",
+        model=OpenAIResponses(id="gpt-5-mini"),
+        description="Fallback agent for Image Planner using OpenAI in case of rate limits or errors.",
+        instructions=IMAGE_PLANNER_INSTRUCTIONS,
+        output_schema=ImagePlan,
+        markdown=False,
+    )
+
+    slide_quality_reviewer_fallback = Agent(
+        name="Senior UI/UX Presentation Designer (Fallback)",
+        model=OpenAIResponses(id="gpt-5-mini"),
+        description="Fallback agent for UI/UX Presentation Designer using OpenAI in case of rate limits or errors.",
+        instructions=SLIDE_QUALITY_REVIEWER_INSTRUCTIONS,
+        output_schema=SlideQualityReport,
+        markdown=False,
+    )
+
     return {
         "brand_style_analyzer": brand_style_analyzer,
+        "brand_style_analyzer_fallback": brand_style_analyzer_fallback,
         "query_optimizer": query_optimizer,
+        "query_optimizer_fallback": query_optimizer_fallback,
         "fallback_code_agent": fallback_code_agent,
+        "fallback_code_agent_fallback": fallback_code_agent_fallback,
         "fallback_code_agent_lite": fallback_code_agent_lite,
+        "fallback_code_agent_lite_fallback": fallback_code_agent_lite_fallback,
         "image_planner": image_planner,
+        "image_planner_fallback": image_planner_fallback,
         "slide_quality_reviewer": slide_quality_reviewer,
+        "slide_quality_reviewer_fallback": slide_quality_reviewer_fallback,
     }

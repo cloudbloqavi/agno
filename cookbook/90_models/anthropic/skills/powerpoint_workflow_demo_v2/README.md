@@ -99,10 +99,14 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 | Agent Role | Claude Mode (`claude`) | OpenAI Mode (`openai`) | Gemini Mode (`gemini`) |
 |------------|------------------------|------------------------|------------------------|
 | **Brand Parse** | `gpt-4o-mini` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Brand Parse Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-4o-mini` |
 | **Storyboard** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
+| **Storyboard Fallback**| `gpt-5.2` | `gemini-3-pro-preview` | `gpt-5.2` |
 | **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
 | **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Image Plan Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-5-mini` |
 | **Visual QA** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
+| **Visual QA Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
 
 *\* Note: Even in `claude` mode, Image Planning and Visual QA explicitly default to Gemini models because Anthropic models lack the requisite API multimodal features.*
@@ -242,4 +246,4 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
 | **Layout Sanitization** | 3-pass boundary clamping, min size enforcement, and shape overlap reflow |
 | **Template-aware prompts** | Tier 2 LLM prompt includes template constraints (background color, max shapes, text color guidance) |
-| **Single-Slide Visuals** | Injects exactly one 72-DPI template image + full textual theme metadata to precisely recreate styles without hitting 400k token limits |
+| **Single-Slide Visuals (Base64 Image Reference)** | Injects exactly one 72-DPI template image (base64 encoded) + full textual theme metadata to precisely recreate styles without hitting 400k token limits |

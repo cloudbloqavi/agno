@@ -5777,17 +5777,33 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
 
     # Lazily load agent: do not use session_state["agents"] to avoid deepcopy failures.
     from agents import get_agents as _get_agents
-    _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
+    _provider = session_state.get("llm_provider", "claude")
+    _image_planner = _get_agents(_provider).get("image_planner")
+    _image_planner_fallback = _get_agents(_provider).get("image_planner_fallback")
+    
     try:
         response = _image_planner.run(combined_message, stream=False)
     except Exception as e:
-        print("[ERROR] Image planner failed: %s" % str(e))
-        if VERBOSE:
-            traceback.print_exc()
-        return StepOutput(
-            content=json.dumps({"decisions": []}),
-            success=True,
-        )
+        print("[WARNING] Image planner failed on primary agent: %s" % str(e))
+        if _image_planner_fallback:
+            print("[FALLBACK TRIGGERED] Engaging fallback image planner...")
+            try:
+                response = _image_planner_fallback.run(combined_message, stream=False)
+            except Exception as fallback_e:
+                print("[ERROR] Fallback Image planner failed: %s" % str(fallback_e))
+                if VERBOSE:
+                    traceback.print_exc()
+                return StepOutput(
+                    content=json.dumps({"decisions": []}),
+                    success=True,
+                )
+        else:
+            if VERBOSE:
+                traceback.print_exc()
+            return StepOutput(
+                content=json.dumps({"decisions": []}),
+                success=True,
+            )
 
     # Extract the structured output
     if response and response.content:
@@ -8011,12 +8027,31 @@ def step_visual_quality_review(
                     format="png",
                 )
                 from agents import get_agents as _get_agents
-                _slide_reviewer = _get_agents(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
-                response = _slide_reviewer.run(
-                    prompt,
-                    images=[slide_image_obj],
-                    stream=False,
-                )
+                _provider = session_state.get("llm_provider", "claude")
+                _slide_reviewer = _get_agents(_provider).get("slide_quality_reviewer")
+                _slide_reviewer_fallback = _get_agents(_provider).get("slide_quality_reviewer_fallback")
+                
+                try:
+                    response = _slide_reviewer.run(
+                        prompt,
+                        images=[slide_image_obj],
+                        stream=False,
+                    )
+                except Exception as e:
+                    print("[WARNING] Vision agent failed on primary agent: %s" % str(e))
+                    if _slide_reviewer_fallback:
+                        print("[FALLBACK TRIGGERED] Engaging fallback vision agent...")
+                        try:
+                            response = _slide_reviewer_fallback.run(
+                                prompt,
+                                images=[slide_image_obj],
+                                stream=False,
+                            )
+                        except Exception as fallback_e:
+                            print("[ERROR] Fallback vision agent failed: %s" % str(fallback_e))
+                            response = None
+                    else:
+                        response = None
 
                 if response and response.content:
                     content = response.content

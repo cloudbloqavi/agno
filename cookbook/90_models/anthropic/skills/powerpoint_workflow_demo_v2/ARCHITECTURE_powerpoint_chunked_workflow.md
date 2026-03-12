@@ -162,29 +162,29 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 **Table 1.1: Claude Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `web_search_20250305` | 200,000 max context |
+| 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback) | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback) | `web_search_20250305` | 200,000 max context |
 | 3 | **Chunk Generator** | `claude-opus-4-6` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
-| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 **Table 1.2: OpenAI Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gpt-5-mini` | OpenAI JSON Output | 128,000 max context (Standard Mini) |
-| 2 | **Query Optimizer** | `gpt-5.2` | `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 1 | **Brand Style Analyzer** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| OpenAI JSON Output | 128,000 max context (Standard Mini) |
+| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3-pro-preview` (fallback)| `web_search_preview` | 400,000 max context, 128,000 output limit |
 | 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gpt-5-mini` | Structured Schema output | 128,000 max context |
-| 5 | **Slide Quality Reviewer** | `gpt-5-mini` | LibreOffice Vision QA | 128,000 max context |
+| 4 | **Image Planner** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| Structured Schema output | 128,000 max context |
+| 5 | **Slide Quality Reviewer** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| LibreOffice Vision QA | 128,000 max context |
 
 **Table 1.3: Gemini Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` | `search=True` | 1,000,000 max context |
-| 2 | **Query Optimizer** | `gemini-3-pro-preview` | `search=True` | 1,000,000 max context |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `search=True` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3-pro-preview` / `gpt-5.2` (fallback)| `search=True` | 1,000,000 max context |
 | 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
-| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 *\* Note: The Chunk Generator for Tier 1 is locked to Anthropic's Claude even if the global provider is set to `openai` or `gemini`, because it strictly relies on Claude's exclusive native `pptx` skill.*
 
@@ -205,29 +205,29 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 **Table 2.1: Claude Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gpt-4o-mini` | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` | `web_search_20250305` | 200,000 max context |
+| 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback)| OpenAI JSON Output | 128,000 max context, 16,384 output limit |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback)| `web_search_20250305` | 200,000 max context |
 | 3 | **PPTX Code Generator** | `claude-sonnet-4-6` & `haiku` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
-| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 **Table 2.2: OpenAI Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gpt-5-mini` | OpenAI JSON Output | 128,000 max context |
-| 2 | **Query Optimizer** | `gpt-5.2` | `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 1 | **Brand Style Analyzer** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| OpenAI JSON Output | 128,000 max context |
+| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3-pro-preview` (fallback)| `web_search_preview` | 400,000 max context, 128,000 output limit |
 | 3 | **PPTX Code Generator** | `gpt-5.2` & `gpt-5-mini` | `PythonTools` | 400,000 max context |
-| 4 | **Image Planner** | `gpt-5-mini` | Structured Schema output | 128,000 max context |
-| 5 | **Slide Quality Reviewer** | `gpt-5-mini` | LibreOffice Vision QA | 128,000 max context |
+| 4 | **Image Planner** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| Structured Schema output | 128,000 max context |
+| 5 | **Slide Quality Reviewer** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| LibreOffice Vision QA | 128,000 max context |
 
 **Table 2.3: Gemini Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` | `search=True` | 1,000,000 max context |
-| 2 | **Query Optimizer** | `gemini-3-pro-preview` | `search=True` | 1,000,000 max context |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `search=True` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3-pro-preview` / `gpt-5.2` (fallback)| `search=True` | 1,000,000 max context |
 | 3 | **PPTX Code Generator** | `gemini-3-pro-preview` & `flash` | `PythonTools` | 1,000,000 max context |
-| 4 | **Image Planner** | `gemini-3-flash-preview` | Structured Schema output | 1,000,000 max context |
-| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` | LibreOffice Vision QA | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 ### Tier 3: python-pptx Direct (Last Resort)
 
@@ -1110,6 +1110,13 @@ def build_chunked_workflow(session_state: Dict) -> Workflow:
     return Workflow(name="Chunked PPTX Workflow", steps=steps, session_state=session_state)
 ```
 
+
+### Concurrent Execution & API Staggering
+
+To optimize total execution time, `powerpoint_chunked_workflow.py` utilizes asynchronous processing via `asyncio.gather` and `asyncio.to_thread`.
+1. **Chunk Generation Concurrency:** `step_generate_chunks` processes all chunk components simultaneously. To prevent `429 Too Many Requests` API errors, thread initiation is staggered sequentially based on `--inter-chunk-delay-min` and `--inter-chunk-delay-max` arguments (defaults are 2s-5s for Claude Tier 2).
+2. **Visual Review Concurrency:** `step_visual_review_chunks` assesses all assembled chunk PPTX files concurrently. Each chunk independently loops through its visual QA iterations without blocking the validation of other chunks.
+
 ### Interim File Preservation
 
 Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or `shutil.rmtree()` on chunk files anywhere in the chunked workflow. Files accumulate in `output_chunked/chunked_workflow_work/` across runs. This is intentional: interim files are useful for debugging failed chunks and can be inspected directly.
@@ -1133,11 +1140,11 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 **Global HA — Universal OpenAI Fallback:**
 - `fallback_content_generator`, `fallback_code_agent`, `fallback_code_agent_lite`: OpenAI `gpt-5.4` and `o3-mini`
 - Seamlessly processes payloads intended for Tier 1 or Tier 2 if the primary Anthropic/Gemini provider locks out due to traffic.
-- **4-Step Context Stripping Hierarchy:** To bypass strict OpenAI token limits (e.g., 400k TPM) when dealing with visual templates, the fallback executes a rigorous cascade:
-  1. `gpt-5.4` (Pro) WITH 72-DPI visual template references
-  2. `o3-mini` (Lite) WITH 72-DPI visual template references
-  3. `gpt-5.4` (Pro) STRIPPED of visual references (text-only prompt)
-  4. `o3-mini` (Lite) STRIPPED of visual references (text-only prompt)
+- **4-Step Context Stripping Hierarchy (Base64 Image Reference Handling):** To bypass strict OpenAI token limits (e.g., 400k TPM) when dealing with visual templates, the fallback executes a rigorous cascade regarding the base64 image references:
+  1. `gpt-5.4` (Pro) WITH 72-DPI visual template references (base64 encoded images)
+  2. `o3-mini` (Lite) WITH 72-DPI visual template references (base64 encoded images)
+  3. `gpt-5.4` (Pro) STRIPPED of visual base64 image references (text-only prompt)
+  4. `o3-mini` (Lite) STRIPPED of visual base64 image references (text-only prompt)
 
 **Tier 2 — LLM code generation:**
 - `fallback_code_agent`: Claude `claude-sonnet-4-6` & `haiku` + `PythonTools`

@@ -101,8 +101,8 @@ step_visual_quality_review()
 | Property | Value |
 |----------|-------|
 | **File** | `agents/` package |
-| **Variable** | `image_planner` |
-| **Model** | Swappable: Gemini `gemini-3-flash-preview`, OpenAI `gpt-5-mini` |
+| **Variable** | `image_planner` (primary), `image_planner_fallback` (fallback) |
+| **Model** | Swappable: Gemini `gemini-3-flash-preview`, OpenAI `gpt-5-mini` (with cross-provider fallback configurations) |
 | **Output Schema** | `ImagePlan` → list of `SlideImageDecision` (Pydantic structured output) |
 | **Purpose** | Reviews each slide's content summary and decides which slides benefit from AI-generated images. Outputs per-slide yes/no + image prompt + reasoning. |
 | **Decision rules** | Title slides: usually YES · Data slides (tables/charts): usually NO · Slides with existing images: ALWAYS NO · Closing slides: usually NO |
@@ -112,8 +112,8 @@ step_visual_quality_review()
 | Property | Value |
 |----------|-------|
 | **File** | `agents/` package |
-| **Variable** | `slide_quality_reviewer` |
-| **Model** | Swappable: Gemini `gemini-2.5-flash`, OpenAI `gpt-5-mini` (vision) |
+| **Variable** | `slide_quality_reviewer` (primary), `slide_quality_reviewer_fallback` (fallback) |
+| **Model** | Swappable: Gemini `gemini-2.5-flash`, OpenAI `gpt-5-mini` (with cross-provider fallback configurations) |
 | **Output Schema** | `SlideQualityReport` → per-slide assessment with `ShapeIssue` list |
 | **Purpose** | Inspects rendered slide PNGs for visual defects. Reports issues with severity (critical/moderate/minor) and suggests programmatic fixes. |
 | **Correction scope** | Auto-fixes: `low_contrast`, `ghost_text`, `empty_placeholder`, `text_overflow` · Detect-only: visual blandness · Deferred: `overlap` repositioning |
@@ -155,8 +155,10 @@ Agents communicate **indirectly** via `session_state`, a shared dictionary:
 | Fallback Agent (Tier 2) | `PythonTools` | Swappable | Execute generated python-pptx + matplotlib |
 | Brand Analyzer | `web_search` or `search=True` | Swappable | Research brand guidelines (max 2 uses) |
 | Query Optimizer | `web_search` or `search=True` | Swappable | Research topic for storyboard (max 5 uses) |
-| Image Planner | (structured output only) | Swappable | No tools — uses Pydantic output schema |
-| Quality Reviewer | (vision input only) | Swappable | No tools — processes PNG images |
+| Image Planner (Primary) | (structured output only) | Swappable | No tools — uses Pydantic output schema |
+| Image Planner (Fallback) | (structured output only) | Swappable | Cross-provider fallback (e.g., Claude uses Gemini fallback) |
+| Quality Reviewer (Primary) | (vision input only) | Swappable | No tools — processes PNG images |
+| Quality Reviewer (Fallback) | (vision input only) | Swappable | Cross-provider fallback vision QA |
 
 ---
 

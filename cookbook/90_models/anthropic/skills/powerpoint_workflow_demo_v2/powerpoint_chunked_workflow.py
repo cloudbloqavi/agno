@@ -70,9 +70,11 @@ Key Agents (all except Content Generator are swappable via --llm-provider):
   brand_style_analyzer  - Default: Claude Sonnet + web_search (max 2); detects and enriches brand intent.
                           OpenAI: gpt-5-mini + web_search_preview
                           Gemini: gemini-3-flash-preview + search=True
+                          (Fallback: brand_style_analyzer_fallback uses a complementary provider model)
   query_optimizer       - Default: Claude Opus + web_search (max 5); creates researched storyboard.
                           OpenAI: gpt-5.2 + web_search_preview
                           Gemini: gemini-3-pro-preview + search=True
+                          (Fallback: query_optimizer_fallback uses a complementary provider model)
   fallback_code_agent   - Default: Claude Sonnet + PythonTools; Tier 2 code generation primary.
                           OpenAI: gpt-5.2 + PythonTools
                           Gemini: gemini-3-pro-preview + PythonTools
@@ -81,8 +83,10 @@ Key Agents (all except Content Generator are swappable via --llm-provider):
                           Gemini: gemini-3-flash-preview + PythonTools
   image_planner         - Default: Gemini gemini-3-flash-preview; per-slide image decisions.
                           OpenAI: gpt-5-mini
+                          (Fallback: image_planner_fallback uses a complementary provider model)
   slide_quality_reviewer- Default: Gemini 2.5 Flash; visual defect detection + correction.
                           OpenAI: gpt-5-mini
+                          (Fallback: slide_quality_reviewer_fallback uses a complementary provider model)
   (LOCKED)              - chunk_agent + content_agent always use Claude (native PPTX skill dep.)
 
 Prerequisites:
@@ -196,6 +200,7 @@ Logging conventions:
 """
 
 import argparse
+import asyncio
 import concurrent.futures
 import copy
 import json
@@ -241,6 +246,13 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field
+
+# Default inter-chunk delays in milliseconds based on Tier 2 / Pay-as-you-go rate limits
+DEFAULT_INTER_CHUNK_DELAYS_MS = {
+    "claude": {"min": 2000, "max": 5000},   # 1K RPM, 450K TPM
+    "openai": {"min": 1000, "max": 2000},   # 5K RPM, 2M TPM
+    "gemini": {"min": 1000, "max": 2000},   # 1-2K RPM, multi-million TPM
+}
 
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
 
@@ -391,13 +403,13 @@ def _countdown_sleep(seconds: float, label: str = "[GENERATE]") -> None:
 def _inter_chunk_sleep(
     chunk_idx: int,
     total_chunks: int,
-    min_delay: float = 60.0,
-    max_delay: float = 120.0,
+    min_delay: float = 2000.0,
+    max_delay: float = 5000.0,
     rate_limit_hit: bool = False,
 ) -> None:
-    """Sleep a random delay between chunks to respect Anthropic rate limits.
+    """Sleep a random delay between chunks to respect provider rate limits.
 
-    Uses a random value in [min_delay, max_delay] seconds.  When a 429 rate-limit
+    Uses a random value in [min_delay, max_delay] milliseconds. When a 429 rate-limit
     error was encountered in the current chunk, forces `max_delay` immediately.
 
     Logs a header line, a live countdown through `_countdown_sleep`, and a
@@ -406,8 +418,8 @@ def _inter_chunk_sleep(
     Args:
         chunk_idx:       0-based index of the chunk just completed.
         total_chunks:    Total number of chunks in the run.
-        min_delay:       Lower bound of random delay range (default 60s).
-        max_delay:       Upper bound of random delay range (default 120s).
+        min_delay:       Lower bound of random delay range in ms (default 2000).
+        max_delay:       Upper bound of random delay range in ms (default 5000).
         rate_limit_hit:  If True, skip the random choice and use max_delay.
     """
     if rate_limit_hit:
@@ -415,13 +427,15 @@ def _inter_chunk_sleep(
         reason = "(max delay — rate limit hit)"
     else:
         delay = random.uniform(min_delay, max_delay)
-        reason = "(rate limit safety jitter: %.0f–%.0fs range)" % (min_delay, max_delay)
+        reason = "(rate limit safety jitter: %.0f–%.0fms range)" % (min_delay, max_delay)
+
+    delay_sec = delay / 1000.0
 
     print(
         "[GENERATE] --- Inter-chunk delay before Chunk %d/%d: %.1fs %s ---"
-        % (chunk_idx + 2, total_chunks, delay, reason)
+        % (chunk_idx + 2, total_chunks, delay_sec, reason)
     )
-    _countdown_sleep(delay, label="[GENERATE]")
+    _countdown_sleep(delay_sec, label="[GENERATE]")
     print(
         "[GENERATE] Inter-chunk delay complete. Resuming Chunk %d/%d."
         % (chunk_idx + 2, total_chunks)
@@ -821,7 +835,9 @@ def _build_visual_reference_section(
 # === BRAND/STYLE HELPER FUNCTIONS ===
 
 
-def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "BrandStyleIntent":
+def parse_brand_style_intent(
+    user_prompt: str, brand_agent: "Agent" = None, brand_agent_fallback: "Agent" = None
+) -> "BrandStyleIntent":
     """Extract branding/styling intent from the user query via a two-stage approach.
 
     Stage 1 — Keyword pre-check (zero cost, zero tokens):
@@ -935,12 +951,44 @@ def parse_brand_style_intent(user_prompt: str, brand_agent: "Agent" = None) -> "
                 if intent.tone_override:
                     print("[BRAND] Tone override: '%s'" % intent.tone_override)
             else:
-                print("[BRAND] No branding intent confirmed by gpt-4o-mini.")
+                print("[BRAND] No branding intent confirmed by primary agent.")
 
             return intent
 
     except Exception as e:
-        print("[WARNING] Brand style analysis failed: %s" % str(e))
+        print("[WARNING] Primary brand style analysis failed: %s" % str(e))
+        if brand_agent_fallback is not None:
+            print("[BRAND] Attempting fallback brand style analysis...")
+            try:
+                _log_agent_banner(
+                    agent_name=getattr(brand_agent_fallback, 'name', 'Brand Style Analyzer (Fallback)'),
+                    model_id=getattr(getattr(brand_agent_fallback, 'model', None), 'id', 'unknown'),
+                    provider='Fallback',
+                    step_name='step_optimize_and_plan / Brand Parse (Fallback)',
+                )
+                response = brand_agent_fallback.run(user_prompt, stream=False)
+                
+                if response and response.content:
+                    content = response.content
+                    if isinstance(content, BrandStyleIntent):
+                        intent = content
+                    elif isinstance(content, dict):
+                        intent = BrandStyleIntent(**content)
+                    elif isinstance(content, BaseModel):
+                        intent = BrandStyleIntent(**content.model_dump())
+                    else:
+                        text = str(content).strip()
+                        fence = _re.search(r"```(?:json)?\s*([\s\S]+?)```", text)
+                        if fence:
+                            text = fence.group(1).strip()
+                        obj = _re.search(r"\{[\s\S]+\}", text)
+                        if obj:
+                            text = obj.group(0)
+                        intent = BrandStyleIntent.model_validate_json(text)
+                    return intent
+            except Exception as fallback_e:
+                print("[WARNING] Fallback brand style analysis failed: %s" % str(fallback_e))
+        
         if VERBOSE:  # noqa: F405
             traceback.print_exc()
 
@@ -1336,7 +1384,11 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     _provider = session_state.get("llm_provider", "claude")
     agents = _get_agents(_provider)
-    query_brand_intent = parse_brand_style_intent(user_prompt, brand_agent=agents.get("brand_style_analyzer"))
+    query_brand_intent = parse_brand_style_intent(
+        user_prompt, 
+        brand_agent=agents.get("brand_style_analyzer"),
+        brand_agent_fallback=agents.get("brand_style_analyzer_fallback")
+    )
     brand_intent = query_brand_intent  # default: use query-derived intent
 
     if template_path and os.path.isfile(template_path):
@@ -1492,17 +1544,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         
         if is_capacity_error:
             provider = session_state.get("llm_provider", "claude")
-            print("\n[OPENAI FALLBACK TRIGGERED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
-            print("[OPENAI FALLBACK TRIGGERED] Engaging Universal OpenAI Fallback (gpt-5.4) for storyboard generation...")
+            print("\n[FALLBACK TRIGGERED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
+            print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
             try:
-                from agents.fallback_openai_agents import get_openai_fallback_agents
-                _fallback_agents = get_openai_fallback_agents()
-                _fallback_query_optimizer = _fallback_agents["fallback_query_optimizer"]
+                from agents import get_agents as _get_agents
+                _fallback_query_optimizer = _get_agents(provider).get("query_optimizer_fallback")
                 
+                if not _fallback_query_optimizer:
+                    raise ValueError("No fallback defined for query_optimizer")
+
                 _log_agent_banner(
-                    agent_name=getattr(_fallback_query_optimizer, 'name', 'Universal Presentation Strategist (Fallback)'),
-                    model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'gpt-5.4'),
-                    provider="openai",
+                    agent_name=getattr(_fallback_query_optimizer, 'name', 'Presentation Strategist (Fallback)'),
+                    model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'unknown'),
+                    provider="Fallback",
                     step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
                 )
                 
@@ -1531,17 +1585,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # Therefore, we must also apply the fallback logic if response is None after execution.
     if response is None:
         provider = session_state.get("llm_provider", "claude")
-        print("\n[OPENAI FALLBACK TRIGGERED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
-        print("[OPENAI FALLBACK TRIGGERED] Engaging Universal OpenAI Fallback (gpt-5.4) for storyboard generation...")
+        print("\n[FALLBACK TRIGGERED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
+        print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
         try:
-            from agents.fallback_openai_agents import get_openai_fallback_agents
-            _fallback_agents = get_openai_fallback_agents()
-            _fallback_query_optimizer = _fallback_agents["fallback_query_optimizer"]
+            from agents import get_agents as _get_agents
+            _fallback_query_optimizer = _get_agents(provider).get("query_optimizer_fallback")
+            
+            if not _fallback_query_optimizer:
+                raise ValueError("No fallback defined for query_optimizer")
             
             _log_agent_banner(
-                agent_name=getattr(_fallback_query_optimizer, 'name', 'Universal Presentation Strategist (Fallback)'),
-                model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'gpt-5.4'),
-                provider="openai",
+                agent_name=getattr(_fallback_query_optimizer, 'name', 'Presentation Strategist (Fallback)'),
+                model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'unknown'),
+                provider="Fallback",
                 step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
             )
             
@@ -2953,7 +3009,7 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
     total_chunks = len(chunks)
     start_tier = session_state.get("start_tier", 1)
 
-    for chunk_idx, chunk_slides in enumerate(chunks):
+    def _process_chunk(chunk_idx: int, chunk_slides: List[SlideStoryboard]):
         chunk_start = time.time()
         print(
             "[GENERATE] Chunk %d/%d: slides %d-%d"
@@ -2966,8 +3022,6 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
         )
 
         # Determine effective starting tier for this chunk
-        # If use_fallback_generator flag is set (Tier 1 failed in a previous chunk),
-        # effective tier is max(start_tier, 2) to skip Tier 1 permanently.
         effective_tier = (
             max(start_tier, 2)
             if session_state.get("use_fallback_generator")
@@ -3052,26 +3106,39 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                 )
             )
 
-        chunk_files.append(chunk_file)
+        # Handle rate limit flags per chunk to allow future jitter adjustments
+        rate_limit_hit_this_chunk = bool(session_state.get("rate_limit_hit", False))
+        if rate_limit_hit_this_chunk:
+            session_state["rate_limit_hit"] = False
 
-        if chunk_file:
-            successful += 1
+        return chunk_idx, chunk_file
 
-        # Inter-chunk delay (not for last chunk) — random 60-120s to respect the
-        # Anthropic 30K input-token/min rolling window.  When a 429 rate-limit was
-        # hit, force max_delay and reset the rate_limit_hit flag.
-        if chunk_idx < total_chunks - 1:
-            rate_limit_hit_this_chunk = bool(session_state.get("rate_limit_hit", False))
-            if rate_limit_hit_this_chunk:
-                # Reset for the next chunk; the inter-chunk delay will compensate.
-                session_state["rate_limit_hit"] = False
-            _inter_chunk_sleep(
-                chunk_idx=chunk_idx,
-                total_chunks=total_chunks,
-                min_delay=float(session_state.get("inter_chunk_delay_min", 60.0)),
-                max_delay=float(session_state.get("inter_chunk_delay_max", 120.0)),
-                rate_limit_hit=rate_limit_hit_this_chunk,
-            )
+    async def _generate_all_chunks_async():
+        tasks = []
+        for chunk_idx, chunk_slides in enumerate(chunks):
+            # Stagger chunk initiation to spread out API requests
+            if chunk_idx > 0:
+                min_del = float(session_state.get("inter_chunk_delay_min", 2000.0))
+                max_del = float(session_state.get("inter_chunk_delay_max", 5000.0))
+                delay_sec = random.uniform(min_del, max_del) / 1000.0
+                print(
+                    "[GENERATE] --- Stagger delay before Chunk %d/%d: %.1fs ---"
+                    % (chunk_idx + 1, total_chunks, delay_sec)
+                )
+                await asyncio.sleep(delay_sec)
+            
+            # Execute the heavy synchronous chunk generation in a background thread
+            tasks.append(asyncio.to_thread(_process_chunk, chunk_idx, chunk_slides))
+            
+        return await asyncio.gather(*tasks)
+
+    # Run the async chunk generation process concurrently
+    results = asyncio.run(_generate_all_chunks_async())
+    
+    # Reassemble results ensuring original order
+    results.sort(key=lambda x: x[0])
+    chunk_files = [res[1] for res in results]
+    successful = sum(1 for f in chunk_files if f is not None)
 
     session_state["chunk_files"] = chunk_files
     session_state["chunk_slide_groups"] = chunks
@@ -3379,7 +3446,7 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
     max_passes = session_state.get("visual_passes", 3)
     reviewed_chunks: Dict[int, Optional[str]] = {}
 
-    for chunk_idx, assembled_path in sorted(processed_chunks.items()):
+    def _review_chunk(chunk_idx: int, assembled_path: str):
         chunk_review_start = time.time()
 
         if assembled_path is None or not os.path.isfile(assembled_path):
@@ -3387,8 +3454,7 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
                 "[VISUAL] Chunk %d: skipped (file not found: %s)."
                 % (chunk_idx, assembled_path)
             )
-            reviewed_chunks[chunk_idx] = None
-            continue
+            return chunk_idx, None
 
         print(
             "\n[VISUAL REVIEW] Chunk %d: starting review of %s"
@@ -3503,16 +3569,27 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
                 )
                 break
 
-        reviewed_chunks[chunk_idx] = chunk_session.get("output_path", current_path)
-
+        reviewed_path = chunk_session.get("output_path", current_path)
         chunk_review_elapsed = time.time() - chunk_review_start
         print(
             "[TIMING] Chunk %d total review: %.1fs" % (chunk_idx, chunk_review_elapsed)
         )
         print(
             "[VISUAL REVIEW] Chunk %d: reviewed -> %s"
-            % (chunk_idx, reviewed_chunks[chunk_idx])
+            % (chunk_idx, reviewed_path)
         )
+        return chunk_idx, reviewed_path
+
+    async def _review_all_chunks_async():
+        tasks = []
+        for chunk_idx, assembled_path in sorted(processed_chunks.items()):
+            tasks.append(asyncio.to_thread(_review_chunk, chunk_idx, assembled_path))
+        return await asyncio.gather(*tasks)
+
+    results = asyncio.run(_review_all_chunks_async())
+    
+    for c_idx, r_path in results:
+        reviewed_chunks[c_idx] = r_path
 
     session_state["reviewed_chunks"] = reviewed_chunks
     reviewed_count = sum(1 for v in reviewed_chunks.values() if v is not None)
@@ -4226,21 +4303,20 @@ def main() -> None:
     parser.add_argument(
         "--inter-chunk-delay-min",
         type=float,
-        default=60.0,
-        metavar="SECS",
+        default=None,
+        metavar="MS",
         help=(
-            "Minimum inter-chunk delay in seconds (default: 60). "
-            "A random value in [min, max] is chosen between each chunk "
-            "to respect the Anthropic 30K input-token/minute rate limit."
+            "Minimum inter-chunk delay in milliseconds (default: provider-specific). "
+            "A random value in [min, max] is chosen between each chunk."
         ),
     )
     parser.add_argument(
         "--inter-chunk-delay-max",
         type=float,
-        default=120.0,
-        metavar="SECS",
+        default=None,
+        metavar="MS",
         help=(
-            "Maximum inter-chunk delay in seconds (default: 120). "
+            "Maximum inter-chunk delay in milliseconds (default: provider-specific). "
             "When a 429 rate-limit error is detected, max_delay is used directly."
         ),
     )
@@ -4300,8 +4376,15 @@ def main() -> None:
         "[RATE TRACKER] Rate limit tracker initialised. "
         "Claude model limits: sonnet=30K, opus=30K, haiku=50K input tokens/min."
     )
+    # Apply provider-specific millisecond defaults if not set
+    provider_delays = DEFAULT_INTER_CHUNK_DELAYS_MS.get(args.llm_provider, DEFAULT_INTER_CHUNK_DELAYS_MS["claude"])
+    if args.inter_chunk_delay_min is None:
+        args.inter_chunk_delay_min = provider_delays["min"]
+    if args.inter_chunk_delay_max is None:
+        args.inter_chunk_delay_max = provider_delays["max"]
+
     print(
-        "[RATE TRACKER] Inter-chunk delay: random %.0f–%.0fs "
+        "[RATE TRACKER] Inter-chunk logic set to: random %.0f–%.0f ms "
         "(override with --inter-chunk-delay-min / --inter-chunk-delay-max)."
         % (args.inter_chunk_delay_min, args.inter_chunk_delay_max)
     )
