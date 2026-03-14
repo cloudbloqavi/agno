@@ -397,8 +397,8 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
 | `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill (opus), 2=LLM code gen (sonnet/haiku), 3=text-only |
 | `--verbose` / `-v` | Verbose/debug logging | Off | |
-| `--inter-chunk-delay-min` | Minimum random delay between chunks | 60 | |
-| `--inter-chunk-delay-max` | Maximum random delay between chunks | 120 | |
+| `--inter-chunk-delay-min` | Minimum random delay between chunks (ms) | Provider Specific | |
+| `--inter-chunk-delay-max` | Maximum random delay between chunks (ms) | Provider Specific | |
 | `--no-web-search` | Disable web search | Off | |
 
 ### Quick Example

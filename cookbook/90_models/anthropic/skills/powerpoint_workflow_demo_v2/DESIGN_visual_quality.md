@@ -105,6 +105,18 @@ A dynamic layout engine that classifies slide content and routes to specialized 
 
 **Robustness:** Every builder wraps its body in `try/except Exception` → returns `False` → falls back to existing bullet layout. The classifier itself never raises — returns `DEFAULT` with `confidence=0.0` on any error. Medium-confidence slides (0.4–0.6) get density reduction only.
 
+### Phase 5: Refined Aesthetic & Layout Constraints — COMPLETE ✅
+
+A set of deterministic refinements to preserve template fidelity and prevent edge-case overlaps (March 2026).
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Footer Semantic Preservation | `_populate_footer_placeholders`, `_clear_unused_placeholders` | ✅ Implemented |
+| Precise Font Family Retention | `_extract_template_styles`, `_populate_placeholder_with_format` | ✅ Implemented |
+| Strict Text/Visual Boundaries | `_compute_region_map` | ✅ Implemented |
+| Pie Chart Square Constraints | `_insert_chart` | ✅ Implemented |
+| Explicit Fallback Logging | `step_generate_chunks` (in `powerpoint_chunked_workflow.py`) | ✅ Implemented |
+
 ---
 
 #### Fix 1: Per-Slide PNG Rendering — Technical Deep-Dive

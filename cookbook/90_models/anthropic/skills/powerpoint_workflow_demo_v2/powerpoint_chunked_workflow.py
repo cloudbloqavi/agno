@@ -1432,6 +1432,22 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "Analyze the following user request for a PowerPoint presentation and create an optimized storyboard.\n\n"
         "USER REQUEST:\n%s\n\n"
         "%s"
+        "**CRITICAL INSTRUCTIONS FOR STORYBOARD GENERATION:**\n"
+        "1. **TEXT FOOTPRINT MINIMIZATION**: Prioritize visual communication. Keep all text "
+        "   (titles, key points, global context) as concise as possible. Avoid verbose "
+        "   descriptions. The goal is a visually-driven presentation, not a document.\n"
+        "2. **HIGH-IMPACT VISUAL GUIDANCE**: Propose bold visual elements (e.g., hero images, "
+        "   process diagrams, interconnected nodes). Dictate exactly what visual structure "
+        "   should accompany the text, ensuring visual variety across the presentation. "
+        "   Crucially, when proposing a slide with charts or large visuals, keep the text "
+        "   extremely minimal to prevent overlapping issues in the final layout.\n"
+        "3. **AESTHETIC CONSTRAINTS**: Prevent 'wall-of-text' layouts. Limit bullet points to 3-4 "
+        "   per slide, with concise phrases. Use 'key_metrics' arrays for data highlights rather "
+        "   than burying metrics inside dense paragraphs. For the final conclusion/summary "
+        "   slide, enforce a visually striking wrap-up (e.g., three pillars, a bold quote block, "
+        "   or a simple next-steps diagram) instead of a standard bulleted list.\n"
+        "4. **STORY ARC**: Ensure the narrative flows logically and matches the specified tone.\n"
+        "5. **AUDIENCE ALIGNMENT**: Tailor the depth and phrasing to the target audience.\n"
         "STEP 1 — RESEARCH FIRST:\n"
         "STEP 1A — DEFINE SEARCH TOPIC (MANDATORY, DO THIS FIRST):\n"
         "Extract and define ONE clear Search Topic from the user request before calling web_search.\n"
@@ -1544,7 +1560,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         
         if is_capacity_error:
             provider = session_state.get("llm_provider", "claude")
-            print("\n[FALLBACK TRIGGERED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
+            print("\n[FALLBACK AGENT ENGAGED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
             print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
             try:
                 from agents import get_agents as _get_agents
@@ -1585,7 +1601,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # Therefore, we must also apply the fallback logic if response is None after execution.
     if response is None:
         provider = session_state.get("llm_provider", "claude")
-        print("\n[FALLBACK TRIGGERED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
+        print("\n[FALLBACK AGENT ENGAGED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
         print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
         try:
             from agents import get_agents as _get_agents
@@ -3041,6 +3057,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
             )
 
         elif effective_tier == 2:
+            if session_state.get("use_fallback_generator") and start_tier == 1:
+                if VERBOSE:  # noqa: F405
+                    print(f"    [FALLBACK AGENT ENGAGED] Switching Tier 1 chunk generation to Tier 2 (LLM code generation) due to prior provider capacity restrictions.")
             # Start with Tier 2: LLM code generation, fallback to Tier 3
             print(
                 "[GENERATE] Chunk %d/%d: Starting at Tier 2 (LLM code generation)."

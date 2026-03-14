@@ -92,15 +92,16 @@ Gemini-based planning decides which slides need visuals. NanoBanana generates 16
 Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), detects visual defects, and auto-corrects critical issues. Includes upfront missing key validation to prevent crash blocks. Fully non-blocking.
 
 ### 8. Global API Rate Limit Tracker
-An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random `60–120s`) inter-chunk sleeps with live countdowns.
+An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random provider-specific milliseconds, e.g., 2000-5000ms for Claude) inter-chunk sleeps with live countdowns.
 
 ### 9. Template Quality Safeguards
 When using `--template`, these automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, and shape overlap reflow
-- **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, and layout constraints
+- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, shape overlap reflow, strict text/visual bounding regions, and dynamic pie chart constraints
+- **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, overlapping prevention constraints, and layout constraints
 - **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
+- **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
 
 Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 

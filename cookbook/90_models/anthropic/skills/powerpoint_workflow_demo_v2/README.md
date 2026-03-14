@@ -89,6 +89,8 @@ python powerpoint_chunked_workflow.py \
 | `--footer-text` | Footer text for all slides | None |
 | `--date-text` | Date text for footer date placeholder | None |
 | `--show-slide-numbers` | Show slide number placeholders | disabled |
+| `--inter-chunk-delay-min` | Minimum random delay between chunks (ms) | Provider Specific |
+| `--inter-chunk-delay-max` | Maximum random delay between chunks (ms) | Provider Specific |
 | `--no-stream` | Disable streaming for agents | disabled |
 | `--verbose, -v` | Enable verbose/debug logging | disabled |
 

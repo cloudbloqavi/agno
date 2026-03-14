@@ -3201,6 +3201,15 @@ def _populate_placeholder_with_format(
                 for run in para.runs:
                     rPr = run._r.find(ns_a + "rPr")
                     if rPr is not None:
+                        # Ensure latin element exists and has typeface set
+                        latin = rPr.find(ns_a + "latin")
+                        if latin is None:
+                            latin = __import__("lxml.etree", fromlist=["Element"]).Element(ns_a + "latin")
+                            rPr.insert(0, latin)
+                        latin.set("typeface", target_font)
+                for run in para.runs:
+                    rPr = run._r.find(ns_a + "rPr")
+                    if rPr is not None:
                         # Update the latin font element
                         latin = rPr.find(ns_a + "latin")
                         if latin is not None:
@@ -3302,6 +3311,9 @@ def _transfer_charts(
     template_style: "TemplateStyle | None" = None,
 ):
     """Transfer extracted chart data to a slide, sized to fill the content area.
+    
+    Pie charts are constrained to a perfect square within the bounds to prevent
+    oval distortions and overlapping text bounds.
 
     When template_style is provided, applies template-derived chart styling
     (series colors, axis fonts, legend styling, etc.) after chart creation.
@@ -3339,11 +3351,21 @@ def _transfer_charts(
                 chart_height = content_area.height
                 chart_top = content_area.top
 
+            # Scale pie charts to be square within the content area
+            if cd.chart_type == XL_CHART_TYPE.PIE:
+                size = min(content_area.width, chart_height)
+                chart_width = size
+                chart_height = size
+                chart_left = content_area.left + (content_area.width - size) // 2
+            else:
+                chart_width = content_area.width
+                chart_left = content_area.left
+                
             chart_graphic_frame = slide.shapes.add_chart(
                 cd.chart_type,
-                content_area.left,
+                chart_left,
                 chart_top,
-                content_area.width,
+                chart_width,
                 chart_height,
                 chart_data,
             )
@@ -3643,8 +3665,11 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
     - Content placeholder insertion icons (table, chart, image, etc.)
 
     Simply calling tf.clear() is insufficient for picture placeholders and
-    content placeholders with embedded icons.  Removing the XML element
+    content placeholders with embedded icons. Removing the XML element
     from the shape tree is the nuclear option that works for every case.
+    
+    Note: Preserves semantic footer placeholders (slide numbers, dates) if 
+    retention logic allows it to survive.
 
     Args:
         slide: The pptx slide object.
@@ -4685,13 +4710,17 @@ def _populate_footer_placeholders(
     for shape in list(slide.placeholders):
         ph_idx = shape.placeholder_format.idx
         try:
-            if ph_idx == 10 and date_text and shape.has_text_frame:
-                shape.text_frame.text = date_text
+            if ph_idx == 10 and shape.has_text_frame:
+                if date_text:
+                    shape.text_frame.text = date_text
+                # Always preserve date placeholder
                 populated_indices.add(ph_idx)
-            elif ph_idx == 11 and footer_text and shape.has_text_frame:
-                shape.text_frame.text = footer_text
+            elif ph_idx == 11 and shape.has_text_frame:
+                if footer_text:
+                    shape.text_frame.text = footer_text
+                # Preserve existing footer text placeholder
                 populated_indices.add(ph_idx)
-            elif ph_idx == 12 and show_slide_number:
+            elif ph_idx == 12:
                 # Slide number is auto-rendered by PowerPoint; keep the placeholder
                 # element so the renderer can fill it — do not set text manually.
                 populated_indices.add(ph_idx)
