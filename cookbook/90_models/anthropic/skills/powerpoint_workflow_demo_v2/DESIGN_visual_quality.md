@@ -117,6 +117,34 @@ A set of deterministic refinements to preserve template fidelity and prevent edg
 | Pie Chart Square Constraints | `_insert_chart` | ✅ Implemented |
 | Explicit Fallback Logging | `step_generate_chunks` (in `powerpoint_chunked_workflow.py`) | ✅ Implemented |
 
+### Phase 6: Cascading Overlap & Font Floor — COMPLETE ✅
+
+Targeted fixes for two recurring issues that slipped past Phase 5 safeguards (March 2026).
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Title Font Size Floor (Fix 7) | `_populate_slide()` — `max(20, title_font_size_pt)` | ✅ Implemented |
+| Iterative Overlap Cascade (Fix 8) | `sanitize_slide_layout()` — up to 3 re-sort passes | ✅ Implemented |
+
+**Fix 7** prevents unreadable fallback titles when `_extract_template_styles` pulls a tiny font size (e.g. 10pt) from the template. The floor ensures titles are always at least 20pt.
+
+**Fix 8** extends the single-pass overlap detection to an iterative loop (max 3 passes). Each pass re-sorts shapes by `(top, left)` before scanning, so cascading collisions — where pushing shape B below A causes B to overlap C — are caught in subsequent passes. The loop exits early when a pass produces zero adjustments.
+
+---
+
+### Phase 7: Zero-Tolerance Tiny Text Purge — COMPLETE ✅
+
+Targeted fix for dense microscopic text blocks appearing randomly across templates (Fix 13, March 2026).
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Multi-Heuristic Purge (Fix 13A) | `sanitize_slide_layout()` — Pass 2b | ✅ Implemented |
+| Text Shape Mins (Fix 13B) | `sanitize_slide_layout()` — Pass 2 | ✅ Implemented |
+| Preventive Prompting (Fix 13C) | `powerpoint_chunked_workflow.py` prompt schema | ✅ Implemented |
+| Post-Merge Safety Net | `powerpoint_chunked_workflow.py` — `sanitize_presentation` | ✅ Implemented |
+
+**Fix 13** solves the issue of LLMs generating dense text dumped into small dimensions resulting in an unreadable 4-5pt font after `fit_text()`. It implements a triple-heuristic detection engine triggering on absolute size (>60 chars in <3.5"x2"), text density (>50 chars/sq in), or paragraph density (>4 paras in <4 sq in).
+
 ---
 
 #### Fix 1: Per-Slide PNG Rendering — Technical Deep-Dive
@@ -242,6 +270,8 @@ Phase 3: Scale-down if off-slide
 **Logging:** `[OVERLAP FIX] Resolved N overlapping shape(s) via vertical reflow.`
 
 **Known limitation:** Max shape count enforcement (planned: skip shapes if >5 in small area) was not implemented — reflow handles most cases, but extremely dense slides may still look crowded.
+
+**Enhancement (Fix 8):** The overlap detection in `sanitize_slide_layout()` was upgraded from a single pass to an **iterative loop** (max 3 passes). After each pass, shapes are re-sorted by `(top, left)` so that cascading overlaps — where pushing shape B below A causes B to overlap C — are caught in subsequent passes. The loop exits early when a pass produces zero adjustments.
 
 ---
 

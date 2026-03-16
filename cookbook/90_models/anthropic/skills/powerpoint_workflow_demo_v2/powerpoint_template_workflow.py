@@ -162,6 +162,51 @@ _MIN_TITLE_FONT_PT = 14
 
 
 # ---------------------------------------------------------------------------
+# Fix 10: XML-persisted backdrop flag helpers
+# ---------------------------------------------------------------------------
+# Previous fixes used a Python attribute (shape._is_template_backdrop = True)
+# which is lost when presentations are saved/loaded between chunked workflow
+# steps. These helpers persist the flag in the shape's XML element so it
+# survives serialization.
+
+
+def _mark_as_backdrop(shape) -> None:
+    """Mark a shape as a template backdrop via XML attribute (survives save/load)."""
+    try:
+        shape._element.set("templateBackdrop", "1")
+    except Exception:
+        pass  # Fallback: silently skip if element is inaccessible
+
+
+def _is_backdrop(shape) -> bool:
+    """Check if a shape is a template backdrop (reads from XML)."""
+    try:
+        return shape._element.get("templateBackdrop") == "1"
+    except Exception:
+        return False
+
+
+def _shape_has_any_text(shape) -> bool:
+    """Return True if shape (or any child in a group) contains visible text.
+
+    Uses XML scan for ``<a:t>`` nodes — works for TextBox, GroupShape,
+    SmartArt, and any other composite shape type.  This is the generic,
+    template-agnostic way to detect text at any nesting depth.
+
+    Fix 11: replaces the previous ``has_text_frame`` check which missed
+    Group shapes because they don't expose a direct text_frame.
+    """
+    try:
+        ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        for t_node in shape._element.findall('.//{%s}t' % ns_a):
+            if t_node.text and t_node.text.strip():
+                return True
+    except Exception:
+        pass
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Pydantic Models for Structured Data Flow
 # ---------------------------------------------------------------------------
 
@@ -1340,6 +1385,96 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                 print(
                     "[VERBOSE] Layout placeholder style extraction failed: %s" % str(e)
                 )
+
+    # -----------------------------------------------------------------------
+    # Fix 2+3: Scan NON-PLACEHOLDER text boxes on template slides for fonts
+    # and accent colors.  Templates like "Template-Green" place the title
+    # (e.g. "CURRENT STATE VS FUTURE STATE" in Lato Black) in a free text
+    # box, not a placeholder, so the scans above miss it.
+    # -----------------------------------------------------------------------
+    try:
+        ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+        # Collect all (font_family, font_size_hundredths, color_hex) from
+        # non-placeholder text shapes across every template slide.
+        _free_text_fonts: list[tuple[str, int, str]] = []
+
+        for slide in template_prs.slides:
+            for shape in slide.shapes:
+                if shape.is_placeholder:
+                    continue
+                if not getattr(shape, "has_text_frame", False):
+                    continue
+                for para in shape.text_frame.paragraphs:
+                    for run in para.runs:
+                        rPr = run._r.find(ns_a + "rPr")
+                        if rPr is None:
+                            continue
+                        # Extract font family
+                        font_name = ""
+                        latin = rPr.find(ns_a + "latin")
+                        if latin is not None:
+                            typeface = latin.get("typeface", "")
+                            if typeface and not typeface.startswith("+"):
+                                font_name = typeface
+                            elif typeface == "+mj-lt":
+                                font_name = ts.theme.major_font
+                            elif typeface == "+mn-lt":
+                                font_name = ts.theme.minor_font
+                        # Extract font size (hundredths of a point)
+                        sz_val = 0
+                        sz_attr = rPr.get("sz")
+                        if sz_attr:
+                            try:
+                                sz_val = int(sz_attr)
+                            except (ValueError, TypeError):
+                                pass
+                        # Extract color
+                        color_hex = _extract_color_from_rPr(rPr, ts.theme)
+                        if font_name:
+                            _free_text_fonts.append(
+                                (font_name, sz_val, color_hex or "")
+                            )
+
+        if _free_text_fonts:
+            # Sort by font size descending → largest is likely the title font
+            _free_text_fonts.sort(key=lambda x: x[1], reverse=True)
+
+            # Fix 2: Use the largest font as title, next-largest as body
+            if not ts.title_font_family and _free_text_fonts[0][0]:
+                ts.title_font_family = _free_text_fonts[0][0]
+                if _free_text_fonts[0][1]:
+                    ts.title_font_size_pt = _free_text_fonts[0][1] // 100
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Free text scan: title font '%s' (%dpt)"
+                        % (ts.title_font_family, ts.title_font_size_pt)
+                    )
+
+            # Find a different font family for body (or next entry)
+            if not ts.body_font_family:
+                for _ft_name, _ft_sz, _ in _free_text_fonts[1:]:
+                    if _ft_name and _ft_name != ts.title_font_family:
+                        ts.body_font_family = _ft_name
+                        if _ft_sz:
+                            ts.body_font_size_pt = _ft_sz // 100
+                        break
+
+            # Fix 3: Capture accent color (first prominent non-black,
+            # non-white text color) for title coloring
+            _skip_colors = {"", "000000", "FFFFFF", "ffffff"}
+            if not ts.title_font_color_rgb:
+                for _ft_name, _ft_sz, _ft_color in _free_text_fonts:
+                    if _ft_color and _ft_color not in _skip_colors:
+                        ts.title_font_color_rgb = _ft_color
+                        if VERBOSE:
+                            print(
+                                "[VERBOSE] Free text scan: accent color #%s"
+                                % _ft_color
+                            )
+                        break
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Free text box style extraction failed: %s" % str(e))
 
     if VERBOSE:
         print("[VERBOSE] Extracted template styles:")
@@ -3320,6 +3455,7 @@ def _transfer_charts(
     """
     try:
         from pptx.chart.data import CategoryChartData
+        from pptx.enum.chart import XL_CHART_TYPE
     except ImportError:
         return
 
@@ -3478,6 +3614,10 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
             # Only process shapes that have meaningful dimensions
             if shape.width <= 0 or shape.height <= 0:
                 continue
+            # Skip template backdrop shapes — decorative elements that should
+            # not be widened, moved, or cause reflow of LLM content (Fix 9/10).
+            if _is_backdrop(shape):
+                continue
             if shape.is_placeholder:
                 # Include placeholders with visible text as anchors
                 if getattr(shape, "has_text_frame", False) and shape.text.strip():
@@ -3536,10 +3676,11 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
 
             upper_bottom = upper.top + upper.height
             # Check for vertical overlap (shapes on similar x-axis range)
-            # Fix 8: Use 30% horizontal overlap threshold instead of any overlap
+            # Fix 12B: Lower horizontal overlap threshold from 30% to 15%
+            # to catch near-miss overlaps between text boxes.
             x_overlap_amount = min(upper.left + upper.width, lower.left + lower.width) - max(upper.left, lower.left)
             min_width = min(upper.width, lower.width)
-            x_overlap = x_overlap_amount > 0 and (min_width <= 0 or x_overlap_amount / min_width > 0.30)
+            x_overlap = x_overlap_amount > 0 and (min_width <= 0 or x_overlap_amount / min_width > 0.15)
 
             if x_overlap and lower.top < upper_bottom + MARGIN:
                 # Only move the lower shape if it's a movable (non-placeholder) shape
@@ -3564,10 +3705,12 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
                 s.top + s.height for s in movable_shapes
                 if hasattr(s, "top") and hasattr(s, "height")
             )
-            safe_bottom = int(slide_height * 0.92)  # 8% bottom margin
+            # Fix 12D: Align safe bottom with the 87% safe content zone
+            # and limit scale-down to 15% max to prevent tiny text.
+            safe_bottom = int(slide_height * 0.87)  # 13% bottom margin
             if max_bottom > safe_bottom and max_bottom > 0:
                 scale = safe_bottom / max_bottom
-                if scale < 1.0 and scale > 0.5:  # Don't shrink more than 50%
+                if scale < 1.0 and scale > 0.85:  # Don't shrink more than 15%
                     for shape in movable_shapes:
                         try:
                             shape.top = int(shape.top * scale)
@@ -3631,9 +3774,14 @@ def _transfer_shapes(
 
     for shape_elem in shapes_xml:
         cloned = copy.deepcopy(shape_elem)
-        existing_ids = [
-            int(sp.get("id", 0)) for sp in spTree.iter() if sp.get("id") is not None
-        ]
+        existing_ids = []
+        for sp in spTree.iter():
+            sp_id = sp.get("id")
+            if sp_id is not None:
+                try:
+                    existing_ids.append(int(sp_id))
+                except ValueError:
+                    pass
         max_id = max(existing_ids) if existing_ids else 0
         for nv_elem in cloned.iter():
             if nv_elem.tag.endswith("}cNvPr"):
@@ -4055,6 +4203,7 @@ def _add_filled_rect(slide, left, top, width, height, hex_color: str):
         fill.solid()
         fill.fore_color.rgb = _rgb_from_hex(hex_color)
         shape.line.fill.background()  # no border
+        _mark_as_backdrop(shape)
         return shape
     except Exception as e:
         if VERBOSE:
@@ -4092,6 +4241,7 @@ def _add_textbox_styled(
         run.font.italic = italic
         run.font.color.rgb = _rgb_from_hex(hex_color)
         run.font.name = font_name
+        _mark_as_backdrop(txBox)
         return txBox
     except Exception as e:
         if VERBOSE:
@@ -4182,6 +4332,7 @@ def _build_horizontal_timeline(
                         _safe_accent(template_style, i + 1)
                     )
                     arrow.line.fill.background()
+                    _mark_as_backdrop(arrow)
                 except Exception:
                     pass  # Arrow is cosmetic — skip if it fails
 
@@ -4239,6 +4390,7 @@ def _build_chevron_process(
                 chev.fill.solid()
                 chev.fill.fore_color.rgb = _rgb_from_hex(color_hex)
                 chev.line.fill.background()
+                _mark_as_backdrop(chev)
             except Exception:
                 # Pentagon not available — fall through to rectangle timeline
                 return _build_horizontal_timeline(slide, labels, descriptions, area, template_style)
@@ -4829,6 +4981,10 @@ def _populate_slide(
     if handled_by_semantic:
         content.body_paragraphs = []
         content.text_box_paragraphs = []
+        # --- Fix 8: Prevent Semantic vs HTML duplication ---
+        # Clear raw extracted shapes so they don't get squashed and overlay the clean semantic layout
+        content.shapes_xml = []
+        content.text_shapes_xml = []
     # -----------------------------------------------------------------------
 
     # Track populated placeholder indices for cleanup
@@ -4938,9 +5094,10 @@ def _populate_slide(
         tf.word_wrap = True
         tf.text = content.title
         for para in tf.paragraphs:
-            para.font.size = Pt(
-                template_style.title_font_size_pt if template_style else 28
-            )
+            # Fix 7: Enforce minimum 20pt for fallback titles — some templates
+            # extract title_font_size_pt as low as 10pt, producing unreadable text.
+            _title_pt = max(20, template_style.title_font_size_pt) if template_style else 28
+            para.font.size = Pt(_title_pt)
             para.font.bold = True
             if template_style:
                 para.font.name = (
@@ -5689,9 +5846,17 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
             print("[VERBOSE] Exception suppressed: %s" % str(e))
 
     total_gen_slides = len(list(generated_prs.slides))
+    # Use global slide counts when available (chunked workflow passes these)
+    _global_total = session_state.get("global_total_slides", total_gen_slides)
 
     for idx, slide in enumerate(generated_prs.slides):
         content = _extract_slide_content(slide)
+
+        # Resolve global slide index: prefer per-slide metadata, fall back to local idx
+        _slides_data_for_idx = session_state.get("slides_data", [])
+        _global_idx = idx
+        if idx < len(_slides_data_for_idx):
+            _global_idx = _slides_data_for_idx[idx].get("global_slide_index", idx)
 
         # Check if the template layout for this slide position has image placeholders
         has_template_image_ph = False
@@ -5700,8 +5865,8 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
                 content_mix = _classify_content_mix(content, has_generated_image=False)
                 layout = _find_best_layout(
                     template_prs,
-                    idx,
-                    total_gen_slides,
+                    _global_idx,
+                    _global_total,
                     content_mix=content_mix,
                 )
                 for ph in layout.placeholders:
@@ -6818,24 +6983,35 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             % [layout.name for layout in output_prs.slide_layouts]
         )
 
-    # Remove existing slides from template
-    while len(output_prs.slides._sldIdLst) > 0:
-        sldId = output_prs.slides._sldIdLst[0]
-        rId = sldId.get(
-            etree.QName(
-                "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-                "id",
-            )
+    # -----------------------------------------------------------------------
+    # Template Slide Preservation: Instead of deleting all template slides
+    # (which destroys decorative shapes placed directly on the slide),
+    # we keep existing template slides and reuse them as visual backdrops.
+    # Each generated slide maps to an existing template slide; any extras
+    # are removed after the loop.
+    # -----------------------------------------------------------------------
+    _template_slide_count = len(output_prs.slides)
+    _reusable_template_slides = list(output_prs.slides)  # snapshot before mutations
+    if VERBOSE:
+        print(
+            "[VERBOSE] Template has %d existing slide(s) to reuse as backdrop"
+            % _template_slide_count
         )
-        if rId is not None:
-            output_prs.part.drop_rel(rId)
-        output_prs.slides._sldIdLst.remove(sldId)
 
-    print("Cleared template slides. Building final presentation...")
+    # Use global slide counts when available (chunked workflow passes these)
+    _global_total_asm = session_state.get("global_total_slides", total_slides)
+
+    print("Preserving template slides as visual backdrops. Building final presentation...")
 
     # For each generated slide, create a template-styled slide
     for idx, gen_slide in enumerate(generated_slides):
         content = _extract_slide_content(gen_slide)
+
+        # Resolve global slide index for layout scoring
+        _slides_data_asm = session_state.get("slides_data", [])
+        _global_idx_asm = idx
+        if idx < len(_slides_data_asm):
+            _global_idx_asm = _slides_data_asm[idx].get("global_slide_index", idx)
 
         # Look up generated image for this slide.
         # The keys may be int or str depending on how they were stored.
@@ -6887,16 +7063,16 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         )
         layout = _find_best_layout(
             output_prs,
-            idx,
-            total_slides,
+            _global_idx_asm,
+            _global_total_asm,
             content_mix=content_mix,
             has_generated_image=gen_img is not None,
         )
         if VERBOSE:
             summary = _layout_placeholder_summary(layout)
             print(
-                "[VERBOSE] Slide %d chose layout '%s' placeholders: %s"
-                % (idx + 1, layout.name, summary)
+                "[VERBOSE] Slide %d (global idx %d/%d) chose layout '%s' placeholders: %s"
+                % (idx + 1, _global_idx_asm, _global_total_asm, layout.name, summary)
             )
 
         # Detect picture placeholders on the chosen template layout.
@@ -6977,7 +7153,104 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             )
         )
 
-        new_slide = output_prs.slides.add_slide(layout)
+        # ---------------------------------------------------------------
+        # Template Slide Reuse: If a template slide exists at this index,
+        # reuse it as the visual backdrop.  Fix 11 replaces Fix 10's
+        # clearing loop with a fully generic, template-agnostic purge.
+        # Fix 12A adds connector/divider line detection.
+        #
+        # Strategy (template-agnostic):
+        #   1. Placeholders: keep footer-type, clear text from the rest.
+        #   2. Any shape (incl. Groups) with text at any depth → remove.
+        #   3. Non-text shapes: keep small decorative elements UNLESS
+        #      they are connector lines (thin but span >40% of slide).
+        # ---------------------------------------------------------------
+        if idx < _template_slide_count:
+            new_slide = _reusable_template_slides[idx]
+            _shapes_removed = 0
+            _groups_removed = 0
+            _decorative_removed = 0
+            _placeholders_cleared = 0
+
+            # Footer placeholder indices to preserve (date, footer, number).
+            _FOOTER_PH_INDICES = {10, 11, 12, 13, 14, 15, 16}
+
+            # Thresholds for keeping small decorative non-text shapes.
+            from pptx.util import Emu
+            _THIN_THRESHOLD = Emu(72000)    # ~0.08" — thin connector lines
+            _SMALL_THRESHOLD = Emu(457200)  # ~0.5" — small icons/bullets
+
+            # Collect elements to remove AFTER iteration to avoid XML
+            # tree mutation during traversal.
+            _elements_to_remove = []
+
+            for shape in list(new_slide.shapes):
+                _mark_as_backdrop(shape)
+
+                # --- Placeholders: keep footers, clear text from rest ---
+                if shape.is_placeholder:
+                    try:
+                        ph_idx = shape.placeholder_format.idx
+                        if ph_idx not in _FOOTER_PH_INDICES:
+                            if _shape_has_any_text(shape):
+                                if getattr(shape, 'has_text_frame', False):
+                                    for para in shape.text_frame.paragraphs:
+                                        para.clear()
+                                _placeholders_cleared += 1
+                    except Exception:
+                        pass
+                    continue
+
+                # --- Generic text check (Fix 11 RC-1+RC-2) ---
+                # Uses XML scan so it catches Groups, SmartArt, etc.
+                if _shape_has_any_text(shape):
+                    _elements_to_remove.append(shape._element)
+                    # Track groups vs regular shapes for logging
+                    shape_name = getattr(shape, 'name', '') or ''
+                    if 'group' in shape_name.lower() or 'Group' in str(type(shape).__name__):
+                        _groups_removed += 1
+                    else:
+                        _shapes_removed += 1
+                    continue
+
+                # --- Non-text shapes: keep only small decorative (RC-3) ---
+                shape_w = getattr(shape, 'width', 0) or 0
+                shape_h = getattr(shape, 'height', 0) or 0
+                is_thin = (shape_w <= _THIN_THRESHOLD or shape_h <= _THIN_THRESHOLD)
+                is_small = (shape_w <= _SMALL_THRESHOLD and shape_h <= _SMALL_THRESHOLD)
+                # Fix 12A: Detect connector/divider lines — thin in one
+                # dimension but spanning >40% of the slide in the other.
+                # These are NOT small icons; they are visual noise.
+                _CONNECTOR_SPAN_PCT = 0.40
+                _sw = int(slide_width)
+                _sh = int(slide_height)
+                is_connector = is_thin and (
+                    shape_w > int(_sw * _CONNECTOR_SPAN_PCT)
+                    or shape_h > int(_sh * _CONNECTOR_SPAN_PCT)
+                )
+                if is_connector or (not is_thin and not is_small):
+                    _elements_to_remove.append(shape._element)
+                    _decorative_removed += 1
+                    continue
+
+            # Remove collected elements from the XML tree
+            spTree = new_slide.shapes._spTree
+            for elem in _elements_to_remove:
+                try:
+                    spTree.remove(elem)
+                except Exception:
+                    pass
+
+            print(
+                "  Slide %d: template purge — "
+                "%d text shape(s), %d group(s), %d decorative(s) removed; "
+                "%d placeholder(s) cleared"
+                % (idx + 1, _shapes_removed, _groups_removed,
+                   _decorative_removed, _placeholders_cleared)
+            )
+        else:
+            new_slide = output_prs.slides.add_slide(layout)
+
         # Pass generated image bytes and source dimensions to _populate_slide.
         # src_slide_width/height enable proportional shape rescaling (P1-1).
         # footer_* params enable footer standardization (P1-2).
@@ -6994,6 +7267,36 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             date_text=session_state.get("date_text", ""),
             show_slide_number=session_state.get("show_slide_numbers", False),
         )
+
+    # ---------------------------------------------------------------
+    # Remove unused template slides (when template has more slides
+    # than generated content). Delete from back to front to avoid
+    # index shifting issues.
+    # ---------------------------------------------------------------
+    if _template_slide_count > total_slides:
+        _unused = _template_slide_count - total_slides
+        print(
+            "  Removing %d unused template slide(s) (template had %d, generated %d)"
+            % (_unused, _template_slide_count, total_slides)
+        )
+        for _del_idx in range(_template_slide_count - 1, total_slides - 1, -1):
+            try:
+                sldId = output_prs.slides._sldIdLst[_del_idx]
+                rId = sldId.get(
+                    etree.QName(
+                        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                        "id",
+                    )
+                )
+                if rId is not None:
+                    output_prs.part.drop_rel(rId)
+                output_prs.slides._sldIdLst.remove(sldId)
+            except Exception as e:
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Failed to remove unused template slide %d: %s"
+                        % (_del_idx + 1, str(e))
+                    )
 
     # Clean up empty placeholders and hardcoded contrast issues
     clean_presentation_visual_noise_and_contrast(output_prs)
@@ -7287,6 +7590,7 @@ def _apply_body_accent_border(slide, accent_color_hex: str) -> bool:
         bar.fill.solid()
         bar.fill.fore_color.rgb = rgb
         bar.line.fill.background()  # no outline
+        _mark_as_backdrop(bar)
         return True
     except Exception as e:
         if VERBOSE:
@@ -7473,6 +7777,7 @@ def _enrich_slide_visually(
             bar.fill.solid()
             bar.fill.fore_color.rgb = accent_rgb
             bar.line.fill.background()
+            _mark_as_backdrop(bar)
             return True
 
         elif enrich_type == "enrich_title_card":
@@ -7491,6 +7796,7 @@ def _enrich_slide_visually(
             card.fill.fore_color.rgb = tinted
             card.line.color.rgb = accent_rgb
             card.line.width = Emu(76200)  # 6pt
+            _mark_as_backdrop(card)
             return True
 
         elif enrich_type == "enrich_divider":
@@ -7505,6 +7811,7 @@ def _enrich_slide_visually(
             div.fill.solid()
             div.fill.fore_color.rgb = accent_rgb
             div.line.fill.background()
+            _mark_as_backdrop(div)
             return True
 
         elif enrich_type == "enrich_accent_strip":
@@ -7514,6 +7821,7 @@ def _enrich_slide_visually(
             strip.fill.solid()
             strip.fill.fore_color.rgb = accent_rgb
             strip.line.fill.background()
+            _mark_as_backdrop(strip)
             return True
 
     except Exception as e:
@@ -9706,13 +10014,30 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
 def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     """Sanitize a single slide's shape layout to fix spatial defects.
 
-    Performs three passes:
+    Performs three correction phases, plus iterative overlap resolution:
+
         1. **Boundary clamping**: Ensures all shapes are within 5% safe margin.
-        2. **Minimum size enforcement**: Shapes must be at least 1 inch wide
-           and 0.5 inch tall to remain visible and interactive.
-        3. **Overlap detection & reflow**: If two non-placeholder shapes
-           overlap by more than 30% of the smaller shape's area, the lower
-           shape is pushed down below the upper shape with a small gap.
+        2. **Minimum size enforcement**: Shapes must be at least 1x0.5 inches
+           (or 2x1 inches for text-bearing shapes) to remain visible.
+        2b. **Tiny text purge** (Fix 13): Zero-tolerance removal of unreadable
+            text shapes using triple heuristics (absolute size, text density,
+            and paragraph density).
+        3. **Iterative overlap detection & reflow** (up to 5 passes): If two
+           non-placeholder shapes overlap by more than 30% of the smaller
+           shape's area, the lower shape is pushed down below the upper shape
+           with a 0.15-inch gap. After each pass the shape list is re-sorted
+           by (top, left) so that cascading overlaps — where pushing shape B
+           below A causes B to overlap C — are caught in subsequent passes.
+           The loop exits early when a pass produces zero adjustments.
+
+    Note:
+        Shapes flagged as template backdrops via ``_mark_as_backdrop()`` are
+        excluded from overlap detection using ``_is_backdrop()`` (Fix 10).
+        Unlike the earlier Python-attribute approach, the flag is persisted in
+        the shape's XML and survives save/load across chunked workflow steps.
+        The companion fix in ``_populate_slide()`` enforces a minimum 20pt font
+        size for fallback title textboxes to prevent unreadable text from
+        templates that extract a small ``title_font_size_pt`` (Fix 7).
 
     Args:
         slide:        The pptx slide object.
@@ -9720,22 +10045,35 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
         slide_height: Presentation height in EMU (e.g. 6858000 for 7.5 in).
 
     Returns:
-        Number of shape adjustments made.
+        Number of shape adjustments made across all passes.
     """
     from pptx.util import Inches
 
     adjustments = 0
 
-    # Safe margins (5% each side)
+    # Safe margins (5% each side, bottom 13% reserved for footer)
     margin_x = int(slide_width * 0.05)
     margin_y = int(slide_height * 0.05)
     max_right = slide_width - margin_x
-    max_bottom = slide_height - margin_y
+    # Fix 11 (RC-4): Enforce safe content zone — generated content must
+    # stay above 87% of slide height to avoid collisions with footer
+    # decorations and template elements in the bottom zone.
+    _SAFE_BOTTOM_PCT = 0.87
+    max_bottom = int(slide_height * _SAFE_BOTTOM_PCT)
 
     min_width = Inches(1.0)
     min_height = Inches(0.5)
+    # Fix 13B: Stronger minimums for text-bearing shapes.
+    min_width_text = Inches(2.0)
+    min_height_text = Inches(1.0)
 
-    shapes = list(slide.shapes)
+    # Filter shapes: we don't want to clamp or reflow template backdrops
+    # or semantic layout elements that were deliberately placed.
+    shapes = []
+    for s in slide.shapes:
+        if _is_backdrop(s):
+            continue
+        shapes.append(s)
 
     # --- Pass 1: Boundary clamping ---
     for shape in shapes:
@@ -9771,22 +10109,162 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
         except Exception:
             continue
 
+    # --- Pass 1b: Backdrop avoidance (Fix 12C) ---
+    # Detect template backdrop shapes in the top-left title zone and shift
+    # any generated content shapes right to avoid visual clipping.
+    backdrop_right_edge = margin_x
+    for s in slide.shapes:
+        if not _is_backdrop(s):
+            continue
+        try:
+            s_left = getattr(s, 'left', None)
+            s_top = getattr(s, 'top', None)
+            s_w = getattr(s, 'width', 0) or 0
+            if s_left is None or s_top is None:
+                continue
+            # Only consider backdrops in the top 25% and left 15%
+            if (s_top < int(slide_height * 0.25)
+                    and s_left < int(slide_width * 0.15)
+                    and s_left + s_w > margin_x):
+                backdrop_right_edge = max(
+                    backdrop_right_edge, s_left + s_w + int(Inches(0.1))
+                )
+        except Exception:
+            continue
+
+    if backdrop_right_edge > margin_x:
+        for shape in shapes:
+            try:
+                if not hasattr(shape, 'left') or shape.left is None:
+                    continue
+                # Only adjust shapes in the title zone (top 25% of slide)
+                if shape.top < int(slide_height * 0.25):
+                    if shape.left < backdrop_right_edge:
+                        shape.left = backdrop_right_edge
+                        adjustments += 1
+            except Exception:
+                continue
+
     # --- Pass 2: Minimum size enforcement ---
+    # Fix 13B: Use stronger minimums for text-bearing shapes to prevent
+    # unreadable crushed text blocks.
     for shape in shapes:
         try:
             if not hasattr(shape, "width") or shape.width is None:
                 continue
-            if shape.width < min_width:
-                shape.width = min_width
+            _has_text = _shape_has_any_text(shape)
+            _min_w = min_width_text if _has_text else min_width
+            _min_h = min_height_text if _has_text else min_height
+            if shape.width < _min_w:
+                shape.width = _min_w
                 adjustments += 1
-            if shape.height < min_height:
-                shape.height = min_height
+            if shape.height < _min_h:
+                shape.height = _min_h
                 adjustments += 1
         except Exception:
             continue
 
-    # --- Pass 3: Overlap detection & vertical reflow ---
-    # Sort shapes top-to-bottom by their top edge
+    # --- Pass 2b: Tiny text purge (Fix 13A — hardened) ---
+    # ZERO-TOLERANCE detection of unreadable text shapes. Uses THREE
+    # independent heuristics — if ANY single one matches, the shape is
+    # removed. This is intentionally aggressive: a false-positive removal
+    # (losing one text box) is far less damaging than a false-negative
+    # (shipping an unreadable micro-text blob to the user).
+    #
+    # Heuristic 1 — Absolute size + char count:
+    #   width < 3.5" AND height < 2" AND total_chars > 60
+    # Heuristic 2 — Text density (chars per square inch):
+    #   chars_per_sq_inch > 50 (at 10pt font, ~30 chars/sq_in is max)
+    # Heuristic 3 — Paragraph density:
+    #   num_paragraphs > 4 AND shape area < 4 sq_in
+    #
+    # All three are slide-agnostic and template-agnostic.
+    _TINY_ABS_MAX_W = Inches(3.5)
+    _TINY_ABS_MAX_H = Inches(2.0)
+    _TINY_ABS_MIN_CHARS = 60
+    _DENSITY_THRESHOLD = 50  # chars per sq inch
+    _PARA_THRESHOLD = 4      # max paragraphs in a small shape
+    _PARA_AREA_THRESHOLD = 4.0  # sq inches
+    _EMU_PER_INCH = 914400.0
+
+    shapes_to_remove = []
+    for shape in shapes:
+        try:
+            if not hasattr(shape, "width") or shape.width is None:
+                continue
+            if not hasattr(shape, "height") or shape.height is None:
+                continue
+            # Skip placeholders (titles, footers, etc.)
+            if getattr(shape, "is_placeholder", False):
+                continue
+            # Skip non-text shapes (charts, images, tables, groups)
+            if not hasattr(shape, "text_frame"):
+                continue
+            if hasattr(shape, "has_chart") and shape.has_chart:
+                continue
+            if hasattr(shape, "has_table") and shape.has_table:
+                continue
+
+            # Compute text metrics
+            paragraphs = shape.text_frame.paragraphs
+            total_chars = sum(len(p.text) for p in paragraphs)
+            num_paragraphs = len(paragraphs)
+            w_in = shape.width / _EMU_PER_INCH
+            h_in = shape.height / _EMU_PER_INCH
+            area_sq_in = max(w_in * h_in, 0.01)  # avoid div-by-zero
+            chars_per_sq_in = total_chars / area_sq_in
+
+            # Skip shapes with very little text — they're labels, not data dumps
+            if total_chars < 15:
+                continue
+
+            remove_reason = ""
+
+            # Heuristic 1: Absolute small box with dense text
+            if (shape.width < _TINY_ABS_MAX_W
+                    and shape.height < _TINY_ABS_MAX_H
+                    and total_chars > _TINY_ABS_MIN_CHARS):
+                remove_reason = "H1:small-box(%d chars in %.1f\"x%.1f\")" % (
+                    total_chars, w_in, h_in)
+
+            # Heuristic 2: Text density too high for any readable font
+            elif chars_per_sq_in > _DENSITY_THRESHOLD:
+                remove_reason = "H2:density(%.0f chars/sq_in)" % chars_per_sq_in
+
+            # Heuristic 3: Too many paragraphs in a small area
+            elif num_paragraphs > _PARA_THRESHOLD and area_sq_in < _PARA_AREA_THRESHOLD:
+                remove_reason = "H3:para-density(%d paras in %.1f sq_in)" % (
+                    num_paragraphs, area_sq_in)
+
+            if remove_reason:
+                shapes_to_remove.append(shape)
+                if VERBOSE:
+                    print(
+                        "  [TINY TEXT PURGE] Removing: %s — '%s...'"
+                        % (
+                            remove_reason,
+                            shape.text_frame.text[:50].replace('\n', ' '),
+                        )
+                    )
+        except Exception:
+            continue
+
+    for shape in shapes_to_remove:
+        try:
+            sp_element = shape._element
+            sp_element.getparent().remove(sp_element)
+            adjustments += 1
+        except Exception:
+            continue
+    # Remove purged shapes from the working list so overlap detection ignores them
+    if shapes_to_remove:
+        removed_ids = set(id(s) for s in shapes_to_remove)
+        shapes = [s for s in shapes if id(s) not in removed_ids]
+
+    # --- Pass 3: Overlap detection & vertical reflow (iterative) ---
+    # Fix 8: Run overlap detection in a loop (up to 3 passes) because
+    # pushing shape B below shape A may cause B to overlap shape C.
+    # A single forward pass misses these cascading overlaps.
     movable = []
     for s in shapes:
         try:
@@ -9795,37 +10273,61 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
             # Skip placeholder shapes (they are positioned by the layout)
             if getattr(s, "is_placeholder", False):
                 continue
+            # Skip template backdrop shapes (they are visual design elements)
+            if _is_backdrop(s):
+                continue
             movable.append(s)
         except Exception:
             continue
 
-    movable.sort(key=lambda s: (s.top, s.left))
+    # Fix 12D: Increase overlap passes from 3 to 5 to catch cascading overlaps.
+    MAX_OVERLAP_PASSES = 5
+    gap = Inches(0.15)
 
-    for i in range(len(movable)):
-        for j in range(i + 1, len(movable)):
-            try:
-                a = movable[i]
-                b = movable[j]
+    for _pass in range(MAX_OVERLAP_PASSES):
+        # Re-sort each pass since shapes may have moved
+        movable.sort(key=lambda s: (s.top, s.left))
+        pass_adjustments = 0
 
-                # Calculate overlap rectangle
-                overlap_left = max(a.left, b.left)
-                overlap_top = max(a.top, b.top)
-                overlap_right = min(a.left + a.width, b.left + b.width)
-                overlap_bottom = min(a.top + a.height, b.top + b.height)
+        for i in range(len(movable)):
+            for j in range(i + 1, len(movable)):
+                try:
+                    a = movable[i]
+                    b = movable[j]
 
-                if overlap_left < overlap_right and overlap_top < overlap_bottom:
-                    overlap_area = (overlap_right - overlap_left) * (overlap_bottom - overlap_top)
-                    smaller_area = min(a.width * a.height, b.width * b.height)
+                    # Calculate overlap rectangle
+                    overlap_left = max(a.left, b.left)
+                    overlap_top = max(a.top, b.top)
+                    overlap_right = min(a.left + a.width, b.left + b.width)
+                    overlap_bottom = min(a.top + a.height, b.top + b.height)
 
-                    if smaller_area > 0 and overlap_area > smaller_area * 0.30:
-                        # Push shape b below shape a with a small gap
-                        gap = Inches(0.15)
-                        new_top = a.top + a.height + gap
-                        if new_top + b.height <= max_bottom:
-                            b.top = new_top
-                            adjustments += 1
-            except Exception:
-                continue
+                    if overlap_left < overlap_right and overlap_top < overlap_bottom:
+                        overlap_area = (overlap_right - overlap_left) * (
+                            overlap_bottom - overlap_top
+                        )
+                        smaller_area = min(
+                            a.width * a.height, b.width * b.height
+                        )
+
+                        # Fix 12B: Near-zero threshold (5%) ensures text
+                        # shapes never overlap each other visually.
+                        if smaller_area > 0 and overlap_area > smaller_area * 0.05:
+                            # Push shape b below shape a with a small gap
+                            new_top = a.top + a.height + gap
+                            if new_top + b.height <= max_bottom:
+                                b.top = new_top
+                                pass_adjustments += 1
+                except Exception:
+                    continue
+
+        adjustments += pass_adjustments
+        if pass_adjustments == 0:
+            break  # No overlaps found — done
+        if VERBOSE:
+            print(
+                "  [LAYOUT] Overlap pass %d: %d adjustment(s)"
+                % (_pass + 1, pass_adjustments)
+            )
 
     return adjustments
 

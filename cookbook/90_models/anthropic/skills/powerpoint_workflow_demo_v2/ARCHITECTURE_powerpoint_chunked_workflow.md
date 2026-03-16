@@ -619,6 +619,8 @@ Fix 5: Template-aware prompts  →  LLM generates compatible content from the st
      ↓ (if content still mismatches)
 Fix 3: Font size guard         →  Prevents unreadable text after fit_text()
 Fix 4: Overlap reflow          →  Resolves shape collisions after transfer
+Fix 7: Title font floor        →  Prevents unreadable 10pt fallback titles
+Fix 8: Iterative overlap       →  Catches cascading overlaps (up to 3 passes)
 Fix 2: Background detection    →  Ensures correct contrast decisions
 Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remaining issues
 ```
@@ -628,6 +630,9 @@ Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remai
 | Template-aware prompts | Prompt (preventive) | `generate_chunk_pptx_v2()` | Tier 2 LLM code gen with `--template` |
 | Min font size | Assembly (corrective) | `_populate_placeholder_with_format()`, `_populate_slide()` | After `fit_text()` shrinks below 10pt/14pt |
 | Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` |
+| Title font floor | Assembly (corrective) | `_populate_slide()` | `max(20, title_font_size_pt)` for fallback titles |
+| Iterative overlap cascade | Assembly (corrective) | `sanitize_slide_layout()` | 3-pass overlap detection loop |
+| Tiny text purge | Assembly (corrective) | `sanitize_slide_layout()` | Triple-heuristic removal of unreadable text shapes |
 | Background detection | Contrast (corrective) | `_get_shape_background_color()` | During `_ensure_text_contrast()` |
 | Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |
 | OOXML Indexing strictness | Assembly (corrective) | `_make_high_contrast_fill()` | Resolves invisible structural color edits |
@@ -801,6 +806,7 @@ All transfer functions receive a [`ContentArea`](powerpoint_template_workflow.py
 | [`_render_pptx_to_images()`](powerpoint_template_workflow.py) | Renders all slides to per-slide PNGs using a PPTX→PDF→PNG pipeline. First converts PPTX to PDF via LibreOffice headless, then uses `pdftoppm` (from `poppler-utils`) to render each PDF page as an individual PNG. Falls back to LibreOffice direct `--convert-to png` (single-image) if `pdftoppm` is not installed, with a `[RENDER WARNING]` log. Raises `RuntimeError` if LibreOffice is not installed. |
 | [`_get_shape_background_color()`](powerpoint_template_workflow.py) | 6-layer background color detection. Traverses: (1) shape's own solidFill, (2) slide background solidFill, (3) slide background blipFill/gradFill/bgRef, (4) slide layout background, (5) slide master background, (6) large shapes covering the background. Uses theme colors (`dk1`/`lt1`) as heuristic fallback for dark templates. Returns hex color string. |
 | [`_fix_overlapping_shapes()`](powerpoint_template_workflow.py) | Post-transfer overlap detection and reflow for non-placeholder shapes. Phase 1: enforces minimum shape dimensions (8% slide width, 4% slide height). Phase 2: sorts shapes by vertical position and resolves vertical overlaps by reflowing downward. Phase 3: if reflow pushes shapes off-slide, scales all shapes down proportionally (max 50% reduction). Returns `True` if any shapes were adjusted. |
+| [`sanitize_slide_layout()`](powerpoint_template_workflow.py) | Post-assembly layout sanitization for all slides. (1) Boundary clamping (5% margin). (2) Min size enforcement (1 in × 0.5 in). (2b) Tiny text purge (triple-heuristic removal of unreadable text shapes). (3) Iterative overlap detection (up to 5 passes, re-sorting by top/left each pass) — catches cascading overlaps where pushing shape B below A causes B to overlap C. Shapes flagged `_is_template_backdrop` are excluded. Returns total adjustment count. |
 | [`_best_visual_placeholder()`](powerpoint_template_workflow.py) | Picks the best visual placeholder for inserting an image or chart. Score tuple: `(area>=min_area, overlap==0, -overlap, area)` — area sufficiency is the **primary** sort key. This was corrected after live testing revealed that the previous `(overlap==0, -overlap, area)` tuple allowed tiny zero-overlap footer placeholders to outrank large content placeholders, causing images to be placed in a small footer-left slot. |
 | [`_apply_visual_corrections()`](powerpoint_template_workflow.py) | Dispatches critical-severity issue fixes by re-invoking existing pipeline functions. Returns `True` if the file was modified. Only corrects `critical` severity in v1. |
 | [`step_visual_quality_review()`](powerpoint_template_workflow.py) | Step 5 executor. Render → inspect → correct → warn → store report. Fully non-blocking. |

@@ -790,8 +790,11 @@ def _build_visual_reference_section(
                 sections.append(
                     "### Template Reference for Slide %s (type: %s)\n"
                     "![Template slide](data:image/png;base64,%s)\n"
-                    "Reproduce this template's layout structure, color scheme, "
-                    "and visual hierarchy as closely as possible using native PPTX elements.\n"
+                    "Use this template as a VISUAL STYLE reference ONLY. "
+                    "Replicate the color scheme, font styles, decorative shapes, "
+                    "background design, and layout structure. "
+                    "Do NOT copy or paraphrase ANY text content from the template image. "
+                    "Your slide text must come ONLY from the storyboard content above.\n"
                     % (slide_num, slide_type, img_data)
                 )
             except Exception:
@@ -2510,6 +2513,12 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "- NEVER use dark text (#000000-#666666) on dark backgrounds (#000000-#555555).",
     "- NEVER use light text (#AAAAAA-#FFFFFF) on light backgrounds (#CCCCCC-#FFFFFF).",
     "- When in doubt, use white background with black text — readability is paramount.",
+    "MINIMUM TEXT BOX SIZE (CRITICAL):",
+    "- Any textbox containing body content MUST be at least Inches(3) wide and Inches(1.5) tall.",
+    "- NEVER create tiny text boxes that cram dense content into a small area.",
+    "- If space is limited, REDUCE the amount of text content rather than shrinking the text box.",
+    "- Maximum 4 text-bearing shapes per slide (excluding title placeholder and chart/table labels).",
+    "- Each text shape should contain at most 5 bullet points or 6 lines of text.",
 ]
 
 # Tier 2 fallback agent is now loaded from the agents/ package via get_agents().
@@ -3258,6 +3267,7 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                     or _sd.get("has_table", False)
                     or any(_kw in _vs.lower() for _kw in _DATA_VIS_KW)
                 )
+                _sd["global_slide_index"] = chunk_slides[_sd_i].slide_number - 1
 
         total_chunk_slides = len(slides_data)
 
@@ -3269,6 +3279,7 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         chunk_session = dict(session_state)
         chunk_session["generated_file"] = chunk_file
         chunk_session["total_slides"] = total_chunk_slides
+        chunk_session["global_total_slides"] = session_state.get("total_slides", total_chunk_slides)
         chunk_session["slides_data"] = slides_data
         chunk_session["output_path"] = assembled_path
         chunk_session["generated_images"] = {}
@@ -4527,6 +4538,19 @@ def main() -> None:
     # Post-merge contrast enforcement (template-independent safety net)
     if os.path.isfile(output_path):
         enforce_final_contrast(output_path)  # noqa: F405
+        # Fix 13A final safety net: run sanitize_presentation on the
+        # merged output to catch any tiny text shapes that survived
+        # template assembly or chunk merging. This is the last-resort
+        # purge before the user sees the file.
+        try:
+            from pptx import Presentation as _Prs  # noqa: F811
+
+            _final_prs = _Prs(output_path)
+            sanitize_presentation(_final_prs)  # noqa: F405
+            _final_prs.save(output_path)
+            print("[POST-MERGE] Final sanitize_presentation pass completed.")
+        except Exception as _e:
+            print("[POST-MERGE] Final sanitize pass failed: %s" % _e)
 
     elapsed = time.time() - start_time
     print("\n" + "=" * 60)

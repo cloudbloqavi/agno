@@ -98,7 +98,7 @@ An internal `_RateLimitTracker` aggregates estimated token counts dynamically ac
 When using `--template`, these automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, shape overlap reflow, strict text/visual bounding regions, and dynamic pie chart constraints
+- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, iterative shape overlap reflow (up to 3 passes for cascading overlaps), title font floor (min 20pt for fallback titles), strict text/visual bounding regions, and dynamic pie chart constraints
 - **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, overlapping prevention constraints, and layout constraints
 - **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
