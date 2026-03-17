@@ -80,7 +80,7 @@ def create_agents() -> Dict[str, Agent]:
     # Sonnet is fully capable of building a structured storyboard JSON; Opus-level
     # reasoning is not needed here.  Both share the 30K input-token/min pool but
     # Sonnet uses significantly fewer tokens per call.
-    # max_tokens capped at 4096: a 15-slide storyboard JSON is ~2,000-3,000 tokens.
+    # max_tokens capped at 8192: a 15-slide storyboard JSON with layout_constraints
     # output_schema omitted intentionally (same reason as before — Opus note still
     # applies in reverse: Sonnet with context-1m also requires streaming for large
     # outputs, so we parse JSON from prompt-instructed plain-text response).
@@ -89,7 +89,7 @@ def create_agents() -> Dict[str, Agent]:
         model=Claude(
             id="claude-sonnet-4-6",
             betas=["context-1m-2025-08-07"],
-            max_tokens=4096,
+            max_tokens=8192,
         ),
         description=(
             "You are a presentation strategist who first searches the web for current, "
@@ -167,7 +167,7 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer_fallback = Agent(
         name="Presentation Strategist (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview", search=True),
+        model=Gemini(id="gemini-3-pro-preview", search=True, max_output_tokens=8192),
         description="Fallback agent for Presentation Strategist using Gemini in case of rate limits or errors.",
         markdown=False,
     )

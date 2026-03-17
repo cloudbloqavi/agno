@@ -54,7 +54,7 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer = Agent(
         name="Presentation Strategist",
-        model=OpenAIResponses(id="gpt-5.2"),
+        model=OpenAIResponses(id="gpt-5.2", max_output_tokens=8192),
         description=(
             "You are a presentation strategist who first searches the web for current, "
             "relevant facts and data about the topic, then creates an optimized presentation "
@@ -117,7 +117,7 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer_fallback = Agent(
         name="Presentation Strategist (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview", search=True),
+        model=Gemini(id="gemini-3-pro-preview", search=True, max_output_tokens=8192),
         description="Fallback agent for Presentation Strategist using Gemini in case of rate limits or errors.",
         markdown=False,
     )

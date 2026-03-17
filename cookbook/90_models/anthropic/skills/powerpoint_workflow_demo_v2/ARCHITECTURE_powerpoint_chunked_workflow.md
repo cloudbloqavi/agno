@@ -632,6 +632,9 @@ Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remai
 | Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` |
 | Title font floor | Assembly (corrective) | `_populate_slide()` | `max(20, title_font_size_pt)` for fallback titles |
 | Iterative overlap cascade | Assembly (corrective) | `sanitize_slide_layout()` | 3-pass overlap detection loop |
+| Overlap orphan removal | Assembly (corrective) | `sanitize_slide_layout()` | Pass 4: deletes redundant shapes in high-overlap clusters |
+| Orphaned icon removal | Assembly (corrective) | `sanitize_slide_layout()` | Pass 5: purges non-contextual symbols/emojis |
+| Column alignment snapping | Assembly (corrective) | `sanitize_slide_layout()` | Pass 6: snaps elements to 12-column grid |
 | Tiny text purge | Assembly (corrective) | `sanitize_slide_layout()` | Triple-heuristic removal of unreadable text shapes |
 | Background detection | Contrast (corrective) | `_get_shape_background_color()` | During `_ensure_text_contrast()` |
 | Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |

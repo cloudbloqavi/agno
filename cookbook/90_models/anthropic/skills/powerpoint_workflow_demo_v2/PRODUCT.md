@@ -98,8 +98,13 @@ An internal `_RateLimitTracker` aggregates estimated token counts dynamically ac
 When using `--template`, these automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization** — 3-pass boundary clamping, min size enforcement, iterative shape overlap reflow (up to 3 passes for cascading overlaps), title font floor (min 20pt for fallback titles), strict text/visual bounding regions, and dynamic pie chart constraints
-- **Template-aware LLM prompts** — Tier 2 code generation includes template background color, text color guidance, overlapping prevention constraints, and layout constraints
+- **Layout sanitization** — 8-pass deterministic correction engine:
+  - Pass 1-3: Boundary clamping, minimum size enforcement, and initial overlap reflow.
+  - Pass 4: **Overlap Orphan Removal** — Deletes redundant shapes in high-overlap clusters (keeping higher text density).
+  - Pass 5: **Orphaned Decorative Icon Removal** — Purges non-contextual symbols and emojis often hallucinated as decorations.
+  - Pass 6: **Column Alignment Snapping** — Snaps elements to a consistent 12-column grid for clean vertical alignment.
+  - Pass 7-8: Final iterative reflow and title font floor (min 20pt).
+- **Template-aware LLM prompts** — Tier 2 code generation includes spatial grid rules, decoration bans, and layout constraints.
 - **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
 

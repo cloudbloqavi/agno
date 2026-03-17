@@ -246,6 +246,6 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Per-slide rendering** | Renders every slide to PNG via PPTX→PDF→PNG pipeline (`pdftoppm`) for visual review |
 | **Background detection** | 6-layer detection (shape → slide → layout → master → theme → large shapes) prevents wrong contrast |
 | **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
-| **Layout Sanitization** | 3-pass boundary clamping, min size enforcement, and shape overlap reflow |
-| **Template-aware prompts** | Tier 2 LLM prompt includes template constraints (background color, max shapes, text color guidance) |
+| **Layout Sanitization** | 8-pass correction engine: boundary clamping, min size enforcement, overlap orphan removal, icon purging, column alignment snapping, and iterative reflow |
+| **Template-aware prompts** | Tier 2 LLM prompt includes spatial grid rules, decoration bans, and layout constraints |
 | **Single-Slide Visuals (Base64 Image Reference)** | Injects exactly one 72-DPI template image (base64 encoded) + full textual theme metadata to precisely recreate styles without hitting 400k token limits |

@@ -1052,3 +1052,29 @@ pptx_team = Team(
 ### Key Principle
 
 The Phase 1 deterministic fixes (`_get_content_area`, `fit_text`, content area repositioning, table font control) are **not thrown away** in Phase 2. They become the internals of `PPTXBuilderTools`. The Team architecture wraps them with style-aware content planning, making the visual quality even better because content is generated to fit from the start.
+
+---
+
+## Phase 4: Deterministic Layout Refinement (March 2026 Batch)
+
+A series of high-precision deterministic passes added to `sanitize_slide_layout` to address recurring visual defects in complex slides.
+
+### Fix 12B: Overlap Orphan Removal (Pass 4)
+**Root Cause:** When the LLM generates multiple overlapping text boxes (hallucinating them as components), the system preserved both, creating unreadable stacks.
+**Solution:** Added logic to detect shape pairs with >50% overlap. The shape with significantly less text content is designated an "orphan" and removed, preserving the primary content shape.
+**Impact:** Eliminates duplicate/ghost text artifacts.
+
+### Fix 14: Orphaned Decorative Icon Removal (Pass 5)
+**Root Cause:** LLMs often inject single characters (emojis, wingdings) as "icons" that float without context or alignment.
+**Solution:** Scans shapes for single-character content using `unicodedata` to detect "Other Symbol" (So) categories. If an icon is not clearly part of a group or aligned with text, it is purged.
+**Impact:** Cleaner, more professional aesthetics; removes visual noise.
+
+### Fix 15: Column Alignment Snapping (Pass 6)
+**Root Cause:** Piecemeal placement results in "jittery" vertical alignment where elements in the same logical column are offset by 2-5%.
+**Solution:** Implemented a slide-wide 12-column grid. Shapes are snapped to the nearest logical column edge if they are within a 5% tolerance.
+**Impact:** Creates the "clean look" and vertical rhythm expected in professional decks.
+
+### Fix 12: Chart Scaling and Styling
+- **Pie Chart Square Constraint:** Forced pie charts to render as perfect squares within their allocated `ContentArea`. Prevents the common "elliptical pie" defect.
+- **Template Chart Styling:** Re-added `_apply_chart_style` call in `_transfer_charts` to ensure generated charts inherit the template's axis fonts, legend positioning, and series colors.
+- **Chart Label Enforcement:** Added `--chart-labels` logic (mapped to `show_data_labels` in storyboard) to force-enable numeric labels on complex charts.

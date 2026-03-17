@@ -200,7 +200,7 @@ class OpenAIResponses(Model):
         # Define base request parameters
         base_params: Dict[str, Any] = {
             "include": self.include,
-            "max_output_tokens": self.max_output_tokens,
+            "max_completion_tokens": self.max_output_tokens,
             "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,

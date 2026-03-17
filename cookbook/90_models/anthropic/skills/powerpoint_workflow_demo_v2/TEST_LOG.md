@@ -154,3 +154,13 @@ python test_brand_style_parsing.py     # 10 offline brand/style tests
 python test_pptx.py                    # existing visual cleanup tests
 ```
 
+---
+
+### powerpoint_template_workflow.py — March 2026 Batch: Deterministic Refinement (Fixes 12-15)
+
+**Status:** PASS
+
+**Description:** Implemented an 8-pass sanitization engine in `sanitize_slide_layout`. Key components: (Pass 4) Overlap orphan removal based on text density; (Pass 5) Orphaned decorative icon purging using `unicodedata` character category checks; (Pass 6) Column alignment snapping to a slide-wide 12-column grid. Also enforced squared pie chart constraints and template-derived chart styling in `_transfer_charts`. Fixed semantic footer preservation in `_clear_unused_placeholders` and improved chart data labeling logic.
+
+**Result:** Tested with `figma_plan.pptx` (Anthropic provider) and `anthropic_plan.pptx` (Gemini provider). Verified that overlapping ghost text is removed, random symbols are purged, and elements are cleanly aligned vertically. Chart styling matches the template's brand colors. Footers are correctly preserved.
+

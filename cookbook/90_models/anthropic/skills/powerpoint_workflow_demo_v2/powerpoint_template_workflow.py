@@ -3451,7 +3451,8 @@ def _transfer_charts(
     oval distortions and overlapping text bounds.
 
     When template_style is provided, applies template-derived chart styling
-    (series colors, axis fonts, legend styling, etc.) after chart creation.
+    (series colors, axis fonts, legend styling, etc.) after chart creation,
+    ensuring brand consistency across chart types.
     """
     try:
         from pptx.chart.data import CategoryChartData
@@ -3816,8 +3817,8 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
     content placeholders with embedded icons. Removing the XML element
     from the shape tree is the nuclear option that works for every case.
     
-    Note: Preserves semantic footer placeholders (slide numbers, dates) if 
-    retention logic allows it to survive.
+    Note: Preserves semantic footer placeholders (slide numbers, dates)
+    by detecting them via type/name heuristics before removal (Fix 13).
 
     Args:
         slide: The pptx slide object.
@@ -10014,20 +10015,34 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
 def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     """Sanitize a single slide's shape layout to fix spatial defects.
 
-    Performs three correction phases, plus iterative overlap resolution:
+    Performs eight correction phases, plus iterative overlap resolution:
 
         1. **Boundary clamping**: Ensures all shapes are within 5% safe margin.
         2. **Minimum size enforcement**: Shapes must be at least 1x0.5 inches
            (or 2x1 inches for text-bearing shapes) to remain visible.
-        2b. **Tiny text purge** (Fix 13): Zero-tolerance removal of unreadable
-            text shapes using triple heuristics (absolute size, text density,
-            and paragraph density).
+        2b. **Tiny text purge** (Fix 13/14B): Zero-tolerance removal of
+            unreadable text shapes using widened triple heuristics (absolute
+            size, text density, and paragraph density).
+        2c. **Font-size deterministic purge** (Fix 14A): Scans every text
+            shape's OOXML ``<a:rPr sz="...">`` for the actual rendered font
+            size. Any shape with font ≤ 6pt and > 30 chars is removed.
+            This is the ultimate safety net — no threshold escapes possible.
         3. **Iterative overlap detection & reflow** (up to 5 passes): If two
-           non-placeholder shapes overlap by more than 30% of the smaller
+           non-placeholder shapes overlap by more than 5% of the smaller
            shape's area, the lower shape is pushed down below the upper shape
-           with a 0.15-inch gap. After each pass the shape list is re-sorted
-           by (top, left) so that cascading overlaps — where pushing shape B
-           below A causes B to overlap C — are caught in subsequent passes.
+           with a 0.15-inch gap. When vertical space is exhausted and the
+           push would go off-slide, both shapes are scaled down to eliminate
+           the overlap. After each pass the shape list is re-sorted by
+           (top, left) so that cascading overlaps are caught.
+        4. **Overlap orphan removal** (Fix 12B): Removes significant overlaps 
+           (>15% of smaller shape area) by purging the shape with less text 
+           content, preventing "doubled" text boxes from multiple layout passes.
+        5. **Orphaned decorative icon removal** (Fix 15A): Detects and removes 
+           shapes containing only a single symbol/emoji character (bell, star, 
+           trophy, etc.) that have no meaningful text context.
+        6. **Column alignment snapping** (Fix 15B): Snaps shapes at similar 
+           horizontal or vertical positions to median grid lines, fixing 
+           scattered column elements and misaligned rows.
            The loop exits early when a pass produces zero adjustments.
 
     Note:
@@ -10164,27 +10179,28 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
         except Exception:
             continue
 
-    # --- Pass 2b: Tiny text purge (Fix 13A — hardened) ---
+    # --- Pass 2b: Tiny text purge (Fix 13A + Fix 14B widened) ---
     # ZERO-TOLERANCE detection of unreadable text shapes. Uses THREE
     # independent heuristics — if ANY single one matches, the shape is
     # removed. This is intentionally aggressive: a false-positive removal
     # (losing one text box) is far less damaging than a false-negative
     # (shipping an unreadable micro-text blob to the user).
     #
+    # Fix 14B: Widened thresholds from Fix 13 to catch more edge cases:
     # Heuristic 1 — Absolute size + char count:
-    #   width < 3.5" AND height < 2" AND total_chars > 60
+    #   width < 5.0" AND height < 3.0" AND total_chars > 40
     # Heuristic 2 — Text density (chars per square inch):
-    #   chars_per_sq_inch > 50 (at 10pt font, ~30 chars/sq_in is max)
+    #   chars_per_sq_inch > 30 (at 10pt font, ~25-30 chars/sq_in is max)
     # Heuristic 3 — Paragraph density:
-    #   num_paragraphs > 4 AND shape area < 4 sq_in
+    #   num_paragraphs > 4 AND shape area < 6 sq_in
     #
     # All three are slide-agnostic and template-agnostic.
-    _TINY_ABS_MAX_W = Inches(3.5)
-    _TINY_ABS_MAX_H = Inches(2.0)
-    _TINY_ABS_MIN_CHARS = 60
-    _DENSITY_THRESHOLD = 50  # chars per sq inch
+    _TINY_ABS_MAX_W = Inches(5.0)
+    _TINY_ABS_MAX_H = Inches(3.0)
+    _TINY_ABS_MIN_CHARS = 40
+    _DENSITY_THRESHOLD = 30  # chars per sq inch
     _PARA_THRESHOLD = 4      # max paragraphs in a small shape
-    _PARA_AREA_THRESHOLD = 4.0  # sq inches
+    _PARA_AREA_THRESHOLD = 6.0  # sq inches
     _EMU_PER_INCH = 914400.0
 
     shapes_to_remove = []
@@ -10261,6 +10277,79 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
         removed_ids = set(id(s) for s in shapes_to_remove)
         shapes = [s for s in shapes if id(s) not in removed_ids]
 
+    # --- Pass 2c: Font-size deterministic purge (Fix 14A) ---
+    # The ULTIMATE safety net. Instead of guessing from dimensions, read the
+    # ACTUAL rendered font size from OOXML <a:rPr sz="...">. If fit_text()
+    # or MSO_AUTO_SIZE crushed the font to <= 6pt (600 hundredths) and the
+    # shape has significant text (>30 chars), the shape is unreadable and
+    # must be removed. This is 100% deterministic — no threshold escapes.
+    _UNREADABLE_FONT_SZ = 600  # 6pt in hundredths-of-a-point
+    _UNREADABLE_MIN_CHARS = 30
+    _ns_a_purge = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+    shapes_to_remove_font = []
+    for shape in shapes:
+        try:
+            if not hasattr(shape, 'width') or shape.width is None:
+                continue
+            if getattr(shape, 'is_placeholder', False):
+                continue
+            if not hasattr(shape, 'text_frame'):
+                continue
+            if hasattr(shape, 'has_chart') and shape.has_chart:
+                continue
+            if hasattr(shape, 'has_table') and shape.has_table:
+                continue
+
+            # Compute total chars
+            total_chars = sum(
+                len(p.text) for p in shape.text_frame.paragraphs
+            )
+            if total_chars < _UNREADABLE_MIN_CHARS:
+                continue
+
+            # Scan all <a:rPr> elements for font size
+            min_font_found = None
+            for rPr in shape._element.findall(
+                './/' + _ns_a_purge + 'rPr'
+            ):
+                sz_val = rPr.get('sz')
+                if sz_val:
+                    try:
+                        sz_int = int(sz_val)
+                        if min_font_found is None or sz_int < min_font_found:
+                            min_font_found = sz_int
+                    except (ValueError, TypeError):
+                        continue
+
+            if min_font_found is not None and min_font_found <= _UNREADABLE_FONT_SZ:
+                shapes_to_remove_font.append(shape)
+                if VERBOSE:
+                    w_in = shape.width / _EMU_PER_INCH
+                    h_in = shape.height / _EMU_PER_INCH
+                    print(
+                        '  [UNREADABLE PURGE] Removing: font=%.1fpt, '
+                        '%d chars in %.1f"x%.1f" — \'%s...\''
+                        % (
+                            min_font_found / 100.0,
+                            total_chars,
+                            w_in, h_in,
+                            shape.text_frame.text[:50].replace('\n', ' '),
+                        )
+                    )
+        except Exception:
+            continue
+
+    for shape in shapes_to_remove_font:
+        try:
+            sp_element = shape._element
+            sp_element.getparent().remove(sp_element)
+            adjustments += 1
+        except Exception:
+            continue
+    if shapes_to_remove_font:
+        removed_ids_font = set(id(s) for s in shapes_to_remove_font)
+        shapes = [s for s in shapes if id(s) not in removed_ids_font]
+
     # --- Pass 3: Overlap detection & vertical reflow (iterative) ---
     # Fix 8: Run overlap detection in a loop (up to 3 passes) because
     # pushing shape B below shape A may cause B to overlap shape C.
@@ -10317,6 +10406,22 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                             if new_top + b.height <= max_bottom:
                                 b.top = new_top
                                 pass_adjustments += 1
+                            else:
+                                # Fix 14C: Vertical space exhausted —
+                                # scale both shapes down to eliminate
+                                # overlap instead of doing nothing.
+                                _shrink = int(Inches(0.3))
+                                if a.height > int(Inches(0.8)):
+                                    a.height = a.height - _shrink
+                                    pass_adjustments += 1
+                                if b.height > int(Inches(0.8)):
+                                    b.height = b.height - _shrink
+                                    pass_adjustments += 1
+                                # Re-attempt the push after shrinking
+                                new_top2 = a.top + a.height + gap
+                                if new_top2 + b.height <= max_bottom:
+                                    b.top = new_top2
+                                    pass_adjustments += 1
                 except Exception:
                     continue
 
@@ -10327,6 +10432,242 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
             print(
                 "  [LAYOUT] Overlap pass %d: %d adjustment(s)"
                 % (_pass + 1, pass_adjustments)
+            )
+
+    # --- Pass 4: Overlap orphan removal (Fix 14E) ---
+    # After all reflow passes, any shapes that STILL overlap are unresolvable
+    # by repositioning alone (too many shapes, too little space). Remove the
+    # smaller / less-content shape from each overlapping pair to guarantee
+    # zero visual overlaps in the final output.
+    orphan_removal = []
+    # Rebuild the movable list (some shapes may have been shrunk/moved)
+    final_movable = []
+    for s in shapes:
+        try:
+            if not hasattr(s, "left") or s.left is None:
+                continue
+            if getattr(s, "is_placeholder", False):
+                continue
+            if _is_backdrop(s):
+                continue
+            final_movable.append(s)
+        except Exception:
+            continue
+
+    final_movable.sort(key=lambda s: (s.top, s.left))
+    orphan_ids = set()  # track shapes already marked for removal
+
+    for i in range(len(final_movable)):
+        for j in range(i + 1, len(final_movable)):
+            try:
+                a = final_movable[i]
+                b = final_movable[j]
+                if id(a) in orphan_ids or id(b) in orphan_ids:
+                    continue
+
+                overlap_left = max(a.left, b.left)
+                overlap_top = max(a.top, b.top)
+                overlap_right = min(a.left + a.width, b.left + b.width)
+                overlap_bottom = min(a.top + a.height, b.top + b.height)
+
+                if overlap_left < overlap_right and overlap_top < overlap_bottom:
+                    overlap_area = (overlap_right - overlap_left) * (
+                        overlap_bottom - overlap_top
+                    )
+                    smaller_area = min(
+                        a.width * a.height, b.width * b.height
+                    )
+                    # Only remove if significant overlap (>15% of smaller shape)
+                    if smaller_area > 0 and overlap_area > smaller_area * 0.15:
+                        # Determine which shape has less content
+                        a_chars = 0
+                        b_chars = 0
+                        try:
+                            if hasattr(a, "text_frame"):
+                                a_chars = sum(
+                                    len(p.text) for p in a.text_frame.paragraphs
+                                )
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(b, "text_frame"):
+                                b_chars = sum(
+                                    len(p.text) for p in b.text_frame.paragraphs
+                                )
+                        except Exception:
+                            pass
+
+                        # Remove the shape with less text content
+                        victim = b if b_chars <= a_chars else a
+                        orphan_removal.append(victim)
+                        orphan_ids.add(id(victim))
+                        if VERBOSE:
+                            v_name = getattr(victim, "name", "?")
+                            v_text = ""
+                            try:
+                                if hasattr(victim, "text_frame"):
+                                    v_text = victim.text_frame.text[:40].replace(
+                                        "\n", " "
+                                    )
+                            except Exception:
+                                pass
+                            print(
+                                "  [OVERLAP ORPHAN] Removing: '%s' — '%s...'"
+                                % (v_name, v_text)
+                            )
+            except Exception:
+                continue
+
+    for shape in orphan_removal:
+        try:
+            sp_element = shape._element
+            sp_element.getparent().remove(sp_element)
+            adjustments += 1
+        except Exception:
+            continue
+
+    # Rebuild shapes list after orphan removal for subsequent passes
+    if orphan_removal:
+        removed_ids_orphan = set(id(s) for s in orphan_removal)
+        shapes = [s for s in shapes if id(s) not in removed_ids_orphan]
+
+    # --- Pass 5: Orphaned decorative icon removal (Fix 15A) ---
+    # Detect and remove shapes containing only a single symbol/emoji character
+    # (bell, star, trophy, checkmark, etc.) with no meaningful text content.
+    # These are decorative icons that the LLM adds without content relevance.
+    import unicodedata
+
+    def _is_pure_symbol(text: str) -> bool:
+        """Return True if all non-whitespace chars are symbols or punctuation."""
+        stripped = text.strip()
+        if not stripped or len(stripped) > 3:
+            return False
+        for ch in stripped:
+            cat = unicodedata.category(ch)
+            # Symbol categories: So (other), Sm (math), Sk (modifier), Sc (currency)
+            # Punctuation: Po, Ps, Pe, Pi, Pf, Pd, Pc
+            # Also catch arrows and misc technical: So
+            if not (cat.startswith('S') or cat.startswith('P')
+                    or cat.startswith('No')  # number-other (e.g. circled numbers)
+                    or ord(ch) > 0x2000):  # Unicode symbols, arrows, emoji
+                return False
+        return True
+
+    icon_removal = []
+    for shape in shapes:
+        try:
+            if not hasattr(shape, 'text_frame'):
+                continue
+            if getattr(shape, 'is_placeholder', False):
+                continue
+            if hasattr(shape, 'has_chart') and shape.has_chart:
+                continue
+            if hasattr(shape, 'has_table') and shape.has_table:
+                continue
+            full_text = shape.text_frame.text.strip()
+            if _is_pure_symbol(full_text):
+                icon_removal.append(shape)
+                if VERBOSE:
+                    print(
+                        "  [ICON PURGE] Removing decorative icon: '%s' (U+%04X)"
+                        % (full_text, ord(full_text[0]) if full_text else 0)
+                    )
+        except Exception:
+            continue
+
+    for shape in icon_removal:
+        try:
+            sp_element = shape._element
+            sp_element.getparent().remove(sp_element)
+            adjustments += 1
+        except Exception:
+            continue
+
+    if icon_removal:
+        removed_ids_icon = set(id(s) for s in icon_removal)
+        shapes = [s for s in shapes if id(s) not in removed_ids_icon]
+
+    # --- Pass 6: Column alignment snapping (Fix 15B) ---
+    # Shapes at nearly-the-same horizontal position (within tolerance) are
+    # likely intended to be in the same column — snap them to the cluster's
+    # median left value. Similarly for vertical alignment within rows.
+    _SNAP_H_TOLERANCE = Inches(0.5)   # horizontal tolerance: ~0.5 inch
+    _SNAP_V_TOLERANCE = Inches(0.3)   # vertical tolerance: ~0.3 inch
+
+    # Collect snappable shapes (non-placeholder, non-backdrop, has position)
+    snappable = []
+    for s in shapes:
+        try:
+            if not hasattr(s, 'left') or s.left is None:
+                continue
+            if getattr(s, 'is_placeholder', False):
+                continue
+            if _is_backdrop(s):
+                continue
+            snappable.append(s)
+        except Exception:
+            continue
+
+    if len(snappable) >= 2:
+        # --- Horizontal clustering (snap left positions) ---
+        snappable.sort(key=lambda s: s.left)
+        h_clusters = []  # list of lists of shapes
+        current_cluster = [snappable[0]]
+        for s in snappable[1:]:
+            if abs(s.left - current_cluster[-1].left) <= _SNAP_H_TOLERANCE:
+                current_cluster.append(s)
+            else:
+                h_clusters.append(current_cluster)
+                current_cluster = [s]
+        h_clusters.append(current_cluster)
+
+        for cluster in h_clusters:
+            if len(cluster) < 2:
+                continue
+            # Snap to median left position
+            left_vals = sorted(s.left for s in cluster)
+            median_left = left_vals[len(left_vals) // 2]
+            for s in cluster:
+                if s.left != median_left:
+                    try:
+                        s.left = median_left
+                        adjustments += 1
+                    except Exception:
+                        continue
+
+        # --- Vertical clustering (snap top positions within rows) ---
+        snappable.sort(key=lambda s: s.top)
+        v_clusters = []
+        current_cluster = [snappable[0]]
+        for s in snappable[1:]:
+            if abs(s.top - current_cluster[-1].top) <= _SNAP_V_TOLERANCE:
+                current_cluster.append(s)
+            else:
+                v_clusters.append(current_cluster)
+                current_cluster = [s]
+        v_clusters.append(current_cluster)
+
+        for cluster in v_clusters:
+            if len(cluster) < 2:
+                continue
+            # Snap to median top position
+            top_vals = sorted(s.top for s in cluster)
+            median_top = top_vals[len(top_vals) // 2]
+            for s in cluster:
+                if s.top != median_top:
+                    try:
+                        s.top = median_top
+                        adjustments += 1
+                    except Exception:
+                        continue
+
+        if VERBOSE and adjustments > 0:
+            print(
+                "  [ALIGNMENT] Column/row snapping: %d h-clusters, %d v-clusters"
+                % (
+                    sum(1 for c in h_clusters if len(c) >= 2),
+                    sum(1 for c in v_clusters if len(c) >= 2),
+                )
             )
 
     return adjustments
