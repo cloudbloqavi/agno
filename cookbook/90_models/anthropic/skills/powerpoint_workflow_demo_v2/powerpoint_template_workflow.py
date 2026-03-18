@@ -7352,14 +7352,16 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
     try:
         _count_prs = Presentation(pptx_path)
         expected_slides = len(_count_prs.slides)
-        print("  [RENDER] PPTX has %d slide(s) to render." % expected_slides)
+        if VERBOSE:
+            print("  [VERBOSE] [RENDER] PPTX has %d slide(s) to render." % expected_slides)
     except Exception:
         pass
 
     # --- Strategy 1: PPTX → PDF → per-page PNGs (preferred) ---
     pdftoppm_cmd = _shutil.which("pdftoppm")
     if pdftoppm_cmd:
-        print("  [RENDER] Using PPTX→PDF→PNG pipeline (pdftoppm available).")
+        if VERBOSE:
+            print("  [VERBOSE] [PIPELINE] Using PPTX->PDF->PNG pipeline (pdftoppm available).")
         # Step 1: Convert PPTX to PDF
         pdf_result = subprocess.run(
             [
@@ -7376,11 +7378,12 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
             timeout=120,
         )
         if pdf_result.returncode != 0:
-            print(
-                "  [RENDER WARNING] PDF conversion failed (exit %d): %s"
-                % (pdf_result.returncode, pdf_result.stderr[:200])
-            )
-            print("  [RENDER] Falling back to direct PNG conversion.")
+            if VERBOSE:
+                print(
+                    "  [VERBOSE] [RENDER WARNING] PDF conversion failed (exit %d): %s"
+                    % (pdf_result.returncode, pdf_result.stderr[:200])
+                )
+                print("  [VERBOSE] [RENDER] Falling back to direct PNG conversion.")
         else:
             base = os.path.splitext(os.path.basename(pptx_path))[0]
             pdf_path = os.path.join(output_dir, base + ".pdf")
@@ -7400,20 +7403,24 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
                     text=True,
                     timeout=120,
                 )
+                if VERBOSE:
+                    print("  [VERBOSE] [PIPELINE] PDF -> PNG conversion (pdftoppm) completed.")
                 if ppm_result.returncode == 0:
                     # pdftoppm names files: slide-01.png, slide-02.png, ...
                     pngs = sorted(glob.glob(os.path.join(output_dir, "slide-*.png")))
                     if pngs:
                         if expected_slides > 0 and len(pngs) != expected_slides:
-                            print(
-                                "  [RENDER WARNING] Expected %d slides but rendered %d PNGs."
-                                % (expected_slides, len(pngs))
-                            )
+                            if VERBOSE:
+                                print(
+                                    "  [VERBOSE] [RENDER WARNING] Expected %d slides but rendered %d PNGs."
+                                    % (expected_slides, len(pngs))
+                                )
                         else:
-                            print(
-                                "  [RENDER] Successfully rendered %d per-slide PNG(s) via PDF pipeline."
-                                % len(pngs)
-                            )
+                            if VERBOSE:
+                                print(
+                                    "  [VERBOSE] [RENDER] Successfully rendered %d per-slide PNG(s) via PDF pipeline."
+                                    % len(pngs)
+                                )
                         # Clean up intermediate PDF
                         try:
                             os.remove(pdf_path)
@@ -7421,10 +7428,11 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
                             pass
                         return pngs
                 else:
-                    print(
-                        "  [RENDER WARNING] pdftoppm failed (exit %d): %s"
-                        % (ppm_result.returncode, ppm_result.stderr[:200])
-                    )
+                    if VERBOSE:
+                        print(
+                            "  [VERBOSE] [RENDER WARNING] pdftoppm failed (exit %d): %s"
+                            % (ppm_result.returncode, ppm_result.stderr[:200])
+                        )
                 # Clean up intermediate PDF on failure
                 try:
                     os.remove(pdf_path)
@@ -7432,16 +7440,18 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
                     pass
 
     # --- Strategy 2: Direct PPTX → PNG (fallback — single image only) ---
-    print(
-        "  [RENDER WARNING] pdftoppm not available — falling back to direct PNG "
-        "conversion. This produces ONLY 1 image (first slide), not per-slide images!"
-    )
-    if expected_slides > 1:
+    if VERBOSE:
         print(
-            "  [RENDER WARNING] Visual review will only inspect 1 of %d slides! "
-            "Install poppler-utils for full per-slide rendering: "
-            "sudo apt-get install poppler-utils" % expected_slides
+            "  [VERBOSE] [RENDER WARNING] pdftoppm not available — falling back to direct PNG "
+            "conversion. This produces ONLY 1 image (first slide), not per-slide images!"
         )
+    if expected_slides > 1:
+        if VERBOSE:
+            print(
+                "  [VERBOSE] [RENDER WARNING] Visual review will only inspect 1 of %d slides! "
+                "Install poppler-utils for full per-slide rendering: "
+                "sudo apt-get install poppler-utils" % expected_slides
+            )
 
     result = subprocess.run(
         [
@@ -7457,6 +7467,8 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
         text=True,
         timeout=120,
     )
+    if VERBOSE:
+        print("  [VERBOSE] [PIPELINE] PPTX -> PDF conversion completed.")
     if result.returncode != 0:
         raise RuntimeError(
             "LibreOffice rendering failed (exit %d): %s"

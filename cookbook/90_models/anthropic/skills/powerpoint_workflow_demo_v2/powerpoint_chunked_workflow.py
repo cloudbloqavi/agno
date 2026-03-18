@@ -254,6 +254,10 @@ DEFAULT_INTER_CHUNK_DELAYS_MS = {
     "gemini": {"min": 1000, "max": 2000},   # 1-2K RPM, multi-million TPM
 }
 
+# Global verbose flag (overridden in main() or by session_state)
+VERBOSE = False
+
+
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
 
 
@@ -684,18 +688,20 @@ def _render_template_slides_to_png(
 
     lo_cmd = _shutil.which("libreoffice") or _shutil.which("soffice")
     if not lo_cmd:
-        print(
-            "[TEMPLATE REF] LibreOffice not found — skipping template visual references. "
-            "Install with: apt-get install libreoffice"
-        )
+        if VERBOSE:
+            print(
+                "[VERBOSE] [TEMPLATE REF] LibreOffice not found — skipping template visual references. "
+                "Install with: apt-get install libreoffice"
+            )
         return {}
 
     pdftoppm_cmd = _shutil.which("pdftoppm")
     if not pdftoppm_cmd:
-        print(
-            "[TEMPLATE REF] pdftoppm not found — skipping template visual references. "
-            "Install with: apt-get install poppler-utils"
-        )
+        if VERBOSE:
+            print(
+                "[VERBOSE] [TEMPLATE REF] pdftoppm not found — skipping template visual references. "
+                "Install with: apt-get install poppler-utils"
+            )
         return {}
 
     try:
@@ -705,16 +711,20 @@ def _render_template_slides_to_png(
             capture_output=True, text=True, timeout=120,
         )
         if pdf_result.returncode != 0:
-            print("[TEMPLATE REF] PDF conversion failed: %s" % pdf_result.stderr[:200])
+            if VERBOSE:
+                print("[VERBOSE] [TEMPLATE REF] PDF conversion failed: %s" % pdf_result.stderr[:200])
             return {}
 
         base = os.path.splitext(os.path.basename(template_path))[0]
         pdf_path = os.path.join(png_dir, base + ".pdf")
         if not os.path.isfile(pdf_path):
-            print("[TEMPLATE REF] PDF file not created.")
+            if VERBOSE:
+                print("[VERBOSE] [TEMPLATE REF] PDF file not created.")
             return {}
 
         # Step 2: PDF → PNGs via pdftoppm (72 DPI for optimal context budget)
+        if VERBOSE:
+            print("[VERBOSE] [PIPELINE] PPTX -> PDF -> PNG: Rendering per-slide placeholders at 72 DPI...")
         png_prefix = os.path.join(png_dir, "tmpl")
         ppm_result = subprocess.run(
             [pdftoppm_cmd, "-png", "-r", "72", pdf_path, png_prefix],
@@ -728,7 +738,8 @@ def _render_template_slides_to_png(
             pass
 
         if ppm_result.returncode != 0:
-            print("[TEMPLATE REF] pdftoppm failed: %s" % ppm_result.stderr[:200])
+            if VERBOSE:
+                print("[VERBOSE] [TEMPLATE REF] pdftoppm failed: %s" % ppm_result.stderr[:200])
             return {}
 
         pngs = sorted(glob.glob(os.path.join(png_dir, "tmpl-*.png")))
@@ -737,14 +748,16 @@ def _render_template_slides_to_png(
             result[idx] = png_path
 
         if result:
-            print(
-                "[TEMPLATE REF] Rendered %d template slide(s) as visual references."
-                % len(result)
-            )
+            if VERBOSE:
+                print(
+                    "[VERBOSE] [TEMPLATE REF] Rendered %d template slide(s) as visual references."
+                    % len(result)
+                )
         return result
 
     except Exception as e:
-        print("[TEMPLATE REF] Template rendering failed: %s" % e)
+        if VERBOSE:
+            print("[VERBOSE] [TEMPLATE REF] Template rendering failed: %s" % e)
         return {}
 
 
@@ -830,6 +843,8 @@ def _build_visual_reference_section(
         if ref_path and ref_path not in used_refs and os.path.isfile(ref_path):
             used_refs.add(ref_path)
             try:
+                if VERBOSE:
+                    print("[VERBOSE] [IMAGE] Encoding base64 reference for slide: %s" % ref_path)
                 with open(ref_path, "rb") as f:
                     img_data = base64.b64encode(f.read()).decode("ascii")
                 sections.append(
@@ -2705,6 +2720,12 @@ def generate_chunk_pptx_v2(
         "[CHUNK %d TIER2] Starting LLM code generation fallback (slides %d-%d)..."
         % (chunk_idx, first_slide, last_slide)
     )
+    if VERBOSE:
+        template_pngs = session_state.get("template_slide_pngs", {})
+        print(
+            "[VERBOSE] [TIER2] Visual references available: %d slide(s)"
+            % len(template_pngs)
+        )
 
     # Build the code generation prompt with full slide specifications
     slide_specs = []
