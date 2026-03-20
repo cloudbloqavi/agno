@@ -9,7 +9,7 @@ is selected at runtime.
 
 import os
 import sys
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -179,6 +179,38 @@ class SlideQualityReport(BaseModel):
             "defects and design quality improvements. Be specific and actionable."
         ),
     )
+
+
+class LayoutConstraints(BaseModel):
+    max_content_blocks: int = Field(default=4)
+    min_font_pt: int = Field(default=14)
+    content_zone_top_pct: int = Field(default=12)
+    content_zone_bottom_pct: int = Field(default=88)
+    text_weight: str = Field(default="balanced")
+
+class SlideStoryboard(BaseModel):
+    slide_number: int
+    slide_title: str
+    slide_type: str
+    key_points: List[str]
+    visual_suggestion: str
+    transition_note: str
+    semantic_type: str = Field(default="default")
+    key_metrics: List[str] = Field(default_factory=list)
+    layout_constraints: Optional[LayoutConstraints] = Field(default=None)
+    reuse_template_slide_idx: Optional[int] = Field(default=None)
+
+class StoryboardPlan(BaseModel):
+    total_slides: int
+    presentation_title: str
+    search_topic: str
+    target_audience: str
+    tone: str
+    brand_voice: str
+    visual_style: str = Field(default="clean_minimal")
+    content_balance: str = Field(default="focused")
+    global_context: str
+    slides: List[SlideStoryboard]
 
 
 # ---------------------------------------------------------------------------

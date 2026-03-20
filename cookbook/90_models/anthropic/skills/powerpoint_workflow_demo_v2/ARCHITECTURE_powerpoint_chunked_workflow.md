@@ -29,7 +29,8 @@ powerpoint_template_workflow.py
   │
   │  Provides (via wildcard import *):
   │    - All Pydantic models (SlideImageDecision, ImagePlan, ShapeIssue, etc.)
-  │    - All dataclasses (SlideContent, ContentArea, RegionMap, SemanticSlideContext, etc.)
+  │    - All dataclasses (SlideContent, ContentArea, RegionMap, SemanticSlideContext, 
+  │                      SlideLayoutProfile, TemplateVisualProfile, etc.)
   │    - All enums (ContentMix, SlideSemanticType, etc.)
   │    - All helper functions (_extract_slide_content, _populate_slide, etc.)
   │    - Semantic layout engine (_classify_slide_semantics, _extract_kpi_metrics,
@@ -98,6 +99,7 @@ User prompt + Template
     ▼
 Step 1: Optimize & Plan
     │  (claude-sonnet-4-6 → StoryboardPlan)
+    │  + VISUAL STYLE ANALYSIS (extraction of layout density, colors, fonts)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -163,27 +165,27 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback) | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback) | `web_search_20250305` | 200,000 max context |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback) | `DuckDuckGoTools()` | 200,000 max context |
 | 3 | **Chunk Generator** | `claude-opus-4-6` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 **Table 1.2: OpenAI Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| OpenAI JSON Output | 128,000 max context (Standard Mini) |
-| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3-pro-preview` (fallback)| `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3.1-pro-preview` (fallback)| `DuckDuckGoTools()` | 400,000 max context, 128,000 output limit |
 | 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| Structured Schema output | 128,000 max context |
+| 4 | **Image Planner** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| Structured Schema output | 128,000 max context |
 | 5 | **Slide Quality Reviewer** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| LibreOffice Vision QA | 128,000 max context |
 
 **Table 1.3: Gemini Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `search=True` | 1,000,000 max context |
-| 2 | **Query Optimizer** | `gemini-3-pro-preview` / `gpt-5.2` (fallback)| `search=True` | 1,000,000 max context |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3.1-pro-preview` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
 | 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 *\* Note: The Chunk Generator for Tier 1 is locked to Anthropic's Claude even if the global provider is set to `openai` or `gemini`, because it strictly relies on Claude's exclusive native `pptx` skill.*
@@ -206,27 +208,27 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback)| OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback)| `web_search_20250305` | 200,000 max context |
+| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 200,000 max context |
 | 3 | **PPTX Code Generator** | `claude-sonnet-4-6` & `haiku` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
-| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 **Table 2.2: OpenAI Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| OpenAI JSON Output | 128,000 max context |
-| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3-pro-preview` (fallback)| `web_search_preview` | 400,000 max context, 128,000 output limit |
+| 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3.1-pro-preview` (fallback)| `DuckDuckGoTools()` | 400,000 max context, 128,000 output limit |
 | 3 | **PPTX Code Generator** | `gpt-5.2` & `gpt-5-mini` | `PythonTools` | 400,000 max context |
-| 4 | **Image Planner** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| Structured Schema output | 128,000 max context |
+| 4 | **Image Planner** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| Structured Schema output | 128,000 max context |
 | 5 | **Slide Quality Reviewer** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| LibreOffice Vision QA | 128,000 max context |
 
 **Table 2.3: Gemini Global Provider Setting Active**
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `search=True` | 1,000,000 max context |
-| 2 | **Query Optimizer** | `gemini-3-pro-preview` / `gpt-5.2` (fallback)| `search=True` | 1,000,000 max context |
-| 3 | **PPTX Code Generator** | `gemini-3-pro-preview` & `flash` | `PythonTools` | 1,000,000 max context |
-| 4 | **Image Planner** | `gemini-3-flash-preview` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
+| 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
+| 2 | **Query Optimizer** | `gemini-3.1-pro-preview` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
+| 3 | **PPTX Code Generator** | `gemini-3.1-pro-preview` & `flash` | `PythonTools` | 1,000,000 max context |
+| 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
 ### Tier 3: python-pptx Direct (Last Resort)
@@ -476,6 +478,8 @@ The visual review step is fully non-blocking and skips gracefully if either depe
 | [`TemplateTableStyle`](powerpoint_template_workflow.py) | Table styling extracted from reference tables in the template | `header_font_size`, `header_font_color`, `header_font_family`, `header_fill`, `cell_font_size`, `cell_font_color`, `cell_font_family`, `cell_fill`, `border_color`, `raw_tblPr_xml` |
 | [`TemplateChartStyle`](powerpoint_template_workflow.py) | Chart styling extracted from reference charts in the template | `series_fill_colors`, `series_line_colors`, `axis_font_size`, `axis_font_family`, `legend_font_size`, `legend_font_family`, `data_label_font_size`, `plot_area_fill` |
 | [`TemplateStyle`](powerpoint_template_workflow.py) | Composite container for all extracted template styling | `theme` (`TemplateTheme`), `table_style` (`TemplateTableStyle`), `chart_style` (`TemplateChartStyle`), `body_font_size`, `title_font_size` |
+| [`SlideLayoutProfile`](powerpoint_chunked_workflow.py) | Visual characteristics of a single template slide layout | `layout_index`, `layout_name`, `placeholder_count`, `decorative_shapes`, `has_title`, `has_body`, `has_media`, `text_density`, `is_dark_bg` |
+| [`TemplateVisualProfile`](powerpoint_chunked_workflow.py) | Aggregated visual profile for an entire template | `slide_count`, `avg_placeholder_count`, `avg_decorative_shapes`, `layout_density`, `dominant_layout_style`, `max_comfortable_bullets`, `recommended_text_weight`, `aspect_ratio`, `is_primarily_dark` |
 
 **Data flow through the pipeline:**
 
@@ -621,6 +625,7 @@ Fix 3: Font size guard         →  Prevents unreadable text after fit_text()
 Fix 4: Overlap reflow          →  Resolves shape collisions after transfer
 Fix 7: Title font floor        →  Prevents unreadable 10pt fallback titles
 Fix 8: Iterative overlap       →  Catches cascading overlaps (up to 3 passes)
+Fix 13: Smart Template Purge   →  Intelligent classification preserves branded elements (headers/footers)
 Fix 2: Background detection    →  Ensures correct contrast decisions
 Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remaining issues
 ```
@@ -629,16 +634,16 @@ Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remai
 |-----------|-------|----------|--------|
 | Template-aware prompts | Prompt (preventive) | `generate_chunk_pptx_v2()` | Tier 2 LLM code gen with `--template` |
 | Min font size | Assembly (corrective) | `_populate_placeholder_with_format()`, `_populate_slide()` | After `fit_text()` shrinks below 10pt/14pt |
-| Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` |
+| Overlap reflow | Assembly (corrective) | `_fix_overlapping_shapes()` | After `_transfer_shapes()` (preserves structural template elements) |
 | Title font floor | Assembly (corrective) | `_populate_slide()` | `max(20, title_font_size_pt)` for fallback titles |
 | Iterative overlap cascade | Assembly (corrective) | `sanitize_slide_layout()` | 3-pass overlap detection loop |
 | Overlap orphan removal | Assembly (corrective) | `sanitize_slide_layout()` | Pass 4: deletes redundant shapes in high-overlap clusters |
 | Orphaned icon removal | Assembly (corrective) | `sanitize_slide_layout()` | Pass 5: purges non-contextual symbols/emojis |
 | Column alignment snapping | Assembly (corrective) | `sanitize_slide_layout()` | Pass 6: snaps elements to 12-column grid |
+| Smart Template Purge | Assembly (corrective) | `_clear_shape_text_only()` | Fix 13: intelligent classification and preservation of motifs |
 | Tiny text purge | Assembly (corrective) | `sanitize_slide_layout()` | Triple-heuristic removal of unreadable text shapes |
 | Background detection | Contrast (corrective) | `_get_shape_background_color()` | During `_ensure_text_contrast()` |
 | Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |
-| OOXML Indexing strictness | Assembly (corrective) | `_make_high_contrast_fill()` | Resolves invisible structural color edits |
 | Duck-Typing Pydantic | System (preventative) | `step_visual_quality_review()` | Resolves framework-level module loading failures |
 | Spatial Overflow Offset | Assembly (corrective) | `enforce_final_contrast()` | Staggers sequentially upscaled bounding boxes |
 
@@ -984,11 +989,11 @@ The workflow implements a **Swappable Agent Pattern** controlled by the `--llm-p
 | Agent Role | Claude Mode (Default) | OpenAI Mode | Gemini Mode |
 |------------|-----------------------|-------------|-------------|
 | **Brand Style Analyzer** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Query Optimizer** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Fallback Code (Tier 2)** | `sonnet` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
-| **Image Planner** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Query Optimizer** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Fallback Code (Tier 2)** | `sonnet` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Image Planner** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Visual QA (Step 5)** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
-| **Web Search Tool** | `web_search_20250305` | `web_search_preview` | `search=True` (native) |
+| **Web Search Tool** | `DuckDuckGoTools()` | `web_search_preview` | `DuckDuckGoTools()` / `search=True` |
 | **Tier 1 Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
 
 *\* Note: Even when the provider mode is `claude`, the image planner and visual QA explicitly default to Gemini models because Anthropic models lack the specific vision inspection capabilities required for these steps.*
@@ -1223,9 +1228,43 @@ flowchart TD
 
 The chunked workflow includes an intelligent brand/style extraction subsystem that runs at the start of Step 1 (`step_optimize_and_plan`), before the query optimizer.
 
+---
+
+## Template Visual Analysis (Visual Profile)
+
+When a `--template` is provided, the workflow performs a deep programmatic analysis of the template's visual structure. This analysis happens in `step_optimize_and_plan()` before the storyboard is generated.
+
+### Purpose
+The Visual Profile allows the `query_optimizer` to:
+- Understand the template's **layout density** (spacious vs. crowded)
+- Detect the **dominant background tone** (dark vs. light)
+- Enforce **content constraints** (e.g., max bullets per slide) based on actual template capacity
+- Align **visual suggestions** with the template's existing style (e.g., recommending icons if the template is decorative)
+
 ### Architecture
 
 ```mermaid
+flowchart TD
+    T[.pptx Template] -->|extract_style_from_template| TS[TemplateStyle]
+    T -->|_analyze_template_visual_profile| TVP[TemplateVisualProfile]
+    TVP -->|_format_visual_profile_for_prompt| VP_MD[Visual Profile Markdown]
+    VP_MD -->|Inject into prompt| QO[Query Optimizer Agent]
+    QO -->|Generate| SB[StoryboardPlan]
+```
+
+### Components
+
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `TemplateVisualProfile` | Dataclass | Aggregates visual data (density, counts, dark/light) across all slide layouts. |
+| `SlideLayoutProfile` | Dataclass | Holds visual characteristics for a single layout. |
+| `_analyze_template_visual_profile()` | Function | Performs the programmatic scan of the `.pptx` file. |
+| `_format_visual_profile_for_prompt()` | Function | Converts the profile into a markdown string for the LLM. |
+
+### Prompt Injection
+The visual profile is injected as a `## Template Visual Profile` section in the optimizer's system prompt. This ensures that the generated storyboard is physically compatible with the template's constraints from the very first step.
+
+---
 flowchart TD
     A["User Query"] --> B["Two-Stage Brand Analyzer<br/>(Regex Check + gpt-4o-mini)"]
     B --> C{"Brand Detected?"}

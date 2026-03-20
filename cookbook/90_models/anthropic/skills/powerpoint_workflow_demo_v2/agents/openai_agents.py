@@ -10,7 +10,7 @@ Models used:
     image_planner           -> gpt-5-mini   (fast, structured output)
     slide_quality_reviewer  -> gpt-5-mini   (vision analysis)
 
-Web search: Uses OpenAI's native web_search_preview tool via Responses API.
+Web search: Uses DuckDuckGoTools() for explicit search grounding.
 """
 
 from pathlib import Path
@@ -20,6 +20,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
 from agno.tools.python import PythonTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 from agents._shared import (
     BRAND_STYLE_ANALYZER_INSTRUCTIONS,
@@ -45,9 +46,7 @@ def create_agents() -> Dict[str, Agent]:
             "typography) or whether you need to search for brand guidelines."
         ),
         instructions=BRAND_STYLE_ANALYZER_INSTRUCTIONS,
-        tools=[
-            {"type": "web_search_preview"},
-        ],
+        tools=[DuckDuckGoTools()],
         output_schema=BrandStyleIntent,
         markdown=False,
     )
@@ -60,9 +59,7 @@ def create_agents() -> Dict[str, Agent]:
             "relevant facts and data about the topic, then creates an optimized presentation "
             "plan with a per-slide storyboard grounded in that research."
         ),
-        tools=[
-            {"type": "web_search_preview"},
-        ],
+        tools=[DuckDuckGoTools()],
         markdown=False,
     )
 
@@ -108,7 +105,8 @@ def create_agents() -> Dict[str, Agent]:
 
     brand_style_analyzer_fallback = Agent(
         name="Brand Style Analyzer (Fallback)",
-        model=Gemini(id="gemini-3-flash-preview", search=True),
+        model=Gemini(id="gemini-3-flash-preview"),
+        tools=[DuckDuckGoTools()],
         description="Fallback agent for Brand Style Analyzer using Gemini in case of rate limits or errors.",
         instructions=BRAND_STYLE_ANALYZER_INSTRUCTIONS,
         output_schema=BrandStyleIntent,
@@ -117,14 +115,15 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer_fallback = Agent(
         name="Presentation Strategist (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview", search=True, max_output_tokens=8192),
+        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=8192),
+        tools=[DuckDuckGoTools()],
         description="Fallback agent for Presentation Strategist using Gemini in case of rate limits or errors.",
         markdown=False,
     )
 
     fallback_code_agent_fallback = Agent(
         name="PPTX Code Generator (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview"),
+        model=Gemini(id="gemini-3.1-pro-preview"),
         description="Fallback agent for PPTX Code Generator using Gemini in case of rate limits or errors.",
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
@@ -150,7 +149,7 @@ def create_agents() -> Dict[str, Agent]:
 
     image_planner_fallback = Agent(
         name="Image Planner (Fallback)",
-        model=Gemini(id="gemini-3-flash-preview"),
+        model=Gemini(id="gemini-2.5-flash"),
         description="Fallback agent for Image Planner using Gemini in case of rate limits or errors.",
         instructions=IMAGE_PLANNER_INSTRUCTIONS,
         output_schema=ImagePlan,

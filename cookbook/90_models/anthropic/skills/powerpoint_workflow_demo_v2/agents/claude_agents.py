@@ -5,17 +5,15 @@ Provides the 5+1 swappable agents using Anthropic Claude models and native tools
 The Content Generator agent (with PPTX skill) is NOT included — it stays
 in the main workflow files because it is always Claude regardless of provider.
 
-Models used (optimised to preserve the claude-opus-4-6 30K input-token/min budget):
+Models used (optimised to preserve the 30K input-token/min budget):
     brand_style_analyzer      -> gpt-4o-mini  (OpenAI; completely separate rate-limit pool)
-    query_optimizer           -> claude-sonnet-4-6   (was Opus; Sonnet is sufficient for
-                                                      storyboarding and shares the same pool
-                                                      but is much more token-efficient)
-    fallback_code_agent       -> claude-sonnet-4-6   (primary Tier 2; better code gen quality
-                                                      than haiku for native charts/infographics)
+    query_optimizer           -> claude-haiku-4-5    (Fast, efficient storyboard generation)
+    fallback_code_agent       -> claude-sonnet-4-6   (Primary Tier 2; superior code gen quality)
+    fallback_code_agent_lite  -> claude-haiku-4-5    (Lite Tier 2 fallback; high throughput)
     fallback_code_agent_lite  -> claude-haiku-4-5    (lite Tier 2 fallback; 50K token/min pool;
                                                       used when sonnet fails or is rate-limited)
-    image_planner             -> gemini-3-flash-preview (unchanged — already uses Gemini)
-    slide_quality_reviewer    -> gemini-2.5-flash       (unchanged — already uses Gemini)
+    image_planner             -> gemini-2.5-flash (updated)
+    slide_quality_reviewer    -> gemini-2.5-flash (updated)
 
 Rate limit reference (Tier 1 as of 2026-03):
     claude-sonnet-4-6  : 50 RPM | 30K input tokens/min | 8K output tokens/min
@@ -33,6 +31,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.python import PythonTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Import Claude from local patch (same as main workflow files)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -87,7 +86,8 @@ def create_agents() -> Dict[str, Agent]:
     query_optimizer = Agent(
         name="Presentation Strategist",
         model=Claude(
-            id="claude-sonnet-4-6",
+            id="claude-haiku-4-5",
+            # "claude-sonnet-4-6",
             betas=["context-1m-2025-08-07"],
             max_tokens=8192,
         ),
@@ -96,16 +96,7 @@ def create_agents() -> Dict[str, Agent]:
             "relevant facts and data about the topic, then creates an optimized presentation "
             "plan with a per-slide storyboard grounded in that research."
         ),
-        tools=[
-            {
-                "type": "web_search_20250305",
-                "name": "web_search",
-                # Reduced from 5 → 2: limits web-search overhead in Step 1.
-                # Each web search call adds latency and input tokens; 2 focused
-                # searches provide sufficient grounding for a storyboard.
-                "max_uses": 2,
-            }
-        ],
+        tools=[DuckDuckGoTools()],
         markdown=False,
     )
 
@@ -167,14 +158,17 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer_fallback = Agent(
         name="Presentation Strategist (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview", search=True, max_output_tokens=8192),
+        model=Gemini(id="gemini-3.1-pro-preview", search=True, max_output_tokens=8192),
         description="Fallback agent for Presentation Strategist using Gemini in case of rate limits or errors.",
         markdown=False,
     )
 
+    # If even haiku-lite (the 50K poll) is hitting 429s, we jump ship
+    # completely to Gemini (gemini-3.1-pro-preview) code-gen as a
+    # last-resort reasoning agent (separate non-Anthropic token pool).
     fallback_code_agent_fallback = Agent(
-        name="PPTX Code Generator (Fallback)",
-        model=Gemini(id="gemini-3-pro-preview"),
+        name="Fallback Code Generation (Tier 2 - Gemini)",
+        model=Gemini(id="gemini-3.1-pro-preview"),
         description="Fallback agent for PPTX Code Generator using Gemini in case of rate limits or errors.",
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[

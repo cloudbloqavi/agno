@@ -1,8 +1,8 @@
 # Design: Visual Quality Improvements for PowerPoint Template Assembly
 
 **Date:** 2026-02-19
-**Last Updated:** 2026-03-06
-**Status:** Implemented (Phase 1 + Phase 2 + Phase 3 + Phase 4)
+**Last Updated:** 2026-03-18
+**Status:** Implemented (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 + Phase 6 + Phase 7 + Phase 8)
 **Files affected:**
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_template_workflow.py`
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` (inherits all improvements via `from powerpoint_template_workflow import *`; also adds a 3-tier chunk generation fallback — see below)
@@ -144,6 +144,21 @@ Targeted fix for dense microscopic text blocks appearing randomly across templat
 | Post-Merge Safety Net | `powerpoint_chunked_workflow.py` — `sanitize_presentation` | ✅ Implemented |
 
 **Fix 13** solves the issue of LLMs generating dense text dumped into small dimensions resulting in an unreadable 4-5pt font after `fit_text()`. It implements a triple-heuristic detection engine triggering on absolute size (>60 chars in <3.5"x2"), text density (>50 chars/sq in), or paragraph density (>4 paras in <4 sq in).
+
+---
+
+### Phase 8: Template Visual Profile Analysis — COMPLETE ✅
+
+Programmatic analysis of template visual characteristics to inform the storyboard optimizer (March 2026).
+
+| Component | Function(s) / Dataclasses | Status |
+|-----------|---------------------------|--------|
+| Profile Dataclasses | `SlideLayoutProfile`, `TemplateVisualProfile` | ✅ Implemented |
+| Layout Analysis | `_analyze_template_visual_profile()` | ✅ Implemented |
+| Prompt Formatting | `_format_visual_profile_for_prompt()` | ✅ Implemented |
+| Optimizer Injection | `step_optimize_and_plan()` | ✅ Implemented |
+
+**Key Feature:** The visual profile extracts metrics like layout density, decorative shape counts, and background luminance. This data is injected into the LLM optimizer's prompt, allowing it to generate storyboards that are "physically aware" of the template's constraints (e.g., reducing bullet counts for dense templates).
 
 ---
 

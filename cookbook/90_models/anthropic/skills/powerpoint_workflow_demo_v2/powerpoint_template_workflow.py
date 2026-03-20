@@ -49,9 +49,10 @@ Template Quality Safeguards:
   When a template is provided, these safeguards prevent common styling issues:
   - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review and prompt context
   - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
-  - Layout sanitization: 3-pass boundary clamping, min size enforcement, and shape overlap reflow
+  - Layout sanitization (Fix 13B): 3-pass boundary clamping, min size enforcement, and shape overlap reflow (preserves structural template elements)
   - Template-aware LLM prompts: Tier 2 prompt includes template constraints (bg color, text color, max shapes)
   - Template visual references: Injects rendered template PNGs into chunk prompts for spatial layout context
+  - Smart Template Purge (Fix 13): Intelligent classification preserves branded headers, footers, and decorative motifs while clearing placeholder text.
 
 Usage:
     # Basic usage with a template:
@@ -207,8 +208,446 @@ def _shape_has_any_text(shape) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Pydantic Models for Structured Data Flow
+# Template Visual Preservation — Shape Classification Engine
 # ---------------------------------------------------------------------------
+# Fix 13: Instead of removing ALL non-placeholder shapes during template
+# assembly, classify each shape as "structural" (keep as visual identity),
+# "content_carrier" (clear text, keep shape), or "disposable" (remove).
+# This preserves the template's branded headers, footers, colored cards,
+# chevron arrows, and other visual elements that make the template unique.
+# ---------------------------------------------------------------------------
+
+_TEMPLATE_PLACEHOLDER_PATTERNS = (
+    "xxx", "enter ", "lorem ", "click to ", "type ", "insert ",
+    "your text", "sample text", "add text", "placeholder",
+    "project goal", "description here",
+)
+
+_BRANDING_PATTERNS = (
+    "www.", "http", ".com", ".org", ".net", ".io",
+)
+
+
+def _get_shape_text_content(shape) -> str:
+    """Extract all visible text from a shape (including nested groups).
+
+    Returns the concatenated stripped text from all ``<a:t>`` nodes.
+    """
+    try:
+        ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        parts = []
+        for t_node in shape._element.findall(".//{%s}t" % ns_a):
+            if t_node.text and t_node.text.strip():
+                parts.append(t_node.text.strip())
+        return " ".join(parts)
+    except Exception:
+        return ""
+
+
+def _extract_shape_fill_hex(shape) -> str:
+    """Extract the solid fill color hex from a shape, or empty string.
+
+    Inspects ``<a:solidFill><a:srgbClr>`` in the shape's XML.
+    """
+    try:
+        ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+        for sf in shape._element.findall(".//%ssolidFill" % ns_a):
+            srgb = sf.find("%ssrgbClr" % ns_a)
+            if srgb is not None:
+                val = srgb.get("val", "")
+                if val:
+                    return val.upper()
+    except Exception:
+        pass
+    return ""
+
+
+def _classify_template_shape(
+    shape,
+    slide_width: int,
+    slide_height: int,
+    accent_colors: list | None = None,
+) -> str:
+    """Classify a non-placeholder template shape for the smart purge.
+
+    Fix 13: Replaces the blanket "remove all shapes with text" strategy
+    with intelligent classification that preserves the template's visual
+    identity while still clearing content that would conflict with new text.
+
+    Classification priority (checked in order):
+        1. Header/footer zone — shapes in the top 10% or bottom 12% of the
+           slide with short or branding text are structural (branded headers,
+           footer bars, page numbers, URLs).
+        2. Template placeholder text — shapes whose text matches common
+           template filler patterns (XXX, "Enter ... here", Lorem, etc.)
+           are content carriers: their text is cleared but the shape is kept.
+        3. Colored accent shapes — shapes with a solid fill matching the
+           template's accent palette and very short labels (<=15 chars) are
+           structural (colored cards, icon badges, progress bars).
+        4. GroupShapes with uniform children — groups with >=3 similarly-sized
+           children are structural (card grids, icon grids, chevron flows).
+        5. Small decorative shapes — shapes under the small threshold are
+           structural (icons, bullets, small accents).
+        6. Short-text shapes with colored fills — shapes with <=30 chars of
+           text AND a colored fill are content carriers (labeled cards).
+        7. Default — shapes with substantial text (>30 chars) are disposable.
+
+    Args:
+        shape: A python-pptx shape object from the template slide.
+        slide_width: Slide width in EMU.
+        slide_height: Slide height in EMU.
+        accent_colors: Optional list of template accent color hex strings
+            (uppercase, no '#'). Used to identify accent-filled shapes.
+
+    Returns:
+        One of: "structural", "content_carrier", "disposable"
+    """
+    if accent_colors is None:
+        accent_colors = []
+    accent_set = {c.upper().lstrip("#") for c in accent_colors if c}
+
+    shape_text = _get_shape_text_content(shape)
+    text_lower = shape_text.lower().strip()
+    text_len = len(shape_text)
+    has_text = text_len > 0
+
+    shape_top = getattr(shape, "top", 0) or 0
+    shape_left = getattr(shape, "left", 0) or 0
+    shape_w = getattr(shape, "width", 0) or 0
+    shape_h = getattr(shape, "height", 0) or 0
+    shape_bottom = shape_top + shape_h
+
+    sw = int(slide_width) if slide_width else 1
+    sh = int(slide_height) if slide_height else 1
+
+    # --- Heuristic 1: Header/footer zone shapes ---
+    in_footer_zone = shape_bottom > int(sh * 0.88)
+    in_header_zone = shape_top < int(sh * 0.10)
+
+    if in_footer_zone:
+        # Footer zone shapes are almost always structural (branded bars,
+        # page numbers, copyright notices, URLs)
+        return "structural"
+
+    if in_header_zone and text_len <= 40:
+        # Short text in the header zone is likely a branded title or
+        # decorative label — preserve it
+        return "structural"
+
+    # Check branding text patterns anywhere on the slide
+    if has_text and text_len <= 60:
+        for bp in _BRANDING_PATTERNS:
+            if bp in text_lower:
+                return "structural"
+        # ALL-CAPS text with <=3 words is likely a branded label
+        words = shape_text.split()
+        if len(words) <= 3 and shape_text == shape_text.upper() and text_len <= 30:
+            return "structural"
+        # Copyright symbols
+        if "\u00a9" in shape_text or "(c)" in text_lower:
+            return "structural"
+
+    # --- Heuristic 2: Template placeholder text ---
+    if has_text:
+        for pattern in _TEMPLATE_PLACEHOLDER_PATTERNS:
+            if text_lower.startswith(pattern) or text_lower == pattern:
+                return "content_carrier"
+
+    # --- Heuristic 3: Colored accent shapes (short or no text) ---
+    fill_hex = _extract_shape_fill_hex(shape)
+    has_accent_fill = fill_hex and fill_hex in accent_set
+
+    if not has_text and has_accent_fill:
+        return "structural"
+
+    if has_accent_fill and text_len <= 15:
+        return "structural"
+
+    # --- Heuristic 4: GroupShapes with uniform children ---
+    shape_name = getattr(shape, "name", "") or ""
+    is_group = "group" in shape_name.lower() or "Group" in str(
+        type(shape).__name__
+    )
+    if is_group:
+        try:
+            child_count = len(list(shape.shapes))
+            if child_count >= 3:
+                return "structural"
+        except Exception:
+            pass
+        # Groups with accent fill children
+        if has_accent_fill:
+            return "structural"
+
+    # --- Heuristic 5: Small decorative shapes ---
+    from pptx.util import Emu
+
+    _SMALL_THRESHOLD = Emu(457200)  # ~0.5 inch
+    is_small = shape_w <= _SMALL_THRESHOLD and shape_h <= _SMALL_THRESHOLD
+    if is_small and not has_text:
+        return "structural"
+
+    # --- Heuristic 6: Short-text shapes with colored fills ---
+    if has_text and text_len <= 30 and fill_hex:
+        return "content_carrier"
+
+    # Non-text shapes with no fill — likely decorative lines/connectors
+    if not has_text:
+        # Large non-text, non-accent shapes are visual noise
+        _THIN_THRESHOLD = Emu(72000)
+        is_thin = shape_w <= _THIN_THRESHOLD or shape_h <= _THIN_THRESHOLD
+        _CONNECTOR_SPAN_PCT = 0.40
+        is_connector = is_thin and (
+            shape_w > int(sw * _CONNECTOR_SPAN_PCT)
+            or shape_h > int(sh * _CONNECTOR_SPAN_PCT)
+        )
+        if is_connector:
+            return "disposable"
+        # Keep other non-text decorative shapes (they are part of the template)
+        return "structural"
+
+    # --- Default: substantial text → disposable ---
+    return "disposable"
+
+
+def _clear_shape_text_only(shape) -> None:
+    """Clear all visible text from a shape while preserving its visual structure.
+
+    Removes text content from all ``<a:t>`` nodes at any nesting depth
+    (handles TextBoxes, GroupShapes, SmartArt, etc.) but keeps the shape's
+    fill, border, position, and size intact.
+
+    Used for "content_carrier" shapes during the smart template purge (Fix 13):
+    the shape's visual appearance is preserved (colored card, labeled box)
+    but its placeholder text is stripped to make room for new content.
+    """
+    try:
+        ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        for t_node in shape._element.findall(".//{%s}t" % ns_a):
+            t_node.text = ""
+    except Exception:
+        pass
+
+
+def _extract_header_style_from_preserved_shapes(
+    slide, slide_height: int, template_style: "TemplateStyle | None"
+) -> None:
+    """Fix 13 Phase 4: Extract font styling from preserved template header shapes.
+
+    After the smart template purge (Fix 13), structural shapes marked with
+    ``templateBackdrop`` are preserved on each slide. This function scans
+    those shapes that sit in the **header zone** (top 25% of the slide) and
+    extracts the dominant font family, color (RGB hex), and size. If found,
+    these values are patched into ``template_style`` so that
+    ``_populate_placeholder_with_format`` automatically applies the branded
+    header styling to new slide titles, ensuring perfect brand alignment 
+    even if standard placeholders are missing.
+
+    This is especially important for templates where the visual identity
+    resides in free-floating shapes (GroupShapes, accent bars with text)
+    rather than in standard placeholder formatting.
+
+    The function is safe to call multiple times; it only **overwrites** fields
+    that are currently empty or default-valued in ``template_style``.
+    """
+    if template_style is None:
+        return
+
+    ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    header_threshold = int(slide_height * 0.25)
+
+    # Collect font info from all preserved header-zone shapes
+    _fonts: list[str] = []
+    _colors: list[str] = []
+    _sizes: list[int] = []
+
+    try:
+        for shape in slide.shapes:
+            # Only look at shapes preserved as structural backdrops
+            if shape._element.get("templateBackdrop") != "1":
+                continue
+
+            # Must be in the header zone
+            try:
+                shape_top = int(shape.top) if shape.top is not None else 0
+                shape_height = int(shape.height) if shape.height is not None else 0
+            except Exception:
+                continue
+            if shape_top + shape_height > header_threshold:
+                continue
+
+            # Scan all <a:rPr> elements for font info
+            for rPr in shape._element.findall(".//{%s}rPr" % ns_a):
+                # Font family from <a:latin typeface="..."/>
+                latin = rPr.find("{%s}latin" % ns_a)
+                if latin is not None:
+                    tf_val = latin.get("typeface", "")
+                    if tf_val and not tf_val.startswith("+"):
+                        _fonts.append(tf_val)
+
+                # Font color from <a:solidFill><a:srgbClr val="..."/>
+                solidFill = rPr.find("{%s}solidFill" % ns_a)
+                if solidFill is not None:
+                    srgb = solidFill.find("{%s}srgbClr" % ns_a)
+                    if srgb is not None:
+                        c_val = srgb.get("val", "")
+                        if c_val and len(c_val) == 6:
+                            _colors.append(c_val)
+
+                # Font size from sz attribute (hundredths of a point)
+                sz_val = rPr.get("sz")
+                if sz_val:
+                    try:
+                        _sizes.append(int(sz_val) // 100)
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        return
+
+    # Patch template_style with the most common extracted values
+    # Only overwrite empty/default fields to avoid clobbering explicit values
+    if _fonts and not template_style.title_font_family:
+        # Pick most common font
+        from collections import Counter
+        font_counter = Counter(_fonts)
+        template_style.title_font_family = font_counter.most_common(1)[0][0]
+        if VERBOSE:
+            print(
+                "[VERBOSE] Phase 4: inherited header font family '%s' "
+                "from preserved template shapes" % template_style.title_font_family
+            )
+
+    if _colors and not template_style.title_font_color_rgb:
+        from collections import Counter
+        color_counter = Counter(_colors)
+        template_style.title_font_color_rgb = color_counter.most_common(1)[0][0]
+        if VERBOSE:
+            print(
+                "[VERBOSE] Phase 4: inherited header font color #%s "
+                "from preserved template shapes" % template_style.title_font_color_rgb
+            )
+
+    if _sizes and template_style.title_font_size_pt == 28:
+        # Only override the default 28pt if we found explicit sizes
+        from collections import Counter
+        size_counter = Counter(_sizes)
+        best_sz = size_counter.most_common(1)[0][0]
+        if best_sz >= 14:  # Sanity: don't adopt tiny sizes
+            template_style.title_font_size_pt = best_sz
+            if VERBOSE:
+                print(
+                    "[VERBOSE] Phase 4: inherited header font size %dpt "
+                    "from preserved template shapes" % best_sz
+                )
+
+
+
+
+
+def _inject_content_into_carriers(
+    slide, content, carrier_shapes: list, template_style=None
+):
+    """Phase 2: Inject generated content into cleared content-carrier shapes.
+
+    Maps body_paragraphs (from SlideContent) or key_points (from dict)
+    onto the cleared carrier shapes by position order (top-left -> bottom-right).
+    The carrier's existing font styling is preserved -- only the text content
+    is replaced.
+
+    Returns a modified copy of ``content`` where injected items have been
+    removed, so ``_populate_slide`` only handles the remainder.
+    """
+    if not carrier_shapes or not content:
+        return content
+
+    # Extract text items from either SlideContent dataclass or dict
+    items = []
+    items_attr = None  # which attribute to update on return
+    if hasattr(content, "body_paragraphs"):
+        # SlideContent dataclass
+        items = list(getattr(content, "body_paragraphs", []) or [])
+        items_attr = "body_paragraphs"
+    elif isinstance(content, dict):
+        items = content.get("key_points", []) or content.get("bullet_points", [])
+        items_attr = "key_points" if "key_points" in content else "bullet_points"
+
+    if not items:
+        return content
+
+    # Sort carriers by position: top-to-bottom, left-to-right
+    def _sort_key(s):
+        try:
+            return (getattr(s, "top", 0) or 0, getattr(s, "left", 0) or 0)
+        except Exception:
+            return (0, 0)
+
+    sorted_carriers = sorted(carrier_shapes, key=_sort_key)
+
+    injected_count = 0
+    for i, carrier in enumerate(sorted_carriers):
+        if i >= len(items):
+            break
+
+        item = items[i]
+        if isinstance(item, dict):
+            text = item.get("text", "") or item.get("title", "") or str(item)
+        else:
+            text = str(item)
+
+        if not text.strip():
+            continue
+
+        try:
+            if hasattr(carrier, "text_frame"):
+                tf = carrier.text_frame
+                for para in tf.paragraphs:
+                    para.clear()
+
+                first_para = tf.paragraphs[0]
+                if first_para.runs:
+                    first_para.runs[0].text = text.strip()
+                else:
+                    run = first_para.add_run()
+                    run.text = text.strip()
+                    if template_style:
+                        try:
+                            font = run.font
+                            if template_style.body_font_family:
+                                font.name = template_style.body_font_family
+                            if template_style.body_font_size_pt:
+                                from pptx.util import Pt
+                                font.size = Pt(
+                                    min(template_style.body_font_size_pt, 14)
+                                )
+                            if template_style.body_font_color_rgb:
+                                from pptx.dml.color import RGBColor
+                                font.color.rgb = RGBColor.from_string(
+                                    template_style.body_font_color_rgb
+                                )
+                        except Exception:
+                            pass
+
+                injected_count += 1
+        except Exception:
+            pass
+
+    if injected_count > 0:
+        if VERBOSE:
+            print(
+                "[VERBOSE] Phase 2: injected %d content items into "
+                "%d carrier shapes" % (injected_count, len(sorted_carriers))
+            )
+        # Remove injected items from content
+        remaining = items[injected_count:]
+        if hasattr(content, "body_paragraphs"):
+            # SlideContent dataclass — mutate in-place
+            content.body_paragraphs = remaining
+        elif isinstance(content, dict):
+            reduced = dict(content)
+            reduced[items_attr] = remaining
+            return reduced
+
+    return content
 
 
 class SlideImageDecision(BaseModel):
@@ -5518,7 +5957,7 @@ def step_generate_content(step_input: StepInput, session_state: Dict) -> StepOut
     content_agent = Agent(
         name="Content Generator",
         model=Claude(
-            id="claude-opus-4-6",
+            id="claude-sonnet-4-6",
             betas=["context-1m-2025-08-07"],
             # "claude-sonnet-4-5-20250929",
             # # Or: "claude-sonnet-4-6", "claude-opus-4-6"
@@ -7156,18 +7595,107 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
 
         # ---------------------------------------------------------------
         # Template Slide Reuse: If a template slide exists at this index,
-        # reuse it as the visual backdrop.  Fix 11 replaces Fix 10's
-        # clearing loop with a fully generic, template-agnostic purge.
-        # Fix 12A adds connector/divider line detection.
+        # reuse it as the visual backdrop.
         #
-        # Strategy (template-agnostic):
+        # Fix 13 (Smart Template Purge) replaces Fix 11's blanket
+        # "remove all shapes with text" strategy with intelligent
+        # shape classification that PRESERVES the template's visual
+        # identity (branded headers, footers, colored cards, chevron
+        # arrows, icon grids) while clearing only disposable content.
+        #
+        # Strategy (template-agnostic, backward-compatible):
         #   1. Placeholders: keep footer-type, clear text from the rest.
-        #   2. Any shape (incl. Groups) with text at any depth → remove.
-        #   3. Non-text shapes: keep small decorative elements UNLESS
-        #      they are connector lines (thin but span >40% of slide).
+        #   2. Non-placeholder shapes: classify via _classify_template_shape
+        #      → "structural"       → keep as-is (visual identity)
+        #      → "content_carrier"  → clear text, keep shape structure
+        #      → "disposable"       → remove entirely
         # ---------------------------------------------------------------
+        # Phase E2: Smart Visual Reuse & Template Slide Mapping
+        # Unifies template logic: If a reuse index is specified, either
+        # copy its shapes in-place (if idx < template_slide_count) or 
+        # duplicate it (if appending). Then, run the intelligent smart
+        # purge on the resulting slide to clear text but preserve visuals.
+        # ---------------------------------------------------------------
+        _reuse_idx = None
+        _raw_reuse = _slide_meta_asm.get("reuse_template_slide_idx")
+        if _raw_reuse is not None:
+            try:
+                _reuse_idx = int(_raw_reuse)
+            except (ValueError, TypeError):
+                pass
+                
+        _cloned_for_reuse = False
+        
         if idx < _template_slide_count:
             new_slide = _reusable_template_slides[idx]
+            
+            # If a different template slide was requested, copy its XML contents into the current slide
+            if _reuse_idx is not None and 0 <= _reuse_idx < _template_slide_count and _reuse_idx != idx:
+                try:
+                    import copy as _copy_mod
+                    _src_slide = template_prs.slides[_reuse_idx]
+                    _dst_sp_tree = new_slide.shapes._spTree
+                    
+                    # Clear current slide shapes
+                    for _child in list(_dst_sp_tree):
+                        _tag = getattr(_child, "tag", "") or ""
+                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                            spTree_remove = getattr(_dst_sp_tree, "remove", None)
+                            if spTree_remove: spTree_remove(_child)
+                            
+                    # Copy from source slide
+                    _src_sp_tree = _src_slide.shapes._spTree
+                    for _child in list(_src_sp_tree):
+                        _tag = getattr(_child, "tag", "") or ""
+                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                            _dst_sp_tree.append(_copy_mod.deepcopy(_child))
+                            
+                    _cloned_for_reuse = True
+                    if VERBOSE:
+                        print("[VERBOSE] Slide %d: Overrode visual structure with template slide %d" % (idx + 1, _reuse_idx + 1))
+                except Exception as e:
+                    if VERBOSE:
+                        print("[VERBOSE] Slide %d: Failed to copy visual structure from slide %d: %s" % (idx + 1, _reuse_idx + 1, str(e)))
+            else:
+                _cloned_for_reuse = (_reuse_idx == idx)
+
+        else:
+            # Beyond original template count
+            if _reuse_idx is not None and 0 <= _reuse_idx < _template_slide_count:
+                try:
+                    import copy as _copy_mod
+                    _src_slide = template_prs.slides[_reuse_idx]
+                    new_slide = output_prs.slides.add_slide(_src_slide.slide_layout)
+                    _dst_sp_tree = new_slide.shapes._spTree
+                    
+                    # Clear default layout shapes on destination slide
+                    for _child in list(_dst_sp_tree):
+                        _tag = getattr(_child, "tag", "") or ""
+                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                            spTree_remove = getattr(_dst_sp_tree, "remove", None)
+                            if spTree_remove: spTree_remove(_child)
+                            
+                    # Copy from source slide
+                    _src_sp_tree = _src_slide.shapes._spTree
+                    for _child in list(_src_sp_tree):
+                        _tag = getattr(_child, "tag", "") or ""
+                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                            _dst_sp_tree.append(_copy_mod.deepcopy(_child))
+
+                    _cloned_for_reuse = True
+                    if VERBOSE:
+                        print("[VERBOSE] Slide %d: Cloned template slide %d for visual reuse" % (idx + 1, _reuse_idx + 1))
+                except Exception as e:
+                    if VERBOSE:
+                        print("[VERBOSE] Slide %d: Failed to clone template slide %d: %s" % (idx + 1, _reuse_idx + 1, str(e)))
+                    new_slide = output_prs.slides.add_slide(layout)
+            else:
+                new_slide = output_prs.slides.add_slide(layout)
+
+        # Now, if this slide is derived from a template (pre-existing or cloned), run smart purge
+        if idx < _template_slide_count or _cloned_for_reuse:
+            _structural_kept = 0
+            _carriers_cleared = 0
             _shapes_removed = 0
             _groups_removed = 0
             _decorative_removed = 0
@@ -7176,14 +7704,15 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             # Footer placeholder indices to preserve (date, footer, number).
             _FOOTER_PH_INDICES = {10, 11, 12, 13, 14, 15, 16}
 
-            # Thresholds for keeping small decorative non-text shapes.
-            from pptx.util import Emu
-            _THIN_THRESHOLD = Emu(72000)    # ~0.08" — thin connector lines
-            _SMALL_THRESHOLD = Emu(457200)  # ~0.5" — small icons/bullets
+            # Extract accent colors for shape classification
+            _accent_colors = []
+            if template_style and template_style.theme.accent_colors:
+                _accent_colors = template_style.theme.accent_colors
 
             # Collect elements to remove AFTER iteration to avoid XML
             # tree mutation during traversal.
             _elements_to_remove = []
+            _carrier_shapes = []  # Phase 2: track cleared carriers
 
             for shape in list(new_slide.shapes):
                 _mark_as_backdrop(shape)
@@ -7202,36 +7731,29 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                         pass
                     continue
 
-                # --- Generic text check (Fix 11 RC-1+RC-2) ---
-                # Uses XML scan so it catches Groups, SmartArt, etc.
-                if _shape_has_any_text(shape):
+                # --- Fix 13: Smart shape classification ---
+                classification = _classify_template_shape(
+                    shape, slide_width, slide_height, _accent_colors
+                )
+
+                if classification == "structural":
+                    # Keep the shape as visual identity — no modification
+                    _structural_kept += 1
+                    continue
+                elif classification == "content_carrier":
+                    # Clear text but keep the shape's visual structure
+                    _clear_shape_text_only(shape)
+                    _carrier_shapes.append(shape)  # Phase 2: track for injection
+                    _carriers_cleared += 1
+                    continue
+                else:
+                    # "disposable" — remove the shape
                     _elements_to_remove.append(shape._element)
-                    # Track groups vs regular shapes for logging
                     shape_name = getattr(shape, 'name', '') or ''
                     if 'group' in shape_name.lower() or 'Group' in str(type(shape).__name__):
                         _groups_removed += 1
                     else:
                         _shapes_removed += 1
-                    continue
-
-                # --- Non-text shapes: keep only small decorative (RC-3) ---
-                shape_w = getattr(shape, 'width', 0) or 0
-                shape_h = getattr(shape, 'height', 0) or 0
-                is_thin = (shape_w <= _THIN_THRESHOLD or shape_h <= _THIN_THRESHOLD)
-                is_small = (shape_w <= _SMALL_THRESHOLD and shape_h <= _SMALL_THRESHOLD)
-                # Fix 12A: Detect connector/divider lines — thin in one
-                # dimension but spanning >40% of the slide in the other.
-                # These are NOT small icons; they are visual noise.
-                _CONNECTOR_SPAN_PCT = 0.40
-                _sw = int(slide_width)
-                _sh = int(slide_height)
-                is_connector = is_thin and (
-                    shape_w > int(_sw * _CONNECTOR_SPAN_PCT)
-                    or shape_h > int(_sh * _CONNECTOR_SPAN_PCT)
-                )
-                if is_connector or (not is_thin and not is_small):
-                    _elements_to_remove.append(shape._element)
-                    _decorative_removed += 1
                     continue
 
             # Remove collected elements from the XML tree
@@ -7243,18 +7765,36 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                     pass
 
             print(
-                "  Slide %d: template purge — "
-                "%d text shape(s), %d group(s), %d decorative(s) removed; "
+                "  Slide %d: smart purge — "
+                "%d structural kept, %d carrier(s) cleared, "
+                "%d text shape(s) removed, %d group(s) removed, "
                 "%d placeholder(s) cleared"
-                % (idx + 1, _shapes_removed, _groups_removed,
-                   _decorative_removed, _placeholders_cleared)
+                % (idx + 1, _structural_kept, _carriers_cleared,
+                   _shapes_removed, _groups_removed,
+                   _placeholders_cleared)
             )
-        else:
-            new_slide = output_prs.slides.add_slide(layout)
+
 
         # Pass generated image bytes and source dimensions to _populate_slide.
         # src_slide_width/height enable proportional shape rescaling (P1-1).
         # footer_* params enable footer standardization (P1-2).
+
+        # Fix 13 Phase 4: On the first slide, extract header font styling
+        # from preserved structural shapes so all titles inherit the
+        # template's branded header appearance.
+        if idx == 0 and template_style is not None:
+            _extract_header_style_from_preserved_shapes(
+                new_slide, slide_height, template_style
+            )
+
+        # Fix 13 Phase 2: Inject content into cleared carrier shapes
+        # before _populate_slide so the template's branded card layout
+        # is reused instead of creating new text boxes.
+        if idx < _template_slide_count and '_carrier_shapes' in locals():
+            content = _inject_content_into_carriers(
+                new_slide, content, _carrier_shapes, template_style
+            )
+
         _populate_slide(
             new_slide,
             content,
@@ -7268,6 +7808,92 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             date_text=session_state.get("date_text", ""),
             show_slide_number=session_state.get("show_slide_numbers", False),
         )
+
+        # ---------------------------------------------------------------
+        # Phase C: Logo Detection & Brand Swap for Template Slides
+        # ---------------------------------------------------------------
+        if _template_slide_count > 0 and session_state.get("brand_logo_path"):
+            try:
+                _logo_info = _detect_logo_shapes(new_slide, slide_width, slide_height)
+                if _logo_info:
+                    _replace_logo_with_brand(
+                        new_slide, _logo_info[0], session_state.get("brand_logo_path")
+                    )
+                    if VERBOSE:
+                        print(f"[VERBOSE] Slide {idx+1}: Swapped template logo with brand logo.")
+            except Exception as e:
+                if VERBOSE:
+                    print(f"[VERBOSE] Logo swap failed for slide {idx+1}: {e}")
+
+        # ---------------------------------------------------------------
+        # Phase D3: Default Design System for non-template presentations
+        # When no template is provided (_template_slide_count == 0),
+        # apply programmatic visual decorations (accent lines, header/
+        # footer bars, backgrounds) based on the storyboard's visual_style.
+        # ---------------------------------------------------------------
+        if _template_slide_count == 0:
+            try:
+                _storyboard = session_state.get("storyboard")
+                _vs_name = ""
+                if _storyboard is not None:
+                    _vs_name = getattr(_storyboard, "visual_style", "") or ""
+                _style_preset = _get_visual_style_preset(_vs_name)
+                if _style_preset:
+                    _slide_type = _slide_meta_asm.get("slide_type", "content")
+                    _d_added = _apply_default_design_system(
+                        new_slide,
+                        _style_preset,
+                        _slide_type,
+                        slide_width,
+                        slide_height,
+                        slide_number=idx + 1,
+                        total_slides=total_slides,
+                        brand_logo_path=session_state.get("brand_logo_path"),
+                    )
+                    if VERBOSE and _d_added:
+                        print(
+                            "[VERBOSE] Slide %d: applied default design system "
+                            "(%d decorative shapes, style='%s')"
+                            % (idx + 1, _d_added, _vs_name)
+                        )
+            except Exception as e:
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Default design system failed for slide %d: %s"
+                        % (idx + 1, str(e))
+                    )
+
+        # ---------------------------------------------------------------
+        # Accent Pattern Replication for excess slides
+        # When the template has accent lines but we've gone past the
+        # template's slide count, replicate the accent pattern on new slides.
+        # ---------------------------------------------------------------
+        if idx >= _template_slide_count and _template_slide_count > 0:
+            try:
+                _vis_profile = session_state.get("template_visual_profile")
+                _accent_pat = None
+                if _vis_profile is not None:
+                    _accent_pat = getattr(_vis_profile, "accent_pattern", None)
+                if _accent_pat:
+                    _fb_color = None
+                    if template_style and template_style.theme.accent_colors:
+                        _fb_color = template_style.theme.accent_colors[0]
+                    _apply_accent_pattern_to_slide(
+                        new_slide, _accent_pat, slide_width, slide_height,
+                        fallback_color_hex=_fb_color,
+                    )
+                    if VERBOSE:
+                        print(
+                            "[VERBOSE] Slide %d: replicated accent pattern "
+                            "from template" % (idx + 1)
+                        )
+            except Exception as e:
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Accent replication failed for slide %d: %s"
+                        % (idx + 1, str(e))
+                    )
+
 
     # ---------------------------------------------------------------
     # Remove unused template slides (when template has more slides
@@ -7741,6 +8367,543 @@ def _fix_alignment(slide, slide_width: int) -> bool:
     return modified
 
 
+def _download_brand_logo(brand_name: str, cache_dir: str) -> str | None:
+    """Download a brand logo securely based on the brand name."""
+    import urllib.request
+    import os
+    if not brand_name: return None
+    try:
+        domain = brand_name.lower().replace(" ", "") + ".com"
+        url = f"https://logo.clearbit.com/{domain}"
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+            out_path = os.path.join(cache_dir, f"{brand_name}_logo.png")
+        else:
+            out_path = f"{brand_name}_logo.png"
+        
+        if os.path.exists(out_path): 
+            return out_path
+            
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status == 200:
+                with open(out_path, 'wb') as f:
+                    f.write(response.read())
+                if VERBOSE:
+                    print(f"[VERBOSE] Downloaded brand logo for {brand_name} to {out_path}")
+                return out_path
+    except Exception as e:
+        if VERBOSE:
+            print(f"[VERBOSE] Failed to download logo for {brand_name}: {e}")
+    return None
+
+
+def _detect_logo_shapes(slide, slide_width: int, slide_height: int) -> list:
+    """Detect shapes that are likely logos based on heuristic position/size analysis.
+
+    A shape is classified as a logo candidate if:
+      - It's a picture (shape_type 13 or 11) or small auto-shape with an image fill
+      - Its area is less than 5% of slide area (logos are small)
+      - Its width and height are both less than 20% of the respective slide dimension
+      - It's positioned in a corner or header/footer region
+
+    Returns a list of dicts with keys: shape, region, confidence.
+    """
+    logos = []
+    slide_area = slide_width * slide_height
+    max_area_ratio = 0.05
+    max_dim_ratio = 0.20
+
+    for shape in slide.shapes:
+        if shape.is_placeholder:
+            continue
+        try:
+            s_w = shape.width
+            s_h = shape.height
+            if s_w is None or s_h is None or s_w <= 0 or s_h <= 0:
+                continue
+
+            shape_area = s_w * s_h
+            area_ratio = shape_area / slide_area
+            w_ratio = s_w / slide_width
+            h_ratio = s_h / slide_height
+
+            # Must be small enough to be a logo
+            if area_ratio > max_area_ratio or w_ratio > max_dim_ratio or h_ratio > max_dim_ratio:
+                continue
+
+            # Must be a picture or have image fill
+            shape_type_val = int(shape.shape_type) if shape.shape_type else 0
+            is_picture = shape_type_val in (13, 11)
+
+            if not is_picture:
+                # Check for image fill on non-picture shapes
+                try:
+                    fill = shape.fill
+                    if fill.type is None:
+                        continue
+                    fill_type_str = str(fill.type).upper()
+                    if "PICTURE" not in fill_type_str:
+                        continue
+                except Exception:
+                    continue
+
+            # Check if shape has text — logos typically don't
+            if getattr(shape, "has_text_frame", False):
+                text = shape.text_frame.text.strip()
+                if len(text) > 3:  # Allow very short text (e.g., icon labels)
+                    continue
+
+            # Determine position region
+            top_pct = shape.top / slide_height * 100.0
+            left_pct = shape.left / slide_width * 100.0
+            bottom_pct = (shape.top + s_h) / slide_height * 100.0
+            right_pct = (shape.left + s_w) / slide_width * 100.0
+
+            # Classify region and confidence
+            region = "unknown"
+            confidence = 0.5
+
+            if top_pct < 15 and left_pct < 20:
+                region = "top-left"
+                confidence = 0.9
+            elif top_pct < 15 and right_pct > 80:
+                region = "top-right"
+                confidence = 0.85
+            elif bottom_pct > 85 and left_pct < 20:
+                region = "bottom-left"
+                confidence = 0.8
+            elif bottom_pct > 85 and right_pct > 80:
+                region = "bottom-right"
+                confidence = 0.8
+            elif top_pct < 12:
+                region = "top"
+                confidence = 0.7
+            elif bottom_pct > 88:
+                region = "bottom"
+                confidence = 0.7
+            else:
+                continue  # Logos in the middle of a slide are unlikely
+
+            logos.append({
+                "shape": shape,
+                "region": region,
+                "confidence": confidence,
+                "left": shape.left,
+                "top": shape.top,
+                "width": s_w,
+                "height": s_h,
+            })
+
+        except Exception:
+            pass  # Logo detection is best-effort
+
+    # Sort by confidence (highest first)
+    logos.sort(key=lambda x: x["confidence"], reverse=True)
+    return logos
+
+
+def _replace_logo_with_brand(
+    slide,
+    logo_info: dict,
+    brand_logo_path: str,
+) -> bool:
+    """Replace a detected logo shape with a brand logo image.
+
+    Preserves the original logo's position and size. Adds the new logo image
+    at the same coordinates, then removes the original shape.
+
+    Args:
+        slide: The slide object containing the logo.
+        logo_info: Dict from _detect_logo_shapes with shape, position, size.
+        brand_logo_path: Absolute path to the replacement brand logo image.
+
+    Returns:
+        True if replacement was successful, False otherwise.
+    """
+    import os
+    from pptx.util import Emu
+
+    if not brand_logo_path or not os.path.isfile(brand_logo_path):
+        return False
+
+    try:
+        original_shape = logo_info["shape"]
+        left = logo_info["left"]
+        top = logo_info["top"]
+        width = logo_info["width"]
+        height = logo_info["height"]
+
+        # Add replacement image at the same position
+        slide.shapes.add_picture(brand_logo_path, left, top, width, height)
+
+        # Remove original shape by finding it in the slide's XML tree
+        sp_tree = slide.shapes._spTree
+        sp_element = original_shape._element
+        sp_tree.remove(sp_element)
+
+        return True
+
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Logo replacement failed: %s" % str(e))
+        return False
+
+
+def _apply_accent_pattern_to_slide(
+    slide,
+    accent_pattern: dict,
+    slide_width: int,
+    slide_height: int,
+    fallback_color_hex: str | None = None,
+) -> bool:
+    """Apply a detected accent line pattern to a slide programmatically.
+
+    Uses the accent_pattern dict from TemplateVisualProfile to recreate the
+    accent bar/line on new slides that don't have the template's original accent.
+
+    Args:
+        slide: The slide to add the accent to.
+        accent_pattern: Dict with orientation, region, color, avg geometry.
+        slide_width: Slide width in EMU.
+        slide_height: Slide height in EMU.
+        fallback_color_hex: Fallback hex color if accent_pattern has no color.
+
+    Returns:
+        True if an accent shape was added.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Emu
+
+    if not accent_pattern:
+        return False
+
+    orientation = accent_pattern.get("orientation", "horizontal")
+    color_hex = accent_pattern.get("color") or fallback_color_hex
+    if not color_hex:
+        return False
+
+    try:
+        accent_rgb = RGBColor.from_string(color_hex)
+    except Exception:
+        return False
+
+    try:
+        avg_top = accent_pattern.get("avg_top_pct", 0)
+        avg_left = accent_pattern.get("avg_left_pct", 0)
+        avg_width = accent_pattern.get("avg_width_pct", 0)
+        avg_height = accent_pattern.get("avg_height_pct", 0)
+
+        # Convert percentages to EMU
+        shape_top = int(slide_height * avg_top / 100.0)
+        shape_left = int(slide_width * avg_left / 100.0)
+        shape_width = int(slide_width * avg_width / 100.0)
+        shape_height = int(slide_height * avg_height / 100.0)
+
+        # Ensure minimum visible size
+        if orientation == "horizontal":
+            shape_height = max(shape_height, Emu(25400))  # At least 2pt
+            shape_width = max(shape_width, int(slide_width * 0.3))  # At least 30%
+        else:
+            shape_width = max(shape_width, Emu(25400))  # At least 2pt
+            shape_height = max(shape_height, int(slide_height * 0.3))  # At least 30%
+
+        # Add the accent shape (rectangle type = 1)
+        accent = slide.shapes.add_shape(
+            1, shape_left, shape_top, shape_width, shape_height
+        )
+        accent.fill.solid()
+        accent.fill.fore_color.rgb = accent_rgb
+        accent.line.fill.background()  # No border
+        _mark_as_backdrop(accent)
+
+        return True
+
+    except Exception as e:
+        if VERBOSE:
+            print("[VERBOSE] Accent pattern replication failed: %s" % str(e))
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Phase D: Non-Template Default Design System
+# ---------------------------------------------------------------------------
+
+_VISUAL_STYLE_PRESETS: dict = {
+    "bold_modern": {
+        "bg_hex": "1A1A2E",
+        "text_hex": "EAEAEA",
+        "accent_hex": "E94560",
+        "secondary_accent_hex": "0F3460",
+        "font_heading": "Outfit",
+        "font_body": "Inter",
+        "accent_orientation": "vertical",
+        "accent_region": "left",
+        "accent_width_pct": 1.2,
+        "header_height_pct": 6.0,
+        "footer_height_pct": 4.5,
+    },
+    "clean_minimal": {
+        "bg_hex": "FFFFFF",
+        "text_hex": "2D2D2D",
+        "accent_hex": "3B82F6",
+        "secondary_accent_hex": "E2E8F0",
+        "font_heading": "Inter",
+        "font_body": "Inter",
+        "accent_orientation": "horizontal",
+        "accent_region": "top",
+        "accent_width_pct": 100.0,
+        "accent_height_pct": 0.6,
+        "header_height_pct": 0,
+        "footer_height_pct": 3.5,
+    },
+    "creative_experimental": {
+        "bg_hex": "0F0F1A",
+        "text_hex": "F8F8F8",
+        "accent_hex": "8B5CF6",
+        "secondary_accent_hex": "1E1B4B",
+        "font_heading": "Space Grotesk",
+        "font_body": "Inter",
+        "accent_orientation": "vertical",
+        "accent_region": "right",
+        "accent_width_pct": 1.5,
+        "header_height_pct": 5.0,
+        "footer_height_pct": 4.0,
+    },
+    "corporate_professional": {
+        "bg_hex": "F5F5F5",
+        "text_hex": "333333",
+        "accent_hex": "0066CC",
+        "secondary_accent_hex": "E0E7EF",
+        "font_heading": "Roboto",
+        "font_body": "Roboto",
+        "accent_orientation": "horizontal",
+        "accent_region": "top",
+        "accent_width_pct": 100.0,
+        "accent_height_pct": 0.8,
+        "header_height_pct": 7.0,
+        "footer_height_pct": 4.5,
+    },
+}
+
+
+def _get_visual_style_preset(style_name: str) -> dict:
+    """Return a design-token dictionary for the given visual style.
+
+    Falls back to 'corporate_professional' if the style is unknown or
+    'template_driven' (which means the template itself provides styling).
+
+    Args:
+        style_name: One of bold_modern, clean_minimal,
+                    creative_experimental, corporate_professional.
+
+    Returns:
+        Dict of design tokens (colors, fonts, accent geometry).
+    """
+    if not style_name or style_name == "template_driven":
+        return {}
+    return dict(_VISUAL_STYLE_PRESETS.get(
+        style_name, _VISUAL_STYLE_PRESETS["corporate_professional"]
+    ))
+
+
+def _apply_default_design_system(
+    slide,
+    preset: dict,
+    slide_type: str,
+    slide_width: int,
+    slide_height: int,
+    slide_number: int = 0,
+    total_slides: int = 0,
+    brand_logo_path: str | None = None,
+) -> int:
+    """Apply a default design system to a non-template slide.
+
+    Adds accent lines, header bars, footer bars, and optional slide
+    numbers using the visual style preset. Skips if preset is empty
+    (template-driven) or the slide is a title/cover slide where full-bleed
+    visuals are preferred.
+
+    Args:
+        slide: The pptx Slide object to decorate.
+        preset: Design-token dict from _get_visual_style_preset.
+        slide_type: Semantic slide type (e.g. 'title', 'content', 'closing').
+        slide_width: Presentation width in EMU.
+        slide_height: Presentation height in EMU.
+        slide_number: 1-based slide number for footer rendering.
+        total_slides: Total slides for footer rendering.
+
+    Returns:
+        Number of decorative shapes added.
+    """
+    from pptx.dml.color import RGBColor
+    from pptx.util import Emu, Pt
+
+    if not preset:
+        return 0
+
+    added = 0
+    is_title = slide_type in ("title", "cover", "title_slide")
+
+    accent_hex = preset.get("accent_hex", "0066CC")
+    secondary_hex = preset.get("secondary_accent_hex", "E0E7EF")
+    bg_hex = preset.get("bg_hex", "F5F5F5")
+
+    try:
+        accent_rgb = RGBColor.from_string(accent_hex)
+    except Exception:
+        accent_rgb = RGBColor(0x00, 0x66, 0xCC)
+
+    try:
+        secondary_rgb = RGBColor.from_string(secondary_hex)
+    except Exception:
+        secondary_rgb = RGBColor(0xE0, 0xE7, 0xEF)
+
+    try:
+        bg_rgb = RGBColor.from_string(bg_hex)
+    except Exception:
+        bg_rgb = RGBColor(0xF5, 0xF5, 0xF5)
+
+    # ----- Slide background -----
+    try:
+        bg_fill = slide.background.fill
+        bg_fill.solid()
+        bg_fill.fore_color.rgb = bg_rgb
+    except Exception:
+        pass
+
+    # ----- Accent line/bar -----
+    try:
+        orientation = preset.get("accent_orientation", "horizontal")
+        region = preset.get("accent_region", "top")
+
+        if orientation == "vertical":
+            # Vertical accent strip on left or right edge
+            w_pct = preset.get("accent_width_pct", 1.2)
+            a_width = int(slide_width * w_pct / 100.0)
+            a_height = slide_height
+            a_top = 0
+
+            if region == "right":
+                a_left = slide_width - a_width
+            else:
+                a_left = 0
+
+            accent_shape = slide.shapes.add_shape(
+                1, a_left, a_top, a_width, a_height
+            )
+            accent_shape.fill.solid()
+            accent_shape.fill.fore_color.rgb = accent_rgb
+            accent_shape.line.fill.background()
+            _mark_as_backdrop(accent_shape)
+            added += 1
+        else:
+            # Horizontal accent strip at top or bottom
+            h_pct = preset.get("accent_height_pct", 0.6)
+            a_width = int(slide_width * preset.get("accent_width_pct", 100) / 100.0)
+            a_height = max(int(slide_height * h_pct / 100.0), Emu(12700))
+
+            if region == "bottom":
+                a_top = slide_height - a_height
+            else:
+                a_top = 0
+
+            a_left = 0
+            accent_shape = slide.shapes.add_shape(
+                1, a_left, a_top, a_width, a_height
+            )
+            accent_shape.fill.solid()
+            accent_shape.fill.fore_color.rgb = accent_rgb
+            accent_shape.line.fill.background()
+            _mark_as_backdrop(accent_shape)
+            added += 1
+    except Exception:
+        pass
+
+    # ----- Brand Logo (if provided) -----
+    if brand_logo_path and preset.get("accent_region", "top") in ("top", "bottom"):
+        try:
+            from pptx.util import Inches
+            logo_width = int(Inches(1.2))
+            logo_height = int(Inches(1.2))
+            logo_left = int(Inches(0.5))
+            
+            if preset.get("accent_region") == "bottom":
+                logo_top = int(Inches(0.3))
+            else:
+                logo_top = slide_height - logo_height - int(Inches(0.3))
+            
+            slide.shapes.add_picture(brand_logo_path, logo_left, logo_top, logo_width, logo_height)
+            added += 1
+        except Exception:
+            pass
+
+    # ----- Header bar (content slides only) -----
+    header_h_pct = preset.get("header_height_pct", 0)
+    if header_h_pct > 0 and not is_title:
+        try:
+            h_height = int(slide_height * header_h_pct / 100.0)
+            header = slide.shapes.add_shape(1, 0, 0, slide_width, h_height)
+            header.fill.solid()
+            header.fill.fore_color.rgb = secondary_rgb
+            header.line.fill.background()
+            _mark_as_backdrop(header)
+            added += 1
+        except Exception:
+            pass
+
+    # ----- Footer bar with slide number -----
+    footer_h_pct = preset.get("footer_height_pct", 0)
+    if footer_h_pct > 0 and not is_title:
+        try:
+            f_height = int(slide_height * footer_h_pct / 100.0)
+            f_top = slide_height - f_height
+
+            footer = slide.shapes.add_shape(1, 0, f_top, slide_width, f_height)
+            footer.fill.solid()
+            footer.fill.fore_color.rgb = secondary_rgb
+            footer.line.fill.background()
+            _mark_as_backdrop(footer)
+            added += 1
+
+            # Add slide number text inside the footer bar
+            if slide_number > 0:
+                from pptx.util import Inches
+                num_width = Inches(1.5)
+                num_left = slide_width - num_width - Inches(0.3)
+                num_top = f_top + int(f_height * 0.15)
+                num_height = int(f_height * 0.7)
+
+                num_box = slide.shapes.add_textbox(
+                    num_left, num_top, num_width, num_height
+                )
+                tf = num_box.text_frame
+                tf.word_wrap = False
+                p = tf.paragraphs[0]
+                p.alignment = 2  # PP_ALIGN.RIGHT
+
+                if total_slides > 0:
+                    p.text = "%d / %d" % (slide_number, total_slides)
+                else:
+                    p.text = str(slide_number)
+
+                for run in p.runs:
+                    run.font.size = Pt(9)
+                    try:
+                        text_hex = preset.get("text_hex", "333333")
+                        run.font.color.rgb = RGBColor.from_string(text_hex)
+                    except Exception:
+                        run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+                _mark_as_backdrop(num_box)
+                added += 1
+        except Exception:
+            pass
+
+    return added
+
+
 def _enrich_slide_visually(
     slide,
     slide_width: int,
@@ -8129,7 +9292,25 @@ def _apply_visual_corrections(
 
                 elif fix.startswith("enrich_") and accent_color:
                     if slide_width > 0 and slide_height > 0:
-                        if _enrich_slide_visually(
+                        # Fix 13 Phase 3: Suppress enrichment on slides
+                        # that already have sufficient template visual
+                        # identity from preserved backdrop shapes.
+                        _backdrop_count = 0
+                        try:
+                            for _sh in slide.shapes:
+                                if _sh._element.get("templateBackdrop") == "1":
+                                    _backdrop_count += 1
+                        except Exception:
+                            pass
+                        _MIN_BACKDROP_FOR_SKIP = 2
+                        if _backdrop_count >= _MIN_BACKDROP_FOR_SKIP:
+                            if VERBOSE:
+                                print(
+                                    "[VERBOSE] Slide %d: skipping %s — "
+                                    "%d template backdrop(s) already present"
+                                    % (report.slide_index, fix, _backdrop_count)
+                                )
+                        elif _enrich_slide_visually(
                             slide,
                             slide_width,
                             slide_height,
@@ -10491,6 +11672,15 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                     )
                     # Only remove if significant overlap (>15% of smaller shape)
                     if smaller_area > 0 and overlap_area > smaller_area * 0.15:
+                        # Fix 13B: Never remove template structural shapes
+                        # (preserved by smart purge with templateBackdrop="1").
+                        # These are branded visual elements that should survive
+                        # overlap detection — the new content should layer on top.
+                        a_is_backdrop = getattr(a, "_element", None) is not None and a._element.get("templateBackdrop") == "1"
+                        b_is_backdrop = getattr(b, "_element", None) is not None and b._element.get("templateBackdrop") == "1"
+                        if a_is_backdrop or b_is_backdrop:
+                            continue
+
                         # Determine which shape has less content
                         a_chars = 0
                         b_chars = 0

@@ -102,11 +102,11 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 |------------|------------------------|------------------------|------------------------|
 | **Brand Parse** | `gpt-4o-mini` | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Brand Parse Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-4o-mini` |
-| **Storyboard** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Storyboard Fallback**| `gpt-5.2` | `gemini-3-pro-preview` | `gpt-5.2` |
-| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
-| **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Image Plan Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-5-mini` |
+| **Storyboard** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Storyboard Fallback**| `gpt-5.2` | `gemini-3.1-pro-preview` | `gpt-5.2` |
+| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Image Plan** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
+| **Image Plan Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Visual QA** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
 | **Visual QA Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
@@ -118,7 +118,7 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 | Step | Name | Description |
 |------|------|-------------|
 | 0 | Brand/Style Parse | (within Step 1) Detects brand intent via `brand_style_analyzer` agent |
-| 1 | Optimize & Plan | LLM creates storyboard with brand-aware search, tone, per-slide content |
+| 1 | Optimize & Plan | LLM creates storyboard with brand-aware search, visual profile analysis, and per-slide content |
 | 2 | Generate Chunks | Claude PPTX skill called N times; 3-tier fallback per chunk |
 | 3 | Process Chunks | Template assembly + image pipeline per chunk |
 | 4 | Visual Review | *(optional)* Gemini vision QA per chunk |
@@ -137,6 +137,7 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 The workflow detects brand directives in user prompts (e.g. "using Nike branding"):
 - **`brand_style_analyzer`** agent (Claude Sonnet + web_search) extracts brand colors, tone, typography
 - **Template override**: When a template is provided, its styling takes precedence
+- **Visual Profile Analysis**: Programmatic analysis of template density and style is injected into the optimizer prompt
 - Brand context is injected into optimizer, Tier 1, and Tier 2 prompts
 
 ## Output
@@ -246,6 +247,7 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Per-slide rendering** | Renders every slide to PNG via PPTX→PDF→PNG pipeline (`pdftoppm`) for visual review |
 | **Background detection** | 6-layer detection (shape → slide → layout → master → theme → large shapes) prevents wrong contrast |
 | **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
-| **Layout Sanitization** | 8-pass correction engine: boundary clamping, min size enforcement, overlap orphan removal, icon purging, column alignment snapping, and iterative reflow |
-| **Template-aware prompts** | Tier 2 LLM prompt includes spatial grid rules, decoration bans, and layout constraints |
-| **Single-Slide Visuals (Base64 Image Reference)** | Injects exactly one 72-DPI template image (base64 encoded) + full textual theme metadata to precisely recreate styles without hitting 400k token limits |
+| **Layout Sanitization** | 8-pass correction engine: boundary clamping, min size enforcement, overlap orphan removal, icon purging, column alignment snapping, and iterative reflow (preserves structural template elements) |
+| **Smart Template Purge** | Intelligent classification (Fix 13) preserves branded headers, footers, and decorative motifs while clearing placeholder text |
+| **Template-aware prompts** | Tier 2 LLM code generation includes spatial grid rules, decoration bans, and layout constraints |
+| **Visual Profile Analysis** | Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer |

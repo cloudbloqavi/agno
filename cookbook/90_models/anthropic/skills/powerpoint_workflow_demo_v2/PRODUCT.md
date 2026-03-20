@@ -22,11 +22,11 @@ AI-powered pipeline that transforms a text prompt into a polished, template-styl
                              │
               ┌──────────────┼──────────────┐
               │              │              │
-              ▼              ▼              ▼
-         Brand Parse    Storyboard    Chunk Generation
-        (Sonnet+web)   (Opus+web)    (3-tier fallback)
-              │              │              │
-              └──────────────┼──────────────┘
+                ▼              ▼              ▼
+         Brand Parse    Visual Profile    Storyboard    Chunk Generation
+        (Sonnet+web)     (Analysis)       (Opus+web)    (3-tier fallback)
+              │              │                │              │
+              └──────────────┴────────────────┼──────────────┘
                              │
                     ┌────────┴────────┐
                     │  Core Pipeline  │
@@ -62,14 +62,14 @@ Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. 
 |------------|------------------|--------|--------|
 | **Brand Analysis** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Brand Fallback** | `gpt-5-mini` | `gemini-3-flash-preview`| `gpt-4o-mini` |
-| **Storyboard / Plan** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3-pro-preview` |
-| **Storyboard Fallback**| `gpt-5.2` | `gemini-3-pro-preview` | `gpt-5.2` |
-| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3-pro` / `flash` |
-| **Image Plan** | `gemini-3-flash-preview`* | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Image Plan Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-5-mini` |
+| **Storyboard / Plan** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Storyboard Fallback**| `gpt-5.2` | `gemini-3.1-pro-preview` | `gpt-5.2` |
+| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Image Plan** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
+| **Image Plan Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Visual Review Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
-| **Search Tool** | `web_search_20250305` | `web_search_preview`| `search=True` |
+| **Search Tool** | `DuckDuckGoTools()` | `web_search_preview`| `search=True` |
 
 *(Note: The core Content Generator (Tier 1) is hard-locked to **Claude Opus** to utilize its native PPTX skill capabilities. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
 
@@ -98,15 +98,17 @@ An internal `_RateLimitTracker` aggregates estimated token counts dynamically ac
 When using `--template`, these automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization** — 8-pass deterministic correction engine:
-  - Pass 1-3: Boundary clamping, minimum size enforcement, and initial overlap reflow.
+- **Layout sanitization (Fix 13B)** — 8-pass deterministic correction engine:
+  - Pass 1-3: Boundary clamping, minimum size enforcement, and initial overlap reflow (preserves structural template elements).
   - Pass 4: **Overlap Orphan Removal** — Deletes redundant shapes in high-overlap clusters (keeping higher text density).
   - Pass 5: **Orphaned Decorative Icon Removal** — Purges non-contextual symbols and emojis often hallucinated as decorations.
   - Pass 6: **Column Alignment Snapping** — Snaps elements to a consistent 12-column grid for clean vertical alignment.
   - Pass 7-8: Final iterative reflow and title font floor (min 20pt).
+- **Smart Template Purge (Fix 13)** — Intelligent classification distinguishes between structural, content-carrier, and disposable shapes, preserving branded headers, footers, and decorative motifs while clearing placeholder text.
 - **Template-aware LLM prompts** — Tier 2 code generation includes spatial grid rules, decoration bans, and layout constraints.
 - **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
+- **Template Visual Profile** — Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer.
 
 Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 
@@ -117,7 +119,7 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | Step | Name | Agent/Function | Output |
 |------|------|----------------|--------|
 | 0 | Brand/Style Parse | `brand_style_analyzer` (Sonnet) | `BrandStyleIntent` |
-| 1 | Optimize & Plan | `query_optimizer` (Opus) | `StoryboardPlan` + markdown files |
+| 1 | Optimize & Plan | `query_optimizer` (Opus) | `StoryboardPlan` (Template-aware) |
 | 2 | Generate Chunks | Claude PPTX skill / fallback agents | N chunk `.pptx` files |
 | 3 | Process Chunks | Deterministic template assembly | N assembled `.pptx` files |
 | 4 | Visual Review | `slide_quality_reviewer` (Gemini) | Quality reports + fixes |
@@ -165,9 +167,9 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | **Capacity** | Scalable (chunked architecture via `powerpoint_chunked_workflow.py`) |
 | **Steps** | 6 (Step 4 optional, Step 5 visual review optional) |
 | **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
-| **Template Safeguards** | 5 (rendering, background detection, font guard, layout sanitization, prompt constraints) |
+| **Template Safeguards** | 6 (rendering, background detection, font guard, layout sanitization, prompt constraints, visual profile) |
 | **Tests** | Brand parsing: 10 unit tests, template fixes: 14 integration tests |
-| **Last Updated** | 2026-03-05 |
+| **Last Updated** | 2026-03-18 |
 
 ---
 

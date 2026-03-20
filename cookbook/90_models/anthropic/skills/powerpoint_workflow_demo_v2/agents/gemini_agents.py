@@ -5,12 +5,15 @@ Provides the 5 swappable agents using Google Gemini models.
 
 Models used:
     brand_style_analyzer    -> gemini-3-flash-preview  (fast, latest features)
-    query_optimizer         -> gemini-3-pro-preview    (powerful, thought signatures)
-    fallback_code_agent     -> gemini-3-pro-preview    (powerful code gen + execution)
+    query_optimizer         -> gemini-3.1-pro-preview    (powerful, thought signatures)
+    fallback_code_agent     -> gemini-3.1-pro-preview    (powerful code gen + execution)
     image_planner           -> gemini-3-flash-preview  (fast, structured output)
     slide_quality_reviewer  -> gemini-2.5-flash        (vision analysis, proven stable)
 
-Web search: Uses Gemini's built-in Google Search via search=True parameter.
+Web search: 
+    - brand_style_analyzer uses Gemini's built-in Google Search (search=True).
+    - query_optimizer uses DuckDuckGoTools to avoid JSON truncation issues known
+      to occur when search=True is combined with large structured outputs.
 """
 
 from pathlib import Path
@@ -20,6 +23,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
 from agno.tools.python import PythonTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 from agents._shared import (
     BRAND_STYLE_ANALYZER_INSTRUCTIONS,
@@ -29,6 +33,7 @@ from agents._shared import (
     BrandStyleIntent,
     ImagePlan,
     SlideQualityReport,
+    StoryboardPlan,
 )
 
 
@@ -49,9 +54,14 @@ def create_agents() -> Dict[str, Agent]:
         markdown=False,
     )
 
+    # Storyboard strategist grounded in web research.
+    # Note: search=True is intentionally omitted here to prevent Gemini's internal 
+    # search grounding from truncating the large StoryboardPlan JSON output.
+    # Instead, we use DuckDuckGoTools as an explicit tool call.
     query_optimizer = Agent(
         name="Presentation Strategist",
-        model=Gemini(id="gemini-3-pro-preview", search=True, max_output_tokens=8192),
+        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=8192),
+        tools=[DuckDuckGoTools()],
         description=(
             "You are a presentation strategist who first searches the web for current, "
             "relevant facts and data about the topic, then creates an optimized presentation "
@@ -62,7 +72,7 @@ def create_agents() -> Dict[str, Agent]:
 
     fallback_code_agent = Agent(
         name="PPTX Code Generator",
-        model=Gemini(id="gemini-3-pro-preview", max_output_tokens=16384),
+        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=16384),
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
             PythonTools(
