@@ -272,16 +272,6 @@ def _classify_template_shape(
     slide_height: int,
     accent_colors: list | None = None,
 ) -> str:
-    """Classify a non-placeholder template shape for the smart purge.
-
-    Fix 13: Replaces the blanket "remove all shapes with text" strategy
-    with intelligent classification that preserves the template's visual
-    identity while still clearing content that would conflict with new text.
-
-    Classification priority (checked in order):
-        1. Header/footer zone — shapes in the top 10% or bottom 12% of the
-           slide with short or branding text are structural (branded headers,
-           footer bars, page numbers, URLs).
     """Classify a template shape as 'structural', 'content_carrier', or 'disposable'.
 
     Heuristics:
@@ -295,7 +285,6 @@ def _classify_template_shape(
 
     Args:
         shape: pptx.shapes.base.BaseShape instance.
-        slide_type: "title" or "content".
         slide_width: Slide width in EMU.
         slide_height: Slide height in EMU.
         accent_colors: List of template accent colors.
