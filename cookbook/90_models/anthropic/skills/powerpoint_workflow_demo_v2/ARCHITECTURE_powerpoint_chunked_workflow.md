@@ -394,6 +394,7 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--no-images` | Skip image generation | Off | Only applies when `--template` is set |
 | `--visual-review` | Enable per-chunk visual QA | Off | **Ignored** when `--template` is not set |
 | `--visual-passes` | Max visual QA passes per chunk | 3 | **Ignored** when `--template` is not set |
+| `--template-visuals` | Inject base64 template slide images into prompts | Off | Reduces token cost when disabled (default) |
 | `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
 | `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
 | `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |

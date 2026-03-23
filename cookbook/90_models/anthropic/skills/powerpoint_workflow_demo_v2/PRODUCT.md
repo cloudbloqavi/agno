@@ -106,7 +106,7 @@ When using `--template`, these automatic safeguards protect presentation quality
   - Pass 7-8: Final iterative reflow and title font floor (min 20pt).
 - **Smart Template Purge (Fix 13)** — Intelligent classification distinguishes between structural, content-carrier, and disposable shapes, preserving branded headers, footers, and decorative motifs while clearing placeholder text.
 - **Template-aware LLM prompts** — Tier 2 code generation includes spatial grid rules, decoration bans, and layout constraints.
-- **Single-Slide Visual References (Base64 Image Reference)** — Inspired by single-shot cloning, chunk prompts automatically inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts without hitting 400k+ token limits.
+- **Single-Slide Visual References (Optional via `--template-visuals`)** — Inspired by single-shot cloning, chunk prompts can inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts. **Disabled by default** to optimize token usage and cost; enabled with `-tv` or `--template-visuals`.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
 - **Template Visual Profile** — Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer.
 

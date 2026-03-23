@@ -59,6 +59,9 @@ Workflow steps:
   Step 3  Process Chunks     - Apply template + image pipeline per chunk (if template provided)
   Step 4  Visual Review      - Optional per-chunk visual QA (if --visual-review + template)
   Step 5  Merge Chunks       - Merge all processed chunks into the final PPTX
+  Step 6  Usage Summary      - (Verbosity specific) Displays total token consumption and 
+                                estimated cost across all agents/providers
+
 
 Key Models:
   BrandStyleIntent      - Structured brand/style data (name, colors, tone, fonts, style)
@@ -167,7 +170,9 @@ CLI Flags:
     --footer-text        Footer text for all slides.
     --date-text          Date text for footer date placeholder.
     --show-slide-numbers Preserve slide number placeholder on all slides.
-    --verbose, -v        Enable verbose/debug logging.
+    --verbose, -v        Enable verbose/debug logging. Also triggers the final 
+                         Token Usage & Cost Summary report at the end of the run.
+
     --chunk-size         Number of slides per LLM API chunk call (default: 1).
     --max-retries        Max retries per chunk on failure (default: 2).
     NOTE: When all retries fail or a timeout (300s) occurs, the system
@@ -196,6 +201,8 @@ Logging conventions:
         [BRAND OVERRIDE] Template overriding query-level branding (with reason)
     Verbose-only (requires --verbose / -v):
         [VERBOSE] detailed debug information
+        [TOKEN SUMMARY] Final table of token counts and USD cost per model
+
 """
 
 import argparse
@@ -269,6 +276,106 @@ DEFAULT_INTER_CHUNK_DELAYS_MS = {
 
 # Global verbose flag (overridden in main() or by session_state)
 VERBOSE = False
+
+# === TOKEN TRACKER LOGIC ===
+# Pricing (approximate USD per 1M tokens) - we use generous but standard 2026/2024 equivalent prices
+TOKEN_PRICES = {
+    "claude-3-5-sonnet-20241022": (3.0, 15.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-3-opus-20240229": (15.0, 75.0),
+    "claude-opus-4-6": (15.0, 75.0),
+    "claude-3-5-haiku-20241022": (0.8, 4.0),
+    "claude-haiku-4-5": (0.8, 4.0),
+    "claude-3-haiku": (0.25, 1.25),
+    "gpt-4o": (2.5, 10.0),
+    "gpt-4o-mini": (0.15, 0.6),
+    "gpt-5.2": (2.5, 10.0),
+    "gpt-5-mini": (0.15, 0.6),
+    "gemini-1.5-pro": (1.25, 5.0),
+    "gemini-1.5-flash": (0.075, 0.3),
+    "gemini-3.1-pro-preview": (1.25, 5.0),
+    "gemini-3-flash-preview": (0.075, 0.3),
+    "gemini-2.5-flash": (0.075, 0.3),
+    "default": (3.0, 15.0)
+}
+
+class TokenUsageTracker:
+    def __init__(self):
+        self.usage = {}  
+        self.total_cost = 0.0
+    
+    def add_usage(self, model: str, input_tokens: int, output_tokens: int):
+        if not model:
+            model = "unknown"
+        if model not in self.usage:
+            self.usage[model] = {"inputs": 0, "outputs": 0, "cost": 0.0, "calls": 0}
+        
+        self.usage[model]["inputs"] += input_tokens
+        self.usage[model]["outputs"] += output_tokens
+        self.usage[model]["calls"] += 1
+        
+        price_in, price_out = TOKEN_PRICES.get(model, TOKEN_PRICES["default"])
+        if model not in TOKEN_PRICES:
+            for k, (pin, pout) in TOKEN_PRICES.items():
+                if k in model:
+                    price_in, price_out = pin, pout
+                    break
+                    
+        cost = (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
+        self.usage[model]["cost"] += cost
+        self.total_cost += cost
+
+    def print_summary(self, verbose: bool = True):
+        if not verbose:
+            return
+        print("\n\n" + "="*70)
+        print("📊 TOKEN USAGE & COST SUMMARY".center(70))
+        print("="*70)
+        if not self.usage:
+            print("No token usage recorded.")
+            print("="*70 + "\n")
+            return
+            
+        print(f"{'Model':<30} | {'Calls':<5} | {'Tokens (In/Out)':<20} | {'Est. Cost'}")
+        print("-" * 70)
+        for model, stats in self.usage.items():
+            in_t = stats["inputs"]
+            out_t = stats["outputs"]
+            calls = stats["calls"]
+            cost = stats["cost"]
+            print(f"{model[:29]:<30} | {calls:<5} | {f'{in_t} / {out_t}':<20} | ${cost:.4f}")
+        print("-" * 70)
+        print(f"{'TOTAL ESTIMATED COST:':<60} ${self.total_cost:.4f}")
+        print("="*70 + "\n")
+
+GLOBAL_TOKEN_TRACKER = TokenUsageTracker()
+
+_original_agent_run = Agent.run
+
+def _tracked_agent_run(self, *args, **kwargs):
+    stream = kwargs.get("stream", False)
+    result = _original_agent_run(self, *args, **kwargs)
+    
+    model_id = getattr(getattr(self, "model", None), "id", "unknown")
+    
+    if not stream:
+        if hasattr(self, "run_response") and self.run_response and hasattr(self.run_response, "metrics") and self.run_response.metrics:
+            in_t = getattr(self.run_response.metrics, "input_tokens", 0) or 0
+            out_t = getattr(self.run_response.metrics, "output_tokens", 0) or 0
+            GLOBAL_TOKEN_TRACKER.add_usage(model_id, in_t, out_t)
+        return result
+        
+    def _generator_wrapper(gen):
+        for item in gen:
+            yield item
+        if hasattr(self, "run_response") and self.run_response and hasattr(self.run_response, "metrics") and self.run_response.metrics:
+            in_t = getattr(self.run_response.metrics, "input_tokens", 0) or 0
+            out_t = getattr(self.run_response.metrics, "output_tokens", 0) or 0
+            GLOBAL_TOKEN_TRACKER.add_usage(model_id, in_t, out_t)
+            
+    return _generator_wrapper(result)
+
+Agent.run = _tracked_agent_run
 
 
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
@@ -855,6 +962,8 @@ def _build_visual_reference_section(
     brand_style_intent: Optional["BrandStyleIntent"] = None,
 ) -> str:
     """Build a markdown prompt section with base64-encoded template slide references.
+
+    NOTE: This is only called if session_state["template_visuals"] is True.
 
     For each slide in the chunk, finds the best-matching template slide and
     encodes it as a base64 data URI for inclusion in the LLM prompt.
@@ -2256,7 +2365,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     Args:
         step_input: Workflow step input (not used directly; context comes from session_state).
         session_state: Shared workflow state containing user_prompt, output_dir, chunk_size,
-                       max_retries, and template_path.
+                       max_retries, template_path, and template_visuals flag.
 
     Returns:
         StepOutput with success=True and a summary string when a valid storyboard is produced,
@@ -2310,11 +2419,13 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     print("[TIMING] Brand/style parsing completed in %.1fs" % brand_parse_elapsed)
 
     # Render template slides to PNG for visual reference in chunk prompts
-    if template_path and os.path.isfile(template_path):
+    if template_path and os.path.isfile(template_path) and session_state.get("template_visuals"):
         print("[STEP 1] Rendering template slides for visual reference...")
         template_pngs = _render_template_slides_to_png(template_path, output_dir)
         session_state["template_slide_pngs"] = template_pngs
     else:
+        if template_path and os.path.isfile(template_path):
+            print("[STEP 1] Template provided, but --template-visuals is off. Skipping image rendering.")
         session_state["template_slide_pngs"] = {}
 
     # Build brand context section for injection into the optimizer prompt
@@ -2998,7 +3109,7 @@ def generate_chunk_pptx(
 
     # Append template visual reference section (if template was rendered)
     template_pngs = session_state.get("template_slide_pngs", {})
-    if template_pngs:
+    if template_pngs and session_state.get("template_visuals"):
         visual_ref = _build_visual_reference_section(
             chunk_slides, template_pngs,
             brand_style_intent=session_state.get("brand_style_intent"),
@@ -4271,7 +4382,7 @@ def generate_chunk_pptx_v2(
 
     # Append template visual reference section for Tier 2 (if available)
     template_pngs = session_state.get("template_slide_pngs", {})
-    if template_pngs:
+    if template_pngs and session_state.get("template_visuals"):
         visual_ref = _build_visual_reference_section(
             chunk_slides, template_pngs,
             brand_style_intent=session_state.get("brand_style_intent"),
@@ -5917,6 +6028,12 @@ def main() -> None:
         help="Enable visual QA with Gemini vision per chunk (requires LibreOffice + template).",
     )
     parser.add_argument(
+        "--template-visuals",
+        "-tv",
+        action="store_true",
+        help="Inject base64 images of template slides into LLM prompts to improve visual accuracy (consumes more tokens).",
+    )
+    parser.add_argument(
         "--footer-text",
         default="",
         help="Footer text for all slides (idx=11 placeholder).",
@@ -6129,6 +6246,7 @@ def main() -> None:
         "max_retries": args.max_retries,
         "visual_passes": effective_visual_passes,
         "start_tier": args.start_tier,
+        "template_visuals": args.template_visuals,
         # Inter-chunk delay range (seconds) — read by _inter_chunk_sleep()
         "inter_chunk_delay_min": args.inter_chunk_delay_min,
         "inter_chunk_delay_max": args.inter_chunk_delay_max,
@@ -6221,6 +6339,8 @@ def main() -> None:
     print("[TIMING] Total workflow: %.1fs" % elapsed)
     print("Output: %s" % output_path)
     print("=" * 60)
+    
+    GLOBAL_TOKEN_TRACKER.print_summary(VERBOSE)
 
 
 if __name__ == "__main__":

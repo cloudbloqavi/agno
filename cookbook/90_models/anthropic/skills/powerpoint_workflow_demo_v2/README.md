@@ -61,6 +61,11 @@ python powerpoint_chunked_workflow.py \
 python powerpoint_chunked_workflow.py \
     -p "Startup pitch deck for SaaS product" --no-images
 
+# Enable template visual references (high-fidelity, higher token cost):
+python powerpoint_chunked_workflow.py \
+    -t templates/my_template.pptx --template-visuals \
+    -p "Premium brand presentation"
+
 # Switch LLM Provider for swappable agents (OpenAI gpt-5.2 or Gemini 3 Pro):
 # Note: Content Generator always uses Claude to retain native PPTX skills
 python powerpoint_chunked_workflow.py \
@@ -86,6 +91,7 @@ python powerpoint_chunked_workflow.py \
 | `--min-images` | Min slides with AI images | 1 |
 | `--visual-review` | Enable vision QA per chunk | disabled |
 | `--visual-passes` | Max visual review passes per chunk | 3 |
+| `--template-visuals, -tv` | Inject base64 template slide images into prompts | disabled |
 | `--footer-text` | Footer text for all slides | None |
 | `--date-text` | Date text for footer date placeholder | None |
 | `--show-slide-numbers` | Show slide number placeholders | disabled |
@@ -123,6 +129,17 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 | 3 | Process Chunks | Template assembly + image pipeline per chunk |
 | 4 | Visual Review | *(optional)* Gemini vision QA per chunk |
 | 5 | Merge Chunks | OPC-aware merge of all chunk PPTX files into final output |
+
+## Token Usage & Cost Summary
+
+When running with the `--verbose` or `-v` flag, the workflow provides a detailed breakdown of token consumption and estimated cost across all used LLM models at the end of the execution.
+
+It tracks:
+- **Total Calls**: Number of API requests per model.
+- **Tokens (In/Out)**: Input and output token counts.
+- **Estimated Cost**: Calculated based on approximate 2026 provider pricing.
+
+This summary is printed to both the console (log) and the `OUTPUT.md` file.
 
 ## 3-Tier Fallback System with Universal HA
 
