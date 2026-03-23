@@ -5,13 +5,11 @@ Provides the 5+1 swappable agents using Anthropic Claude models and native tools
 The Content Generator agent (with PPTX skill) is NOT included — it stays
 in the main workflow files because it is always Claude regardless of provider.
 
-Models used (optimised to preserve the 30K input-token/min budget):
-    brand_style_analyzer      -> gpt-4o-mini  (OpenAI; completely separate rate-limit pool)
-    query_optimizer           -> claude-haiku-4-5    (Fast, efficient storyboard generation)
-    fallback_code_agent       -> claude-sonnet-4-6   (Primary Tier 2; superior code gen quality)
-    fallback_code_agent_lite  -> claude-haiku-4-5    (Lite Tier 2 fallback; high throughput)
-    fallback_code_agent_lite  -> claude-haiku-4-5    (lite Tier 2 fallback; 50K token/min pool;
-                                                      used when sonnet fails or is rate-limited)
+Models used (optimised to preserve the 30K input-token/min budget for heavy generation):
+    brand_style_analyzer      -> claude-haiku-4-5    (Fast, 50K input tokens/min budget)
+    query_optimizer           -> claude-haiku-4-5    (Fast, 50K input tokens/min budget)
+    fallback_code_agent       -> claude-haiku-4-5    (Primary Tier 2; fast, efficient code gen)
+    fallback_code_agent_lite  -> claude-haiku-4-5    (Secondary Tier 2 fallback; high throughput)
     image_planner             -> gemini-2.5-flash (updated)
     slide_quality_reviewer    -> gemini-2.5-flash (updated)
 
@@ -56,12 +54,11 @@ def create_agents() -> Dict[str, Agent]:
     off the Anthropic token-per-minute quota, preserving it for chunk generation.
     """
 
-    # Brand analysis runs on gpt-4o-mini (OpenAI) so it doesn't consume Anthropic
-    # input tokens.  The rate-limit pool for gpt-4o-mini is entirely separate.
+    # Brand analysis runs on claude-haiku-4-5 (fast, cost-efficient).
     brand_style_analyzer = Agent(
         name="Brand Style Analyzer",
-        model=OpenAIChat(
-            id="gpt-4o-mini",
+        model=Claude(
+            id="claude-haiku-4-5",
             max_tokens=2048,
         ),
         description=(
@@ -100,10 +97,9 @@ def create_agents() -> Dict[str, Agent]:
         markdown=False,
     )
 
-    # Upgraded from claude-haiku-4-5 → claude-sonnet-4-6 for better python-pptx
-    # code generation quality (native charts, infographics, shaped layouts).
-    # Sonnet shares the 30K input-token/min pool with Opus and the query optimizer,
-    # so the rate tracker must account for Tier 2 calls consuming that budget.
+    # Downgraded from claude-sonnet-4-6 → claude-haiku-4-5 for faster execution
+    # and to preserve the main token pool. 
+    # Haiku has a separate 50K input-token/min budget.
     # max_tokens capped at 16384: python-pptx scripts for 2 slides are ~500-1000 lines.
     fallback_code_agent = Agent(
         name="PPTX Code Generator",

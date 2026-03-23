@@ -106,16 +106,16 @@ The workflow uses a dynamic swappable agent architecture controlled by the `--ll
 
 | Agent Role | Claude Mode (`claude`) | OpenAI Mode (`openai`) | Gemini Mode (`gemini`) |
 |------------|------------------------|------------------------|------------------------|
-| **Brand Parse** | `gpt-4o-mini` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Brand Parse** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Brand Parse Fallback**| `gpt-5-mini` | `gemini-3-flash-preview` | `gpt-4o-mini` |
-| **Storyboard** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Storyboard** | `claude-haiku-4-5` | `gpt-5.2` | `gemini-3.1-pro-preview` |
 | **Storyboard Fallback**| `gpt-5.2` | `gemini-3.1-pro-preview` | `gpt-5.2` |
-| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Code Fallback** | `claude-haiku-4-5` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
 | **Image Plan** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Image Plan Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Visual QA** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
 | **Visual QA Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
-| **Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
+| **Content Gen** | `claude-haiku-4-5` (Locked) | `claude-haiku-4-5` (Locked) | `claude-haiku-4-5` (Locked) |
 
 *\* Note: Even in `claude` mode, Image Planning and Visual QA explicitly default to Gemini models because Anthropic models lack the requisite API multimodal features.*
 
@@ -176,7 +176,7 @@ TOTAL ESTIMATED COST: $0.08833
 ## Brand/Style-Aware Parsing
 
 The workflow detects brand directives in user prompts (e.g. "using Nike branding"):
-- **`brand_style_analyzer`** agent (Claude Sonnet + web_search) extracts brand colors, tone, typography
+- **`brand_style_analyzer`** agent (Claude Haiku 4.5 + web_search) extracts brand colors, tone, typography
 - **Template override**: When a template is provided, its styling takes precedence
 - **Visual Profile Analysis**: Programmatic analysis of template density and style is injected into the optimizer prompt
 - Brand context is injected into optimizer, Tier 1, and Tier 2 prompts

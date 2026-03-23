@@ -156,11 +156,21 @@ python test_pptx.py                    # existing visual cleanup tests
 
 ---
 
-### powerpoint_template_workflow.py — March 2026 Batch: Deterministic Refinement (Fixes 12-15)
+### powerpoint_chunked_workflow.py — March 2026 Batch: Deterministic Refinement (Fixes 12-15)
 
 **Status:** PASS
 
 **Description:** Implemented an 8-pass sanitization engine in `sanitize_slide_layout`. Key components: (Pass 4) Overlap orphan removal based on text density; (Pass 5) Orphaned decorative icon purging using `unicodedata` character category checks; (Pass 6) Column alignment snapping to a slide-wide 12-column grid. Also enforced squared pie chart constraints and template-derived chart styling in `_transfer_charts`. Fixed semantic footer preservation in `_clear_unused_placeholders` and improved chart data labeling logic.
 
 **Result:** Tested with `figma_plan.pptx` (Anthropic provider) and `anthropic_plan.pptx` (Gemini provider). Verified that overlapping ghost text is removed, random symbols are purged, and elements are cleanly aligned vertically. Chart styling matches the template's brand colors. Footers are correctly preserved.
+
+---
+
+### powerpoint_chunked_workflow.py — Claude Haiku 4.5 Migration
+
+**Status:** PASS (Verification & Docs)
+
+**Description:** Systematic migration of all Claude-based agents to `claude-haiku-4-5` for the chunked workflow (Analysis, Planning, Storyboarding, and Tier 1 + Tier 2 Generation). This migration optimizes for cost and speed while leveraging Haiku's separate 50K TPM budget. The "Content Generator" agent in `powerpoint_template_workflow.py` and its corresponding isolated test remain on `claude-sonnet-4-6` / `opus-4-6` for maximal quality in non-chunked scenarios. 
+
+**Result:** Updated `powerpoint_chunked_workflow.py`, `agents/claude_agents.py`, and all relevant markdown documentation (`README.md`, `PRODUCT.md`, `AGENTS.md`, `ARCHITECTURE_powerpoint_chunked_workflow.md`, `Walkthrough1.md`, `Walkthrough2.md`). Docstrings in script files also updated. Syntax verified.
 

@@ -75,7 +75,7 @@ User prompt
     │
     ▼
 Step 1: Optimize & Plan
-    │  (claude-sonnet-4-6 → StoryboardPlan)
+    │  (claude-haiku-4-5 → StoryboardPlan)
     ▼
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
@@ -99,7 +99,7 @@ User prompt + Template
     │
     ▼
 Step 1: Optimize & Plan
-    │  (claude-sonnet-4-6 → StoryboardPlan)
+    │  (claude-haiku-4-5 → StoryboardPlan)
     │  + VISUAL STYLE ANALYSIS (extraction of layout density, colors, fonts)
     ▼
 Step 2: Generate Chunks
@@ -167,8 +167,8 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback) | OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback) | `DuckDuckGoTools()` | 200,000 max context |
-| 3 | **Chunk Generator** | `claude-opus-4-6` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 2 | **Query Optimizer** | `claude-haiku-4-5` / `gpt-5.2` (fallback) | `DuckDuckGoTools()` | 200,000 max context |
+| 3 | **Chunk Generator** | `claude-haiku-4-5` | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
 | 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
@@ -177,7 +177,7 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-5-mini` / `gemini-3-flash-preview` (fallback)| OpenAI JSON Output | 128,000 max context (Standard Mini) |
 | 2 | **Query Optimizer** | `gpt-5.2` / `gemini-3.1-pro-preview` (fallback)| `DuckDuckGoTools()` | 400,000 max context, 128,000 output limit |
-| 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 3 | **Chunk Generator** | `claude-haiku-4-5`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
 | 4 | **Image Planner** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| Structured Schema output | 128,000 max context |
 | 5 | **Slide Quality Reviewer** | `gpt-5-mini` / `gemini-2.5-flash` (fallback)| LibreOffice Vision QA | 128,000 max context |
 
@@ -186,7 +186,7 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gemini-3-flash-preview` / `gpt-4o-mini` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
 | 2 | **Query Optimizer** | `gemini-3.1-pro-preview` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 1,000,000 max context |
-| 3 | **Chunk Generator** | `claude-opus-4-6`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
+| 3 | **Chunk Generator** | `claude-haiku-4-5`* | `pptx` skill, `context-1m-2025-08-07` beta | 1,000,000 max context, `max_tokens=128000` set |
 | 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
@@ -210,8 +210,8 @@ Before falling back between Tier 1 and Tier 2, or Tier 2 and Tier 3, the orchest
 | Execution Order | Agent Name | LLM Model | Specific Skills / Tools / Beta Params | Context Window & Token Limitations |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | **Brand Style Analyzer** | `gpt-4o-mini` / `gpt-5-mini` (fallback)| OpenAI JSON Output | 128,000 max context, 16,384 output limit |
-| 2 | **Query Optimizer** | `claude-sonnet-4-6` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 200,000 max context |
-| 3 | **PPTX Code Generator** | `claude-sonnet-4-6` & `haiku` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
+| 2 | **Query Optimizer** | `claude-haiku-4-5` / `gpt-5.2` (fallback)| `DuckDuckGoTools()` | 200,000 max context |
+| 3 | **PPTX Code Generator** | `claude-haiku-4-5` | `PythonTools` | 200,000 max context, `max_tokens=16384` set |
 | 4 | **Image Planner** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| Structured Schema output | 1,000,000 max context |
 | 5 | **Slide Quality Reviewer** | `gemini-2.5-flash` / `gpt-5-mini` (fallback)| LibreOffice Vision QA | 1,000,000 max context |
 
@@ -991,13 +991,13 @@ The workflow implements a **Swappable Agent Pattern** controlled by the `--llm-p
 
 | Agent Role | Claude Mode (Default) | OpenAI Mode | Gemini Mode |
 |------------|-----------------------|-------------|-------------|
-| **Brand Style Analyzer** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Query Optimizer** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
-| **Fallback Code (Tier 2)** | `sonnet` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Brand Style Analyzer** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Query Optimizer** | `claude-haiku-4-5` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Fallback Code (Tier 2)** | `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
 | **Image Planner** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Visual QA (Step 5)** | `gemini-2.5-flash`* | `gpt-5-mini` (vision) | `gemini-2.5-flash` |
 | **Web Search Tool** | `DuckDuckGoTools()` | `web_search_preview` | `DuckDuckGoTools()` / `search=True` |
-| **Tier 1 Content Gen** | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) | `claude-opus-4-6` (Locked) |
+| **Tier 1 Content Gen** | `claude-haiku-4-5` (Locked) | `claude-haiku-4-5` (Locked) | `claude-haiku-4-5` (Locked) |
 
 *\* Note: Even when the provider mode is `claude`, the image planner and visual QA explicitly default to Gemini models because Anthropic models lack the specific vision inspection capabilities required for these steps.*
 
@@ -1145,7 +1145,7 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
 | Tier | Function | Quality | Trigger |
 |------|----------|---------|---------|
 | **Tier 1** | [`generate_chunk_pptx()`](powerpoint_chunked_workflow.py) — Claude PPTX skill | 100% | Primary; used unless `use_fallback_generator=True` |
-| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation (`claude-sonnet-4-6` & `haiku` + `PythonTools`) | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
+| **Tier 2** | [`generate_chunk_pptx_v2()`](powerpoint_chunked_workflow.py) — LLM code generation (`claude-haiku-4-5` + `PythonTools`) | 80–92% | Tier 1 timeout (>`CHUNK_TIMEOUT_SECONDS=300`) or all retries exhausted |
 | **Global** | Universal OpenAI Fallback (`gpt-5.4` & `o3-mini`) | 95-100% | 429/529 API capacity errors on Claude/Gemini |
 | **Tier 3** | [`generate_chunk_pptx_fallback()`](powerpoint_chunked_workflow.py) — text-only python-pptx | ~100% reliable | Tier 2/Global failure; last resort, <100ms, zero network I/O |
 
@@ -1164,7 +1164,7 @@ Interim chunk PPTX files are **always preserved**. There is no `os.remove()` or 
   4. `o3-mini` (Lite) STRIPPED of visual base64 image references (text-only prompt)
 
 **Tier 2 — LLM code generation:**
-- `fallback_code_agent`: Claude `claude-sonnet-4-6` & `haiku` + `PythonTools`
+- `fallback_code_agent`: Claude `claude-haiku-4-5` + `PythonTools`
 - Generates and immediately executes a `python-pptx` + `matplotlib` script
 - Produces real Office charts (via `ChartData`), matplotlib PNG embeds, and tables
 - No internal retry — callers escalate directly to Tier 3 on any failure
@@ -1214,7 +1214,7 @@ flowchart TD
 |--------|---------|
 | `CHUNK_TIMEOUT_SECONDS` | Per-attempt timeout (300s) enforced via `ThreadPoolExecutor.result(timeout=...)` |
 | `_run_chunk_agent()` | Wraps Tier 1 agent call in `ThreadPoolExecutor`; raises `TimeoutError` on expiry |
-| `fallback_code_agent` | `claude-sonnet-4-6` & `haiku` + `PythonTools`; powers Tier 2 |
+| `fallback_code_agent` | `claude-haiku-4-5` + `PythonTools`; powers Tier 2 |
 | `FALLBACK_SLIDE_LAYOUT_MAP` | Dict mapping slide type keywords to layout indices for Tier 3 |
 | `use_fallback_generator` | `session_state` bool; once `True`, Tier 1 is bypassed for all remaining chunks |
 

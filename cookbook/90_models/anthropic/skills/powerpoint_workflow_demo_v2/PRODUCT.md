@@ -24,7 +24,7 @@ AI-powered pipeline that transforms a text prompt into a polished, template-styl
               │              │              │
                 ▼              ▼              ▼
          Brand Parse    Visual Profile    Storyboard    Chunk Generation
-        (Sonnet+web)     (Analysis)       (Opus+web)    (3-tier fallback)
+        (Haiku+web)     (Analysis)       (Haiku+web)    (3-tier fallback)
               │              │                │              │
               └──────────────┴────────────────┼──────────────┘
                              │
@@ -60,24 +60,24 @@ Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. 
 
 | Agent Role | Claude (Default) | OpenAI | Gemini |
 |------------|------------------|--------|--------|
-| **Brand Analysis** | `claude-sonnet-4-6` | `gpt-5-mini` | `gemini-3-flash-preview` |
+| **Brand Analysis** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
 | **Brand Fallback** | `gpt-5-mini` | `gemini-3-flash-preview`| `gpt-4o-mini` |
-| **Storyboard / Plan** | `claude-sonnet-4-6` | `gpt-5.2` | `gemini-3.1-pro-preview` |
+| **Storyboard / Plan** | `claude-haiku-4-5` | `gpt-5.2` | `gemini-3.1-pro-preview` |
 | **Storyboard Fallback**| `gpt-5.2` | `gemini-3.1-pro-preview` | `gpt-5.2` |
-| **Code Fallback** | `claude-sonnet-4-6` / `haiku` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
+| **Code Fallback** | `claude-haiku-4-5` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
 | **Image Plan** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Image Plan Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Visual Review Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
 | **Search Tool** | `DuckDuckGoTools()` | `web_search_preview`| `search=True` |
 
-*(Note: The core Content Generator (Tier 1) is hard-locked to **Claude Opus** to utilize its native PPTX skill capabilities. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
+*(Note: The core Content Generator (Tier 1) in the chunked workflow has been optimized to **Claude Haiku 4.5** for cost efficiency, while the standalone Content Generator in the template workflow remains locked to higher variants for maximal quality. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
 
 ### 4. 3-Tier Fallback System with Universal HA
 | Tier | Generator | Quality | Speed | Condition |
 |------|-----------|---------|-------|-----------|
-| 1 | Claude PPTX skill (`opus`) | 100% | 30s–5min/chunk | Primary |
-| 2 | LLM code gen (1st: Primary w/ visuals, 2nd: OpenAI 4-step) | 80–92% | 15–45s/chunk | Tier 1 Failure |
+| 1 | Claude PPTX skill (`haiku`) | 100% | 15s–2min/chunk | Primary |
+| 2 | LLM code gen (1st: Primary w/ visuals, 2nd: OpenAI 4-step) | 80–92% | 10–30s/chunk | Tier 1 Failure |
 | 3 | Text-only (deterministic) | Structural | <1s/chunk | Complete LLM Failure |
 
 *(High Availability Note: If the primary provider hits a 429 Rate Limit or 529 Overloaded error, or experiences persistent errors, the system automatically intercepts the failure and routes the chunk to the **Universal OpenAI Fallback** layer. This layer uses a 4-step visual context stripping hierarchy (Pro w/ images -> Lite w/ images -> Pro stripped -> Lite stripped) to avoid OpenAI token limits, ensuring presentation building continues uninterrupted.)*
@@ -135,9 +135,9 @@ Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_
 | **Runtime** | Python 3.8+ |
 | **Orchestration** | Agno Workflow (sequential Steps + shared `session_state`) |
 | **Provider Factory** | `agents/` package dynamically loads Swappable Agent Modules |
-| **Content LLM** | **Claude** `claude-opus-4-6` + `pptx` skill + `context-1m` beta (Locked) |
+| **Content LLM** | **Claude** `claude-haiku-4-5` + `pptx` skill + `context-1m` beta (Locked in Chunked Mode) |
 | **Brand Analysis** | Two-Stage (Regex Fast-Check + OpenAI `gpt-4o-mini`) |
-| **Storyboard** | Swappable (Claude Sonnet / GPT-5.2 / Gemini 3 Pro) |
+| **Storyboard** | Swappable (Claude Haiku / GPT-5.2 / Gemini 3 Pro) |
 | **Code Fallback** | Swappable (Claude Haiku / GPT-5 Mini) |
 | **Image Planning** | Swappable (Gemini 3 Flash / GPT-5 Mini) |
 | **Image Gen** | NanoBanana (Gemini, 16:9 aspect ratio) |

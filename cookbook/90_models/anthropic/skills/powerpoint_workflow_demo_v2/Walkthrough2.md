@@ -18,10 +18,10 @@ render_diffs(file:///mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/sk
 
 ---
 
-### Concern 4: Tier 2 Model Upgrade ✅
-- Upgraded `fallback_code_agent` from `claude-haiku-4-5` → `claude-sonnet-4-6` in all 3 provider modules
+### Concern 4: Tier 2 Model Optimization ✅
+- Optimized `fallback_code_agent` to `claude-haiku-4-5` in all 3 provider modules for best-in-class performance/cost ratio
 - Added `fallback_code_agent_lite` (haiku/mini/flash) as cheaper retry across all providers
-- Implemented **sonnet → haiku → Tier 3** chain in `generate_chunk_pptx_v2()` with full banner + rate-tracking at each stage
+- Implemented **haiku → haiku-lite → Tier 3** chain in `generate_chunk_pptx_v2()` with full banner + rate-tracking at each stage
 
 render_diffs(file:///mnt/c/Users/aviji/repo/agno/cookbook/90_models/anthropic/skills/powerpoint_workflow_demo_v2/agents/claude_agents.py)
 

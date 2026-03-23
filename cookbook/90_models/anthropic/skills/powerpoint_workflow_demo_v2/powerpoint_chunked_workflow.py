@@ -21,15 +21,15 @@ Architecture:
   powerpoint_chunked_workflow.py   — Chunked orchestration layer (~3200 lines, this file)
 
 Chunk generation uses a 3-tier fallback hierarchy per chunk:
-  Tier 1      Claude PPTX Skill         - Primary Opus; on throttle/overload falls to
+  Tier 1      Claude PPTX Skill         - Primary Haiku 4.5; on throttle/overload falls to
                                           Sonnet (PPTX skill), then Gemini/OpenAI code-gen
-  Tier 2      LLM Code Gen              - Sonnet → Haiku → Gemini Pro → Gemini Flash
+  Tier 2      LLM Code Gen              - Haiku → Gemini Pro → Gemini Flash
                                           → GPT-5.4 → o3-mini (code-gen chain)
   Tier 3      python-pptx Direct        - Last resort; text-only slides; 100% reliable
 
 Brand/Style-Aware Query Parsing:
   Before the optimizer step, the workflow analyzes the user prompt for branding
-  or styling intent using a dedicated brand_style_analyzer agent (default Claude Sonnet
+  or styling intent using a dedicated brand_style_analyzer agent (default Claude Haiku 4.5
   but swappable to OpenAI or Gemini via --llm-provider). This agent:
     - Detects brand directives (e.g. "using Nike branding", "in the style of Apple")
     - Decides autonomously whether to search for brand guidelines (colors, tone, fonts)
@@ -53,7 +53,7 @@ Workflow steps:
   Step 1  Optimize & Plan    - LLM analyzes prompt, decides slide count, creates storyboard;
                                 brand context is injected into the optimizer prompt and search
   Step 2  Generate Chunks    - Call Claude pptx skill (Tier 1) for each chunk;
-                               auto-escalates to Tier 2 (Sonnet → Haiku code gen) on timeout/
+                               auto-escalates to Tier 2 (Haiku code gen) on timeout/
                                failure, then Tier 3 (text-only) if Tier 2 fails.
                                Brand context is included in Tier 1 and Tier 2 prompts.
   Step 3  Process Chunks     - Apply template + image pipeline per chunk (if template provided)
@@ -69,7 +69,7 @@ Key Models:
   StoryboardPlan        - Complete storyboard plan with global context and per-slide entries
 
 Key Agents (all except Content Generator are swappable via --llm-provider):
-  brand_style_analyzer  - Default: Claude Sonnet + web_search (max 2); detects and enriches brand intent.
+  brand_style_analyzer  - Default: Claude Haiku 4.5 + web_search (max 2); detects and enriches brand intent.
                           OpenAI: gpt-5-mini + web_search_preview
                           Gemini: gemini-3-flash-preview + search=True
                           (Fallback: brand_style_analyzer_fallback uses a complementary provider model)
@@ -337,7 +337,7 @@ class TokenUsageTracker:
         global totals for that model.
 
         Args:
-            model: The ID of the model used (e.g., 'claude-opus-4-6').
+            model: The ID of the model used (e.g., 'claude-haiku-4-5').
             input_tokens: Number of prompt tokens sent.
             output_tokens: Number of completion tokens received.
         """
@@ -489,7 +489,7 @@ class _RateLimitTracker:
         """Check token budget and sleep if needed, then log the call registration.
 
         Args:
-            model:   Claude model ID string (e.g. 'claude-opus-4-6').
+            model:   Claude model ID string (e.g. 'claude-haiku-4-5').
             prompt:  The full prompt string (used to estimate token count).
             caller:  Human-readable name of the calling function (for logging).
         """
@@ -1121,7 +1121,7 @@ def parse_brand_style_intent(
         to catch implicit styling intent that keywords might have missed. 
         Uses the brand_style_analyzer agent (configured as gpt-4o-mini) which 
         runs on OpenAI's separate rate-limit pool and does NOT consume Anthropic
-        input tokens. This preserves the claude-opus-4-6 budget for chunk generation.
+        input tokens. This preserves the claude-haiku-4-5 budget for chunk generation.
 
     Args:
         user_prompt: The raw user prompt string.
@@ -2687,7 +2687,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             # Fallback to claude-haiku-4-5 if attribute is missing
             actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
         else:
-            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-sonnet-4-6')
+            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
         _log_agent_banner(
             agent_name=getattr(_query_optimizer, 'name', 'Presentation Strategist'),
             model_id=actual_model_id,
@@ -4468,7 +4468,7 @@ def generate_chunk_pptx_v2(
     tier2_success = False
 
     # --- Stage 1: Primary agent (Sonnet) ---
-    actual_model_id = getattr(getattr(_fallback_agent, 'model', None), 'id', 'claude-sonnet-4-6')
+    actual_model_id = getattr(getattr(_fallback_agent, 'model', None), 'id', 'claude-haiku-4-5')
     _log_agent_banner(
         agent_name=getattr(_fallback_agent, 'name', 'PPTX Code Generator'),
         model_id=actual_model_id,

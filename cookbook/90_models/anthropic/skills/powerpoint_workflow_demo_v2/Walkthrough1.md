@@ -7,14 +7,13 @@ By analyzing the structure of the API calls and the individual models' constrain
 
 ### What Was Changed & Validated:
 
-1. **Two-Stage Brand/Style Parsing:**
-   The original script called `claude-sonnet-4-6` for *every* prompt to extract branding intent, immediately eating into the 30K/min Anthropic token budget. 
+   The original script called `claude-haiku-4-5` for *every* prompt to extract branding intent, immediately eating into the 30K/min Anthropic token budget. 
    - *Fix:* Added a zero-cost Regex keyword pre-check. If a user asks a simple query (e.g. "Create a 5-slide deck about AI Trends"), it safely skips the LLM brand parsing completely (0 tokens used).
    - *Fix:* If branding *is* required, it now calls `gpt-4o-mini` (OpenAI), completely removing this load from the Anthropic quota.
 
 2. **Smart Model Downgrades:**
-   - **`query_optimizer`**: Downgraded from `claude-opus-4-6` to `claude-sonnet-4-6` (retains the same 30K limit but handles struct-outputs better with lower cost).
-   - **`fallback_code_agent` (Tier 2)**: Downgraded from `claude-opus-4-6` to `claude-haiku-4-5`. This is a massive win because Haiku has its own separate **50,000 tokens/min** pool, meaning Tier 1 and Tier 2 Generation no longer cannibalize each other.
+   - **`query_optimizer`**: Downgraded to `claude-haiku-4-5` (massively reduced cost with the same separate reasoning pool).
+   - **`fallback_code_agent` (Tier 2)**: Downgraded to `claude-haiku-4-5`. This is a massive win because Haiku has its own separate **50,000 tokens/min** pool, meaning Tier 1 and Tier 2 Generation no longer cannibalize each other.
 
 3. **Max Tokens Caps:**
    Reduced `max_tokens` on `query_optimizer` to 4096 and `fallback_code_agent` to 16384 (down from an excessive 128,000 which reserved too much space).
@@ -23,7 +22,7 @@ By analyzing the structure of the API calls and the individual models' constrain
    Reduced the `query_optimizer` web search `max_uses` constraint from 5 to 2 to drastically cut down execution time and token consumption in Step 1.
 
 5. **API Token Tracker Singleton:**
-   Added a new `_RateLimitTracker` class to `powerpoint_chunked_workflow.py`. It tracks sequential Claude API calls, counts estimated input tokens, and aggregates them over a rolling 60-second window. It logs usages like: `[RATE TRACKER] claude-sonnet-4-6 — ~1072 estimated input tokens`. 
+   Added a new `_RateLimitTracker` class to `powerpoint_chunked_workflow.py`. It tracks sequential Claude API calls, counts estimated input tokens, and aggregates them over a rolling 60-second window. It logs usages like: `[RATE TRACKER] claude-haiku-4-5 — ~1072 estimated input tokens`. 
    
 6. **Adaptive Inter-Chunk Delay:**
    The rigid 1.0 second delay between chunk generations was replaced with a random `60.0 to 120.0` second backoff `_inter_chunk_sleep()`. A visual interactive countdown tells the user exactly how long it is waiting.

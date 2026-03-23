@@ -33,12 +33,12 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package (e.g. `claude_agents.py`, `openai_agents.py`, `gemini_agents.py`) |
 | **Variable** | `brand_style_analyzer` |
-| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-haiku-4-5`), OpenAI (`gpt-5-mini`), Gemini (`gemini-3-flash-preview`) |
 | **Tools** | `DuckDuckGoTools()` (DuckDuckGo Search) or native `search=True` |
 | **Output Schema** | `BrandStyleIntent` (Pydantic) |
 | **Purpose** | Detects brand/style directives in the user prompt (e.g. "using Nike branding", "in the style of Apple"). Autonomously decides whether to search for brand guidelines online. Returns structured intent: brand name, color palette, tone, typography hints, style keywords. |
 | **Trigger** | Start of `step_optimize_and_plan()`, before the query optimizer |
-| **Design Choice** | Claude Sonnet (fast, cheap) — lightweight analysis, not content generation |
+| **Design Choice** | Claude Haiku (fast, cheaper) — lightweight analysis, not content generation |
 
 **Output fields:**
 - `has_branding` — True when a brand directive is detected
@@ -56,11 +56,11 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package |
 | **Variable** | `query_optimizer` |
-| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6`), OpenAI (`gpt-5.2`), Gemini (`gemini-3.1-pro-preview`) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-haiku-4-5`), OpenAI (`gpt-5.2`), Gemini (`gemini-3.1-pro-preview`) |
 | **Tools** | `DuckDuckGoTools()` (DuckDuckGo Search) or native `search=True` |
 | **Output** | `StoryboardPlan` (via prompt instructions + manual JSON parse) |
 | **Purpose** | Takes the user prompt + brand context and produces a researched, structured storyboard that guides all downstream chunk generation. Plans slide count, narrative flow, tone, brand voice, and per-slide content outline. |
-| **Note** | `output_schema` is intentionally omitted — `claude-sonnet-4-6` with `context-1m` beta does not support structured outputs efficiently as Agno makes an internal non-streaming extraction call that the beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
+| **Note** | `output_schema` is intentionally omitted — `claude-haiku-4-5` with `context-1m` beta does not support structured outputs efficiently as Agno makes an internal non-streaming extraction call that the beta rejects. Storyboard JSON is requested via prompt instructions and parsed manually. |
 
 **Output fields:**
 - `total_slides` — Planned count (respects user-specified count, else 8-15)
@@ -76,7 +76,7 @@ step_visual_quality_review()
 | Property | Value |
 |----------|-------|
 | **File** | `powerpoint_template_workflow.py` (core logic) / `powerpoint_chunked_workflow.py` (execution) |
-| **Model** | Claude Opus `claude-opus-4-6` + `context-1m-2025-08-07` beta |
+| **Model** | `claude-haiku-4-5` (Chunked Mode) / `claude-sonnet-4-6` (Standalone Mode) |
 | **Skills** | `pptx` (Anthropic Agent Skill — native PowerPoint creation in sandbox) |
 | **Output** | Raw `.pptx` file (downloaded via Anthropic Files API + `file_download_helper.py`) |
 | **Purpose** | Primary content generator. Writes slide content within a sandboxed environment. Produces titles, bullets, tables, and charts. In chunked mode, generates N-slide chunks guided by storyboard context + brand context. |
@@ -89,10 +89,10 @@ step_visual_quality_review()
 |----------|-------|
 | **File** | `agents/` package |
 | **Variable** | `fallback_code_agent` (primary) and `fallback_code_agent_lite` (fallback) |
-| **Model** | Swappable via `--llm-provider`: Claude (`claude-sonnet-4-6` & `claude-haiku-4-5`), OpenAI (`gpt-5.2` & `gpt-5-mini`), Gemini (`gemini-3.1-pro-preview` & `gemini-3.1-flash-preview`) |
+| **Model** | Swappable via `--llm-provider`: Claude (`claude-haiku-4-5`), OpenAI (`gpt-5.2` & `gpt-5-mini`), Gemini (`gemini-3.1-pro-preview` & `gemini-3.1-flash-preview`) |
 | **Tools** | `PythonTools` (code execution — `save_and_run_python_code`) |
 | **Output** | `.pptx` file generated via python-pptx + matplotlib code |
-| **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. Uses a two-stage fallback chain (e.g., Sonnet -> Haiku) for maximum reliability. Escalates to Tier 3 on failure. |
+| **Purpose** | Fallback when Tier 1 fails. Generates and immediately executes a Python script that builds slides with real Office charts (`ChartData`), matplotlib PNG embeds, and tables. Uses a fallback chain for maximum reliability. Escalates to Tier 3 on failure. |
 | **Quality** | 80–92% of Tier 1 quality |
 | **Brand injection** | Brand context appended to `GLOBAL CONTEXT` in code-gen prompt |
 
