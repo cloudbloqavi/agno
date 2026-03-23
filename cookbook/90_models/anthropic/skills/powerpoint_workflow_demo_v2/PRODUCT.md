@@ -109,6 +109,7 @@ When using `--template`, these automatic safeguards protect presentation quality
 - **Single-Slide Visual References (Optional via `--template-visuals`)** — Inspired by single-shot cloning, chunk prompts can inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts. **Disabled by default** to optimize token usage and cost; enabled with `-tv` or `--template-visuals`.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
 - **Template Visual Profile** — Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer.
+- **Token Usage & Cost Transparency** — Integrated `TokenUsageTracker` monkey-patches `Agent.run` to capture input/output tokens for every API call across all pipeline stages. Provides a detailed per-model cost break-down at the end of the run when `--verbose` is enabled, ensuring full cost transparency.
 
 Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
 

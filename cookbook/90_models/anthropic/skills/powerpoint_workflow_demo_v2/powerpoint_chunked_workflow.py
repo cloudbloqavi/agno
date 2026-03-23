@@ -203,6 +203,22 @@ Logging conventions:
         [VERBOSE] detailed debug information
         [TOKEN SUMMARY] Final table of token counts and USD cost per model
 
+Usage Examples:
+    # Basic (default 3 slides per chunk):
+    python powerpoint_chunked_workflow.py -p "AI in Healthcare"
+
+    # With template and custom chunk size:
+    python powerpoint_chunked_workflow.py -t templates/my_template.pptx --chunk-size 4 -p "Enterprise Strategy"
+
+    # Enable high-fidelity template visual references (higher token usage):
+    python powerpoint_chunked_workflow.py -t templates/my_template.pptx --template-visuals -p "Branded Pitch"
+
+    # Enable Token Usage & Cost Summary (Verbose mode):
+    python powerpoint_chunked_workflow.py -p "Market Research" --verbose
+
+    # Full pipeline: Visual review, 5 passes, custom output:
+    python powerpoint_chunked_workflow.py -t templates/my_template.pptx -p "Board Deck" \
+        --visual-review --visual-passes 5 -o board_final.pptx
 """
 
 import argparse
@@ -230,7 +246,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from agno.run.agent import RunOutput  # type: ignore
 
@@ -290,6 +306,8 @@ TOKEN_PRICES = {
     "gpt-4o": (2.5, 10.0),
     "gpt-4o-mini": (0.15, 0.6),
     "gpt-5.2": (2.5, 10.0),
+    "gpt-5.4": (5.0, 15.0), # Flagship fallback
+    "o3-mini": (0.15, 0.6),  # Thinking mini
     "gpt-5-mini": (0.15, 0.6),
     "gemini-1.5-pro": (1.25, 5.0),
     "gemini-1.5-flash": (0.075, 0.3),
@@ -300,32 +318,63 @@ TOKEN_PRICES = {
 }
 
 class TokenUsageTracker:
+    """Tracks token consumption and estimated cost across multiple LLM models.
+
+    This tracker is used to provide cost transparency at the end of a workflow run,
+    categorizing usage by model ID and applying estimated 2024/2026-equivalent
+    pricing per million tokens.
+    """
+
     def __init__(self):
-        self.usage = {}  
+        """Initialize a new token usage tracker with empty usage stats."""
+        self.usage = {}
         self.total_cost = 0.0
-    
-    def add_usage(self, model: str, input_tokens: int, output_tokens: int):
+
+    def add_usage(self, model: Union[str, Any], input_tokens: int, output_tokens: int):
+        """Record token usage for a specific model.
+
+        Calculates the estimated cost based on the model ID and increments
+        global totals for that model.
+
+        Args:
+            model: The ID of the model used (e.g., 'claude-opus-4-6').
+            input_tokens: Number of prompt tokens sent.
+            output_tokens: Number of completion tokens received.
+        """
+        # Defensive: handle Pydantic model objects or missing IDs
         if not model:
-            model = "unknown"
-        if model not in self.usage:
-            self.usage[model] = {"inputs": 0, "outputs": 0, "cost": 0.0, "calls": 0}
-        
-        self.usage[model]["inputs"] += input_tokens
-        self.usage[model]["outputs"] += output_tokens
-        self.usage[model]["calls"] += 1
-        
-        price_in, price_out = TOKEN_PRICES.get(model, TOKEN_PRICES["default"])
-        if model not in TOKEN_PRICES:
+            model_id = "unknown"
+        elif hasattr(model, "id"):
+            model_id = str(model.id)
+        elif hasattr(model, "name"):
+            model_id = str(model.name)
+        else:
+            model_id = str(model)
+
+        if model_id not in self.usage:
+            self.usage[model_id] = {"inputs": 0, "outputs": 0, "calls": 0, "cost": 0.0}
+
+        self.usage[model_id]["inputs"] += input_tokens
+        self.usage[model_id]["outputs"] += output_tokens
+        self.usage[model_id]["calls"] += 1
+
+        price_in, price_out = TOKEN_PRICES.get(model_id, TOKEN_PRICES["default"])
+        if model_id not in TOKEN_PRICES:
             for k, (pin, pout) in TOKEN_PRICES.items():
-                if k in model:
+                if k in model_id:
                     price_in, price_out = pin, pout
                     break
-                    
+
         cost = (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
-        self.usage[model]["cost"] += cost
+        self.usage[model_id]["cost"] += cost
         self.total_cost += cost
 
     def print_summary(self, verbose: bool = True):
+        """Print a formatted table of token usage and estimated costs to the console.
+
+        Args:
+            verbose: If False, the summary is suppressed. Defaults to True.
+        """
         if not verbose:
             return
         print("\n\n" + "="*70)
@@ -2633,7 +2682,12 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         response = None
         from agents import get_agents as _get_agents  # type: ignore
         _query_optimizer = _get_agents(session_state.get("llm_provider", "claude")).get("query_optimizer")
-        actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-sonnet-4-6')
+        provider = getattr(getattr(_query_optimizer, 'model', None), 'provider', session_state.get('llm_provider', 'claude'))
+        if provider == "Anthropic":
+            # Fallback to claude-haiku-4-5 if attribute is missing
+            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
+        else:
+            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-sonnet-4-6')
         _log_agent_banner(
             agent_name=getattr(_query_optimizer, 'name', 'Presentation Strategist'),
             model_id=actual_model_id,
@@ -3137,7 +3191,7 @@ def generate_chunk_pptx(
     chunk_agent = Agent(
         name="Chunk Generator %d" % chunk_idx,
         model=Claude(
-            id="claude-opus-4-6",
+            id="claude-haiku-4-5",
             betas=["context-1m-2025-08-07"],
             skills=[{"type": "anthropic", "skill_id": "pptx", "version": "latest"}],
             max_tokens=128000,
@@ -3153,7 +3207,11 @@ def generate_chunk_pptx(
             "For any chart mentioned in a visual_suggestion: produce a native Office chart with synthesized data — never embed a chart as an image.",
             "For tables: use ONLY native PPTX table objects — never embed a table as an image or use matplotlib/PIL to render one.",
             "For infographics or diagrams: use native PowerPoint shapes (rectangles, arrows, text boxes) or a native table to approximate the visual — never insert an image for an infographic or diagram.",
-            "When a visual request is ambiguous or over-specified, prefer deterministic native data-vis output and keep slide completeness over visual perfection.",
+            "SEMANTIC LAYOUT RULES: If the slide Semantic Type is 'sequential', 'comparative', 'metrics', or 'hero', "
+            "DO NOT use standard bullet points. Instead, create native shapes (chevrons, cards, metric grids, banners) "
+            "that visually represent that semantic classification.\n"
+            "If a requested visual cannot be represented exactly, preserve the slide structure and add a concise "
+            "native textbox note; do NOT fail the chunk and do NOT use image-based substitutes.",
         ],
         markdown=True,
     )
@@ -3176,7 +3234,7 @@ def generate_chunk_pptx(
 
         _log_agent_banner(
             agent_name=f"Chunk Generator {chunk_idx}",  # type: ignore
-            model_id='claude-opus-4-6',
+            model_id='claude-haiku-4-5',
             provider=str(getattr(getattr(chunk_agent, 'model', None), 'provider', 'Anthropic')),  # type: ignore
             step_name=f"step_generate_chunks / Tier 1 PPTX Skill (attempt {attempt + 1}/{max_retries + 1})",
         )
@@ -3184,7 +3242,7 @@ def generate_chunk_pptx(
         # Register this call with the rate tracker before executing.
         # check_and_wait will auto-sleep if the 30K token/min window would be exceeded.
         _get_rate_tracker().check_and_wait(
-            model="claude-opus-4-6",
+            model="claude-haiku-4-5",
             prompt=chunk_prompt,
             caller="generate_chunk_pptx/Tier1",
         )
@@ -3287,9 +3345,9 @@ def generate_chunk_pptx(
                 )
                 try:
                     chunk_agent_sonnet = Agent(
-                        name="Chunk Generator %d (Sonnet Fallback)" % chunk_idx,  # type: ignore
+                        name="Chunk Generator %d (Haiku Fallback)" % chunk_idx,  # type: ignore
                         model=Claude(
-                            id="claude-sonnet-4-6",
+                            id="claude-haiku-4-5",
                             betas=["context-1m-2025-08-07"],
                             skills=[
                                 {
@@ -3304,17 +3362,17 @@ def generate_chunk_pptx(
                         markdown=True,
                     )
                     _log_agent_banner(
-                        agent_name="Chunk Generator %d (Sonnet Fallback)"  # type: ignore
+                        agent_name="Chunk Generator %d (Haiku Fallback)"  # type: ignore
                         % chunk_idx,
-                        model_id="claude-sonnet-4-6",
+                        model_id="claude-haiku-4-5",
                         provider="Anthropic",
-                        step_name="step_generate_chunks / Tier 1 Sonnet "  # type: ignore
+                        step_name="step_generate_chunks / Tier 1 Haiku "  # type: ignore
                         "Fallback (chunk %d)" % chunk_idx,
                     )
                     _get_rate_tracker().check_and_wait(
-                        model="claude-sonnet-4-6",
+                        model="claude-haiku-4-5",
                         prompt=chunk_prompt,
-                        caller="generate_chunk_pptx/Tier1-Sonnet-Fallback",
+                        caller="generate_chunk_pptx/Tier1-Haiku-Fallback",
                     )
                     t1_sonnet_start = time.time()
                     with concurrent.futures.ThreadPoolExecutor(
@@ -4054,7 +4112,7 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "For python-pptx ChartData bar/column charts: from pptx.chart.data import ChartData; from pptx.enum.chart import XL_CHART_TYPE.",
     "ChartData example: chart_data = ChartData(); chart_data.categories = ['A','B','C']; chart_data.add_series('Series1', (10, 20, 30)); slide.shapes.add_chart(XL_CHART_TYPE.BAR_CLUSTERED, Inches(1), Inches(1.5), Inches(8), Inches(4.5), chart_data).",
     "For line charts use XL_CHART_TYPE.LINE, for pie charts use XL_CHART_TYPE.PIE — always via ChartData, never via image embedding.",
-    "CHART SIZING (CRITICAL): Charts MUST fill at least 60% of the slide content area. Default chart dimensions: Inches(1), Inches(1.5), Inches(8), Inches(5). NEVER create tiny charts — they must dominate the visual area.",
+    "CHART SIZING (CRITICAL): Charts MUST fill at least 60% of the slide content area. Default chart dimensions: Inches(1), Inches(1.5), Inches(8), Inches(4.5). NEVER create tiny charts — they must dominate the visual area.",
     "CHART DATA LABELS (CRITICAL): ALWAYS enable data labels on every chart: plot = chart.plots[0]; plot.has_data_labels = True; plot.data_labels.show_value = True. For PIE charts additionally: plot.data_labels.show_category_name = True; plot.data_labels.show_percentage = True; plot.data_labels.show_value = False.",
     "For TABLES: ALWAYS use slide.shapes.add_table(rows, cols, Inches(1), Inches(1.5), Inches(8), Inches(4.5)). Fill cells via table.cell(row, col).text = 'value'. NEVER embed a table as an image or use matplotlib/PIL to render one.",
     "For INFOGRAPHICS or DIAGRAMS: use native python-pptx shapes (add_shape with MSO_AUTO_SHAPE_TYPE.RECTANGLE, add_textbox, add_connector) or a native table to approximate the layout. NEVER insert an image for an infographic or diagram.",
@@ -4345,6 +4403,7 @@ def generate_chunk_pptx_v2(
         "- If Semantic Type is 'hero': DO NOT use bullets. Draw a massive, centered title and subtitle on a dark tinted rectangle spanning the full slide.\n"
         "- For any slide with a chart visual_suggestion: generate a REAL chart using "
         "  python-pptx native ChartData ONLY (e.g. CategoryChartData + slide.shapes.add_chart()).\n"
+        "  Do NOT use matplotlib, PIL, or any image-based approach for charts.\n"
         "  Do NOT use matplotlib, PIL, or any image-based approach for charts.\n"
         "- Synthesize specific, plausible data values matching the visual_suggestion topic.\n"
         "- For any slide with a table visual_suggestion: generate a REAL native table using slide.shapes.add_table(). NEVER use matplotlib or embed a table as an image.\n"

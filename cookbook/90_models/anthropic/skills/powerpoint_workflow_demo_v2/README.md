@@ -98,7 +98,7 @@ python powerpoint_chunked_workflow.py \
 | `--inter-chunk-delay-min` | Minimum random delay between chunks (ms) | Provider Specific |
 | `--inter-chunk-delay-max` | Maximum random delay between chunks (ms) | Provider Specific |
 | `--no-stream` | Disable streaming for agents | disabled |
-| `--verbose, -v` | Enable verbose/debug logging | disabled |
+| `--verbose, -v` | Enable verbose/debug logging (includes Token Usage Summary) | disabled |
 
 ## Swappable LLM Providers
 
@@ -140,6 +140,30 @@ It tracks:
 - **Estimated Cost**: Calculated based on approximate 2026 provider pricing.
 
 This summary is printed to both the console (log) and the `OUTPUT.md` file.
+
+### Example Usage
+
+```bash
+python powerpoint_chunked_workflow.py \
+    -p "Research latest 2026 hyperlocal ecommerce trends in India" \
+    --verbose
+```
+
+**Output Example:**
+
+```text
+======================================================================
+                    📊 TOKEN USAGE & COST SUMMARY                     
+======================================================================
+Model                          | Calls | Tokens (In/Out)      | Est. Cost
+----------------------------------------------------------------------
+claude-3-5-sonnet-20241022      | 4     | 12,450 / 3,120       | $0.08415
+gpt-4o-mini                     | 2     | 1,200 / 450          | $0.00045
+gemini-2.5-flash                | 3     | 45,000 / 1,200       | $0.00373
+----------------------------------------------------------------------
+TOTAL ESTIMATED COST: $0.08833
+======================================================================
+```
 
 ## 3-Tier Fallback System with Universal HA
 

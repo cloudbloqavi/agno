@@ -107,7 +107,7 @@ def create_agents() -> Dict[str, Agent]:
     # max_tokens capped at 16384: python-pptx scripts for 2 slides are ~500-1000 lines.
     fallback_code_agent = Agent(
         name="PPTX Code Generator",
-        model=Claude(id="claude-sonnet-4-6", max_tokens=16384, betas=["context-1m-2025-08-07"]),
+        model=Claude(id="claude-haiku-4-5", max_tokens=16384, betas=["context-1m-2025-08-07"]),
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
             PythonTools(
@@ -158,7 +158,8 @@ def create_agents() -> Dict[str, Agent]:
 
     query_optimizer_fallback = Agent(
         name="Presentation Strategist (Fallback)",
-        model=Gemini(id="gemini-3.1-pro-preview", search=True, max_output_tokens=8192),
+        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=8192),
+        tools=[DuckDuckGoTools()],
         description="Fallback agent for Presentation Strategist using Gemini in case of rate limits or errors.",
         markdown=False,
     )

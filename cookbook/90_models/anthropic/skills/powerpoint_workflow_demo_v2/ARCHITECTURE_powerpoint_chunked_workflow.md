@@ -80,10 +80,11 @@ Step 1: Optimize & Plan
 Step 2: Generate Chunks
     │  (Claude pptx skill, N chunks)
     ▼
-Step 5: Merge Chunks
-    │  (raw chunk_files → merged PPTX)
-    ▼
 Final PPTX
+    │
+    ▼
+Step 6: Usage Summary
+    │  (Total tokens + Est. USD cost)
 ```
 
 - `--visual-review` and `--visual-passes` are **completely ignored** even if passed
@@ -110,10 +111,11 @@ Step 3: Process Chunks
 [Step 4: Visual Review]   ← only if --visual-review is also passed
     │  (Gemini vision QA per chunk, up to --visual-passes passes with upfront key validation)
     ▼
-Step 5: Merge Chunks
-    │  (processed/reviewed chunks → merged PPTX)
-    ▼
 Final PPTX
+    │
+    ▼
+Step 6: Usage Summary
+    │  (Total tokens + Est. USD cost)
 ```
 
 ### Step Source Selection in `step_merge_chunks()`
@@ -928,7 +930,7 @@ session_state = {
 | `--footer-text` | — | No | `""` | Footer text for all slides (idx=11 placeholder) |
 | `--date-text` | — | No | `""` | Date text for footer date placeholder (idx=10) |
 | `--show-slide-numbers` | — | No | `False` | Keep slide number footer placeholder (idx=12) |
-| `--verbose` | `-v` | No | `False` | Enable verbose/debug logging for troubleshooting |
+| `--verbose` | `-v` | No | `False` | Enable verbose/debug logging for troubleshooting (includes Token Usage & Cost Summary) |
 
 ---
 
@@ -1387,3 +1389,18 @@ Recent enhancements (March 2026) addressed specific fidelity gaps when using hig
 - **Spatial Grid**: Prompt instructions enforce a 12-column logical grid for element positioning.
 - **Decoration Ban**: LLM is forbidden from generating its own decorative borders/lines, relying instead on the template's structural motifs.
 ```
+
+---
+
+## Token Usage & Cost Summary Logic
+
+The workflow implements a dynamic token tracking system to provide visibility into API consumption costs.
+
+### TokenUsageTracker Class
+- **Purpose**: Aggregates input and output tokens per model across the entire session.
+- **Mechanism**: Monkey-patches the `Agent.run` method of the Agno framework. This allows it to intercept every agent interaction (both streaming and non-streaming) and extract token metrics from `run_response.metrics`.
+- **Pricing**: Uses a `TOKEN_PRICES` dictionary containing 2024/2026-equivalent pricing for Claude, GPT, and Gemini models.
+- **Output**: Generates a formatted table displaying calls, tokens, and estimated USD cost per model.
+
+### Global Pacing
+While the `TokenUsageTracker` handles reporting, the `_RateLimitTracker` (separate) handles real-time execution pacing to respect provider quotas (429 handling).
