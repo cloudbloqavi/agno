@@ -1264,7 +1264,9 @@ flowchart TD
 ### Prompt Injection
 The visual profile is injected as a `## Template Visual Profile` section in the optimizer's system prompt. This ensures that the generated storyboard is physically compatible with the template's constraints from the very first step.
 
----
+### Architecture (Brand Analysis Flow)
+
+```mermaid
 flowchart TD
     A["User Query"] --> B["Two-Stage Brand Analyzer<br/>(Regex Check + gpt-4o-mini)"]
     B --> C{"Brand Detected?"}
@@ -1336,4 +1338,51 @@ When both a user query contains branding directives **and** a template file is p
 [BRAND OVERRIDE] Reason: Explicit template file takes precedence over natural language branding directives.
 [BRAND OVERRIDE] Template colors: #003366, #FF9900
 [BRAND OVERRIDE] Template fonts: Arial, Calibri
+```
+
+---
+
+## Adaptive No-Template Design System
+
+When no `--template` is provided, the workflow generates a professional visual identity from scratch using the `_build_no_template_design_system()` engine.
+
+### Audience-to-Style Mapping
+The Query Optimizer performs **Audience Inference** (e.g., Board of Directors, Tech Startup, Students) and maps it to one of four visual archetypes:
+
+| Visual Style | Target Audience | Design Characteristics |
+|--------------|-----------------|------------------------|
+| `bold_modern` | Startups, Product Launches | Dark #0F172A bg, #38BDF8 accents, Inter/Roboto font |
+| `clean_minimal` | Creative, Luxury, Design | White #FFFFFF bg, #1A1A1A text, elegant spacing |
+| `corporate_professional` | Board Meetings, Finance | White #FFFFFF bg, #003366 accents, Calibri/Arial |
+| `creative_dynamic` | Marketing, Events | #1A1A1A bg, #E11D48 (Crimson) accents, asymmetrical lines |
+
+### Brand Intent Integration
+If `BrandStyleIntent` contains custom colors or fonts (extracted from query or web search), they **override** the archetype tokens:
+- **Colors**: Brand primary replaces preset accent; brand secondary replaces preset secondary.
+- **Fonts**: Brand typography hints replace preset font families.
+- **Logging**: Emits `[VERBOSE] [DESIGN SYSTEM] Brand palette override...` for traceability.
+
+---
+
+## Template Fidelity & Multi-Pass Sanitization
+
+Recent enhancements (March 2026) addressed specific fidelity gaps when using high-quality templates:
+
+### 1. Slanting Accent Line Removal
+- **Problem**: Template-level decorative lines (diagonal/slanting) were sometimes preserved as "structural" but clashed with generated content.
+- **Fix**: `_classify_template_shape` now performs **early LINE preset detection**. Any shape with `prst="line"` is marked `disposable` and purged during assembly.
+
+### 2. Incremental Footer Numbering
+- **Problem**: Cloned footer bands often had hardcoded '1' values that didn't increment.
+- **Fix**: `inject_template_footer_band` now accepts a `slide_number` parameter. It performs a post-clone recursion to find numeric text runs and update them to the correct value.
+
+### 3. Contextual Content Clearing
+- **Problem**: "AGILE PROJECT PLAN" or template column headers were appearing in output.
+- **Fix**: Enhanced `_classify_template_shape` heuristics:
+    - **Header Zone**: Text shapes are now `content_carrier` (structure kept, text cleared) unless they match branding markers.
+    - **Footer Zone**: Only branding motifs are `structural`; generic template text is now `content_carrier`.
+
+### 4. Code generation (Tier 2) Fidelity
+- **Spatial Grid**: Prompt instructions enforce a 12-column logical grid for element positioning.
+- **Decoration Ban**: LLM is forbidden from generating its own decorative borders/lines, relying instead on the template's structural motifs.
 ```

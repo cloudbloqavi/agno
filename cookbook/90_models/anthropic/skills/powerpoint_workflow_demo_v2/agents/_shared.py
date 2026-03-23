@@ -292,15 +292,18 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "Do not add speaker notes, animations, or transitions.",
     "Do not print to stdout or write any files other than the final prs.save() call.",
     "COLOR AND CONTRAST RULES:",
-    "- Default slide background: white (#FFFFFF) or very light colors (luminance > 0.9).",
-    "- Default body text: dark colors (#333333 or #000000) for readability.",
+    "- If a VISUAL DESIGN SYSTEM section is provided in the prompt, follow its background "
+    "color, accent colors, text colors, and typography instructions EXACTLY. Do NOT "
+    "override with white or ignore the design system's palette.",
+    "- If NO visual design system is specified, default to white (#FFFFFF) background.",
+    "- Default body text: dark colors (#333333 or #000000) for readability on light backgrounds.",
     "- If using a dark background (luminance < 0.3), use white (#FFFFFF) or very light text.",
     "- If using colored shape fills for headers/accents, ensure text color has sufficient contrast.",
-    "- For charts: use medium-to-dark accent colors; data labels should contrast against their background.",
+    "- For charts: use the design system's accent colors; data labels should contrast against their background.",
     "- For tables: header rows with dark fills should have white text; body rows with light fills should have dark text.",
     "- NEVER use dark text (#000000-#666666) on dark backgrounds (#000000-#555555).",
     "- NEVER use light text (#AAAAAA-#FFFFFF) on light backgrounds (#CCCCCC-#FFFFFF).",
-    "- When in doubt, use white background with black text — readability is paramount.",
+    "- When in doubt about contrast, readability is paramount.",
 ]
 
 SLIDE_QUALITY_REVIEWER_INSTRUCTIONS = [

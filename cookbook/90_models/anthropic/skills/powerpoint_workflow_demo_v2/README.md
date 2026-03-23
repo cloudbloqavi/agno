@@ -139,6 +139,14 @@ The workflow detects brand directives in user prompts (e.g. "using Nike branding
 - **Template override**: When a template is provided, its styling takes precedence
 - **Visual Profile Analysis**: Programmatic analysis of template density and style is injected into the optimizer prompt
 - Brand context is injected into optimizer, Tier 1, and Tier 2 prompts
+- **Audience-to-Style mapping**: Optimizer determines the target audience and selects one of 4 visual archetypes (bold_modern, clean_minimal, etc.)
+
+## Adaptive No-Template Design System
+
+When no template is provided, the system builds a visual identity on the fly:
+- **Presets**: Maps audience to specific color/font pairings (e.g. `corporate_professional` for board meetings).
+- **Brand Overrides**: Brand palette and fonts override preset defaults for consistent ID.
+- **Verbose Logging**: Clear `[VERBOSE] [DESIGN SYSTEM]` logs for color/font overrides.
 
 ## Output
 
@@ -251,3 +259,6 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Smart Template Purge** | Intelligent classification (Fix 13) preserves branded headers, footers, and decorative motifs while clearing placeholder text |
 | **Template-aware prompts** | Tier 2 LLM code generation includes spatial grid rules, decoration bans, and layout constraints |
 | **Visual Profile Analysis** | Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer |
+| **Accent Line Purge** | Automatic detection and removal of slanting/diagonal LINE geometry from templates |
+| **Footer Numbering** | Incremental page numbering (1, 2, 3...) for cloned template footer bands |
+| **Content Sanitization** | Heuristic removal of hardcoded template text (e.g. "AGILE PROJECT PLAN") while preserving branding motifs |

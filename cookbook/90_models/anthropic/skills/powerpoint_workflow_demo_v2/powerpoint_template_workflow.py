@@ -227,6 +227,10 @@ _BRANDING_PATTERNS = (
     "www.", "http", ".com", ".org", ".net", ".io",
 )
 
+# Footer text markers that indicate branding (should be preserved as-is).
+# Other footer text shapes are treated as template-specific content carriers.
+_FOOTER_BRANDING_MARKERS = {"powerslides", "www.", "\u00a9", "(c)", "copyright"}
+
 
 def _get_shape_text_content(shape) -> str:
     """Extract all visible text from a shape (including nested groups).
@@ -278,29 +282,26 @@ def _classify_template_shape(
         1. Header/footer zone — shapes in the top 10% or bottom 12% of the
            slide with short or branding text are structural (branded headers,
            footer bars, page numbers, URLs).
-        2. Template placeholder text — shapes whose text matches common
-           template filler patterns (XXX, "Enter ... here", Lorem, etc.)
-           are content carriers: their text is cleared but the shape is kept.
-        3. Colored accent shapes — shapes with a solid fill matching the
-           template's accent palette and very short labels (<=15 chars) are
-           structural (colored cards, icon badges, progress bars).
-        4. GroupShapes with uniform children — groups with >=3 similarly-sized
-           children are structural (card grids, icon grids, chevron flows).
-        5. Small decorative shapes — shapes under the small threshold are
-           structural (icons, bullets, small accents).
-        6. Short-text shapes with colored fills — shapes with <=30 chars of
-           text AND a colored fill are content carriers (labeled cards).
-        7. Default — shapes with substantial text (>30 chars) are disposable.
+    """Classify a template shape as 'structural', 'content_carrier', or 'disposable'.
+
+    Heuristics:
+    1.  Early Check: Shapes with 'line' geometry are 'disposable' (Fixes diagonal/slanting lines).
+    2.  Branding: Shapes with branding markers (powerslides, www., (c)) are 'structural'.
+    3.  Header Zone: Top 15% of slide. Short text (<=40 chars) becomes 'content_carrier' 
+        (text cleared, visual kept).
+    4.  Footer Zone: Bottom 10% of slide. Numeric text and branding are 'structural'.
+        Other text is 'content_carrier' (Fixes "AGILE PROJECT PLAN" repetition).
+    5.  Body Zone: Small decorative motifs are 'structural'; long text is 'content_carrier'.
 
     Args:
-        shape: A python-pptx shape object from the template slide.
+        shape: pptx.shapes.base.BaseShape instance.
+        slide_type: "title" or "content".
         slide_width: Slide width in EMU.
         slide_height: Slide height in EMU.
-        accent_colors: Optional list of template accent color hex strings
-            (uppercase, no '#'). Used to identify accent-filled shapes.
+        accent_colors: List of template accent colors.
 
     Returns:
-        One of: "structural", "content_carrier", "disposable"
+        "structural", "content_carrier", or "disposable".
     """
     if accent_colors is None:
         accent_colors = []
@@ -320,18 +321,37 @@ def _classify_template_shape(
     sw = int(slide_width) if slide_width else 1
     sh = int(slide_height) if slide_height else 1
 
+    # --- Early check: LINE geometry shapes are always disposable ---
+    # Template LINE connectors render as diagonal slanting lines.
+    try:
+        xml_str = shape._element.xml if hasattr(shape, '_element') else ""
+    except Exception:
+        xml_str = ""
+    if 'prstGeom prst="line"' in xml_str:
+        return "disposable"
+
     # --- Heuristic 1: Header/footer zone shapes ---
     in_footer_zone = shape_bottom > int(sh * 0.88)
     in_header_zone = shape_top < int(sh * 0.10)
 
     if in_footer_zone:
-        # Footer zone shapes are almost always structural (branded bars,
-        # page numbers, copyright notices, URLs)
+        # Footer zone: non-text decorative shapes (lines, circles) are structural.
+        # Text shapes with branding markers stay structural.
+        # Text shapes with template-specific content become content_carriers
+        # so their text is cleared (e.g. column headers, template labels).
+        if has_text:
+            for m in _FOOTER_BRANDING_MARKERS:
+                if m in text_lower:
+                    return "structural"
+            return "content_carrier"
         return "structural"
 
     if in_header_zone and text_len <= 40:
-        # Short text in the header zone is likely a branded title or
-        # decorative label — preserve it
+        # Header zone shapes WITH text are content carriers — their
+        # template-specific text (e.g. "AGILE PROJECT PLAN") will be
+        # cleared and new contextual content injected later.
+        if has_text:
+            return "content_carrier"
         return "structural"
 
     # Check branding text patterns anywhere on the slide
@@ -6819,7 +6839,11 @@ def _analyze_template_in_depth(template_prs) -> dict:
             bg = element.find(ns_p + "cSld/" + ns_p + "bg")
             if bg is None:
                 return ""
-            bgPr = bg.find(ns_p + "bgPr") or bg.find(ns_p + "bgRef") or bg
+            bgPr = bg.find(ns_p + "bgPr")
+            if bgPr is None:
+                bgPr = bg.find(ns_p + "bgRef")
+            if bgPr is None:
+                bgPr = bg
             solidFill = bgPr.find(ns_a + "solidFill")
             if solidFill is not None:
                 srgb = solidFill.find(ns_a + "srgbClr")
@@ -7824,6 +7848,29 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             except Exception as e:
                 if VERBOSE:
                     print(f"[VERBOSE] Logo swap failed for slide {idx+1}: {e}")
+
+        # ---------------------------------------------------------------
+        # Phase D-footer: Template Footer Band Injection (Fix 17)
+        # Ensure every slide receives the template's original footer zone
+        # shapes (bottom 13%: POWERSLIDES text, blue line, circles, URL).
+        # Only inject when we have a template.
+        # ---------------------------------------------------------------
+        if _template_slide_count > 0:
+            try:
+                _tmpl_src_idx = min(idx, _template_slide_count - 1)
+                inject_template_footer_band(
+                    new_slide,
+                    template_prs_for_styles,
+                    _tmpl_src_idx,
+                    int(slide_height),
+                    slide_number=idx + 1,
+                )
+            except Exception as e:
+                if VERBOSE:
+                    print(
+                        "[VERBOSE] Footer band injection failed for slide %d: %s"
+                        % (idx + 1, str(e))
+                    )
 
         # ---------------------------------------------------------------
         # Phase D3: Default Design System for non-template presentations
@@ -11277,9 +11324,16 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
 
     # Filter shapes: we don't want to clamp or reflow template backdrops
     # or semantic layout elements that were deliberately placed.
+    # Fix 17: Also skip shapes sitting in the footer zone (bottom 13%)
+    # so that inject_template_footer_band shapes are never moved.
+    _footer_zone_top = int(slide_height * _SAFE_BOTTOM_PCT)
     shapes = []
     for s in slide.shapes:
         if _is_backdrop(s):
+            continue
+        # Fix 17: Protect footer zone shapes
+        s_top = getattr(s, "top", None)
+        if s_top is not None and int(s_top) >= _footer_zone_top:
             continue
         shapes.append(s)
 
@@ -11912,3 +11966,286 @@ def sanitize_presentation(prs) -> int:
     return total
 
 
+# ---------------------------------------------------------------------------
+# Shape Sanitizer (Fix 16 — remove LLM-generated LINE/freeform/diagonal shapes)
+# ---------------------------------------------------------------------------
+
+
+def sanitize_llm_shapes(prs) -> int:
+    """Remove LINE geometry, freeform polygon, and diagonal decorative shapes.
+
+    This is a deterministic post-processing pass that runs AFTER the LLM
+    generates a chunk PPTX. The LLM is unreliable at shape generation —
+    it frequently creates diagonal LINE connectors, freeform scratch shapes,
+    and other visual artefacts that look like slanting accent lines.
+
+    Detection criteria (any one triggers removal):
+      1. Shape XML contains ``<a:prstGeom prst="line">`` — a LINE connector.
+      2. Shape XML contains ``<a:custGeom>`` — a freeform polygon.
+      3. Shape has no text, no chart, no table, no image, AND
+         ``min(w,h) / max(w,h) > 0.10`` — a diagonal decorative shape
+         (a true horizontal/vertical bar would have ratio < 0.10).
+
+    Args:
+        prs: A python-pptx Presentation object.
+
+    Returns:
+        Number of shapes removed.
+    """
+    ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    removed = 0
+
+    for slide in prs.slides:
+        spTree = slide.shapes._spTree
+        elements_to_remove = []
+
+        for shape in list(slide.shapes):
+            try:
+                xml_str = shape._element.xml
+
+                # --- Criterion 1: LINE geometry ---
+                if 'prstGeom prst="line"' in xml_str:
+                    elements_to_remove.append(shape._element)
+                    if VERBOSE:
+                        name = getattr(shape, "name", "")
+                        print(
+                            "  [SHAPE SANITIZE] Removing LINE shape: '%s' "
+                            "pos=(%.2f,%.2f) sz=(%.2f,%.2f)"
+                            % (
+                                name,
+                                (getattr(shape, "left", 0) or 0) / 914400.0,
+                                (getattr(shape, "top", 0) or 0) / 914400.0,
+                                (getattr(shape, "width", 0) or 0) / 914400.0,
+                                (getattr(shape, "height", 0) or 0) / 914400.0,
+                            )
+                        )
+                    continue
+
+                # --- Criterion 2: Freeform / custom geometry ---
+                if "<a:custGeom>" in xml_str or (ns_a + "custGeom") in xml_str:
+                    elements_to_remove.append(shape._element)
+                    if VERBOSE:
+                        name = getattr(shape, "name", "")
+                        print(
+                            "  [SHAPE SANITIZE] Removing FREEFORM shape: '%s'"
+                            % name
+                        )
+                    continue
+
+                # --- Criterion 3: Diagonal decorative shape ---
+                # Only check shapes with no meaningful content
+                has_text = False
+                if getattr(shape, "has_text_frame", False):
+                    has_text = bool(shape.text_frame.text.strip())
+                has_chart = getattr(shape, "has_chart", False)
+                has_table = getattr(shape, "has_table", False)
+                is_placeholder = getattr(shape, "is_placeholder", False)
+                # Check for picture
+                shape_type_val = int(shape.shape_type) if shape.shape_type else 0
+                is_picture = shape_type_val in (13, 11)
+
+                if has_text or has_chart or has_table or is_placeholder or is_picture:
+                    continue
+
+                w = getattr(shape, "width", 0) or 0
+                h = getattr(shape, "height", 0) or 0
+                if w <= 0 or h <= 0:
+                    continue
+
+                min_dim = min(w, h)
+                max_dim = max(w, h)
+                ratio = min_dim / max_dim
+
+                if ratio > 0.10:
+                    # This shape is neither clearly horizontal nor vertical —
+                    # it's diagonal or square-ish decorative noise
+                    elements_to_remove.append(shape._element)
+                    if VERBOSE:
+                        name = getattr(shape, "name", "")
+                        print(
+                            "  [SHAPE SANITIZE] Removing DIAGONAL shape: '%s' "
+                            "sz=(%.2f,%.2f) ratio=%.2f"
+                            % (name, w / 914400.0, h / 914400.0, ratio)
+                        )
+                    continue
+
+            except Exception:
+                continue
+
+        for elem in elements_to_remove:
+            try:
+                spTree.remove(elem)
+                removed += 1
+            except Exception:
+                pass
+
+    if removed > 0:
+        print(
+            "[SHAPE SANITIZE] Removed %d LINE/freeform/diagonal shape(s) "
+            "across %d slide(s)." % (removed, len(prs.slides))
+        )
+
+    return removed
+
+
+# ---------------------------------------------------------------------------
+# Template Footer Band Injection (Fix 17 — consistent footer across all slides)
+# ---------------------------------------------------------------------------
+
+
+def inject_template_footer_band(
+    target_slide,
+    template_prs,
+    template_slide_idx: int,
+    slide_height: int,
+    slide_number: int = 1,
+) -> int:
+    """Deep-copy the template's footer zone shapes onto a target slide.
+
+    Identifies all shapes in the source template slide whose bottom edge
+    sits in the footer zone (bottom 13% of the slide). For each such shape,
+    deep-copies its XML element into the target slide's shape tree.
+
+    Only copies:
+      - Non-text decorative shapes (lines, circles, bars)
+      - Branding text shapes (POWERSLIDES, WWW., copyright)
+      - Page number shapes (purely numeric text — updated to slide_number)
+
+    Skips:
+      - Template-specific content text (e.g. "Estimate Project Cost")
+
+    Skips injection if the target slide already has a shape containing
+    footer-like text (e.g. "POWERSLIDES", "WWW.", copyright symbols)
+    in the footer zone to avoid duplication.
+
+    Args:
+        target_slide: The assembled output slide to inject footer into.
+        template_prs: The template Presentation object.
+        template_slide_idx: Index of the template slide to copy from.
+        slide_height: Slide height in EMU.
+        slide_number: The 1-based slide number for page number updates.
+
+    Returns:
+        Number of footer shapes injected.
+    """
+    from copy import deepcopy
+
+    footer_zone_top = int(slide_height * 0.87)
+    injected = 0
+
+    # --- Check if target already has footer content ---
+    _FOOTER_MARKERS = {"powerslides", "www.", "\u00a9", "(c)", "copyright"}
+    for shape in target_slide.shapes:
+        try:
+            top = getattr(shape, "top", 0) or 0
+            h = getattr(shape, "height", 0) or 0
+            if (top + h) > footer_zone_top:
+                text = ""
+                if getattr(shape, "has_text_frame", False):
+                    text = shape.text_frame.text.strip().lower()
+                if any(m in text for m in _FOOTER_MARKERS):
+                    if VERBOSE:
+                        print(
+                            "  [FOOTER INJECT] Skipping — target slide already "
+                            "has footer text: '%s'" % text[:50]
+                        )
+                    return 0
+        except Exception:
+            continue
+
+    # --- Also remove any LINE shapes in the target's footer zone ---
+    # These are often template connectors that got displaced during
+    # visual review and now appear diagonal.
+    target_spTree = target_slide.shapes._spTree
+    footer_lines_to_remove = []
+    for shape in list(target_slide.shapes):
+        try:
+            top = getattr(shape, "top", 0) or 0
+            h = getattr(shape, "height", 0) or 0
+            if (top + h) > footer_zone_top:
+                xml_str = shape._element.xml
+                if 'prstGeom prst="line"' in xml_str:
+                    footer_lines_to_remove.append(shape._element)
+        except Exception:
+            continue
+
+    for elem in footer_lines_to_remove:
+        try:
+            target_spTree.remove(elem)
+            if VERBOSE:
+                print("  [FOOTER INJECT] Removed displaced LINE in footer zone")
+        except Exception:
+            pass
+
+    # --- Copy footer shapes from template ---
+    try:
+        if template_slide_idx >= len(template_prs.slides):
+            template_slide_idx = 0
+        template_slide = template_prs.slides[template_slide_idx]
+    except (IndexError, Exception):
+        return 0
+
+    ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+    for shape in template_slide.shapes:
+        try:
+            top = getattr(shape, "top", 0) or 0
+            h = getattr(shape, "height", 0) or 0
+            if (top + h) <= footer_zone_top:
+                continue
+
+            # --- Classify footer shape: branding, page-number, or skip ---
+            shape_text = ""
+            if getattr(shape, "has_text_frame", False):
+                shape_text = shape.text_frame.text.strip()
+
+            if shape_text:
+                text_lower = shape_text.lower()
+                is_branding = any(m in text_lower for m in _FOOTER_MARKERS)
+                is_page_number = shape_text.isdigit()
+
+                if not is_branding and not is_page_number:
+                    # Template-specific content text — skip
+                    if VERBOSE:
+                        print(
+                            "  [FOOTER INJECT] Skipping template text shape: '%s'"
+                            % shape_text[:40]
+                        )
+                    continue
+
+            # Deep-copy the shape element
+            cloned = deepcopy(shape._element)
+
+            # --- Update page number text if this is a numeric shape ---
+            if shape_text and shape_text.isdigit():
+                for t_node in cloned.findall(".//{%s}t" % ns_a):
+                    if t_node.text and t_node.text.strip().isdigit():
+                        t_node.text = str(slide_number)
+                if VERBOSE:
+                    print(
+                        "  [FOOTER INJECT] Updated page number: %s -> %d"
+                        % (shape_text, slide_number)
+                    )
+
+            target_spTree.append(cloned)
+            injected += 1
+
+            if VERBOSE:
+                name = getattr(shape, "name", "")
+                text = ""
+                if getattr(shape, "has_text_frame", False):
+                    text = shape.text_frame.text[:40]
+                print(
+                    "  [FOOTER INJECT] Copied template footer shape: '%s' text='%s'"
+                    % (name, text)
+                )
+        except Exception:
+            continue
+
+    if injected > 0:
+        print(
+            "[FOOTER INJECT] Injected %d footer shape(s) from template slide %d."
+            % (injected, template_slide_idx + 1)
+        )
+
+    return injected

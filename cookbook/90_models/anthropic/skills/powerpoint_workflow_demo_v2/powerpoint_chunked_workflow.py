@@ -246,6 +246,8 @@ from powerpoint_template_workflow import *  # type: ignore # noqa: F401, F403, E
 from powerpoint_template_workflow import (  # type: ignore
     clean_presentation_visual_noise_and_contrast,
     sanitize_presentation,
+    sanitize_llm_shapes,
+    inject_template_footer_band,
     enforce_final_contrast,
     step_generate_images,
     step_assemble_template,
@@ -1815,6 +1817,37 @@ def _format_visual_profile_for_prompt(
             "- For chart slides, prefer chart types already present in the template.\n"
         )
 
+    # --- Accent pattern metadata injection ---
+    # Gives the LLM explicit, structured instructions about accent lines so
+    # Tier 2 code-gen can reproduce them without relying solely on visual PNGs.
+    if profile.has_accent_lines and profile.accent_pattern:
+        ap = profile.accent_pattern
+        color_note = (
+            " in color #%s" % ap["color"] if ap.get("color") else ""
+        )
+        sections.append(
+            "\nACCENT LINE PATTERN (MUST REPLICATE ON EVERY CONTENT SLIDE):\n"
+            "The template uses a consistent **%s accent bar** in the **%s** region%s.\n"
+            "- Position: top=%.1f%%, left=%.1f%% of slide dimensions\n"
+            "- Size: width=%.1f%%, height=%.1f%% of slide dimensions\n"
+            "- Coverage: present on %.0f%% of template slides (%d total accent shapes detected)\n"
+            "- **Action**: For every content slide in the storyboard, include this accent bar "
+            "at the same relative position and size using `slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE, left=..., top=..., width=..., height=...)`. "
+            "You MUST use `RECTANGLE` with `.line.fill.background()` (no border) to create a solid bar. DO NOT use `LINE` to avoid slanting diagonal lines. "
+            "Use the exact color if provided, otherwise use the template's primary accent color.\n"
+            % (
+                ap.get("orientation", "horizontal"),
+                ap.get("region", "top"),
+                color_note,
+                ap.get("avg_top_pct", 0),
+                ap.get("avg_left_pct", 0),
+                ap.get("avg_width_pct", 0),
+                ap.get("avg_height_pct", 0),
+                ap.get("slide_coverage_pct", 0),
+                ap.get("total_accent_count", 0),
+            )
+        )
+
     return "\n".join(sections)
 
 
@@ -1866,25 +1899,255 @@ def _format_slide_markdown(slide: SlideStoryboard) -> str:
 def _format_global_context_markdown(plan: StoryboardPlan) -> str:
     """Format the global context as a markdown string for the pptx agent.
 
-    Kept concise: title, audience, tone, brand voice, and the 2-3 sentence global context.
+    Kept concise: title, audience, tone, brand voice, visual style, content balance,
+    and the 2-3 sentence global context.
     This file is included in every chunk prompt so brevity matters for context size.
 
     Args:
         plan: StoryboardPlan instance containing global presentation metadata.
 
     Returns:
-        Markdown string with presentation title, audience, tone, brand voice, and context.
+        Markdown string with presentation title, audience, tone, brand voice,
+        visual style, content balance, and context.
     """
     return (
         "# Presentation: %s\n\n"
-        "Audience: %s | Tone: %s | Brand Voice: %s\n\n"
+        "Audience: %s | Tone: %s | Brand Voice: %s | Visual Style: %s | Content Balance: %s\n\n"
         "## Context\n%s\n"
     ) % (
         plan.presentation_title,
         plan.target_audience,
         plan.tone,
         plan.brand_voice,
+        plan.visual_style,
+        plan.content_balance,
         plan.global_context,
+    )
+
+
+def _build_no_template_design_system(
+    visual_style: str,
+    brand_intent: Optional[BrandStyleIntent] = None,
+) -> str:
+    """Build a VISUAL DESIGN SYSTEM prompt section for no-template chunk generation.
+
+    Maps the visual_style inferred by the optimizer to concrete python-pptx
+    design instructions: background color, accent line, title bar, footer,
+    color palette, and typography.  Returns an empty string when
+    visual_style == 'template_driven' (template already dictates styling).
+
+    Per SCRATCHPAD Note: "always follow a minimal, standard design outline
+    with Accent lines, Title/Header, Footer and a Logo image (optional)."
+
+    Args:
+        visual_style: One of 'bold_modern', 'clean_minimal',
+                      'creative_experimental', 'corporate_professional',
+                      or 'template_driven'.
+        brand_intent: Optional brand context — when present with specific
+                      color_palette, those colors override the default palette.
+
+    Returns:
+        Multi-line prompt string with python-pptx design instructions,
+        or empty string for template_driven.
+    """
+    if visual_style == "template_driven":
+        return ""
+
+    # --- Style-specific design tokens ---
+    STYLE_MAP = {
+        "bold_modern": {
+            "bg_hex": "1A1A2E",
+            "bg_label": "dark navy",
+            "text_color": "FFFFFF",
+            "text_label": "white",
+            "accent_hex": "00D4AA",
+            "accent_label": "teal/cyan",
+            "secondary_hex": "E94560",
+            "title_size": 32,
+            "body_size": 16,
+            "font_family": "Segoe UI",
+            "accent_bar_height_pct": 1.5,
+            "accent_bar_top_pct": 10.0,
+            "description": "Bold & Modern: Dark background with vibrant accents, high contrast",
+        },
+        "clean_minimal": {
+            "bg_hex": "FFFFFF",
+            "bg_label": "white",
+            "text_color": "333333",
+            "text_label": "dark charcoal",
+            "accent_hex": "4A90D9",
+            "accent_label": "muted blue",
+            "secondary_hex": "7F8C8D",
+            "title_size": 28,
+            "body_size": 14,
+            "font_family": "Calibri",
+            "accent_bar_height_pct": 0.8,
+            "accent_bar_top_pct": 10.0,
+            "description": "Clean & Minimal: Light background, whitespace, muted palette",
+        },
+        "creative_experimental": {
+            "bg_hex": "0F0E17",
+            "bg_label": "deep dark",
+            "text_color": "FFFFFE",
+            "text_label": "off-white",
+            "accent_hex": "FF8906",
+            "accent_label": "warm orange",
+            "secondary_hex": "E53170",
+            "title_size": 34,
+            "body_size": 16,
+            "font_family": "Segoe UI",
+            "accent_bar_height_pct": 2.0,
+            "accent_bar_top_pct": 8.0,
+            "description": "Creative & Experimental: Deep dark bg, vibrant warm accents, dynamic feel",
+        },
+        "corporate_professional": {
+            "bg_hex": "F5F5F5",
+            "bg_label": "light gray",
+            "text_color": "2C3E50",
+            "text_label": "navy/dark blue",
+            "accent_hex": "2980B9",
+            "accent_label": "professional blue",
+            "secondary_hex": "27AE60",
+            "title_size": 28,
+            "body_size": 14,
+            "font_family": "Calibri",
+            "accent_bar_height_pct": 1.0,
+            "accent_bar_top_pct": 10.0,
+            "description": "Corporate Professional: Structured, conservative, data-focused",
+        },
+    }
+
+    tokens = STYLE_MAP.get(visual_style, STYLE_MAP["clean_minimal"])
+
+    # Override palette from brand intent if specific colors were detected
+    brand_section = ""
+    if brand_intent and brand_intent.has_branding:
+        tokens = dict(tokens)  # copy
+        
+        if brand_intent.color_palette:
+            palette = brand_intent.color_palette
+            # Use first brand color as accent, second as secondary
+            if len(palette) >= 1:
+                raw = palette[0].lstrip("#")
+                if len(raw) == 6:
+                    tokens["accent_hex"] = raw
+            if len(palette) >= 2:
+                raw2 = palette[1].lstrip("#")
+                if len(raw2) == 6:
+                    tokens["secondary_hex"] = raw2
+            if VERBOSE:
+                print(
+                    "[VERBOSE] [DESIGN SYSTEM] Brand palette override: "
+                    "accent=#%s, secondary=#%s (from brand: %s)"
+                    % (tokens["accent_hex"], tokens["secondary_hex"], brand_intent.brand_name)
+                )
+                    
+        # Apply brand typography if available
+        if brand_intent.typography_hints:
+            tokens["font_family"] = brand_intent.typography_hints[0]
+            if VERBOSE:
+                print(
+                    "[VERBOSE] [DESIGN SYSTEM] Brand font override: '%s' (from brand: %s)"
+                    % (tokens["font_family"], brand_intent.brand_name)
+                )
+            
+        # Build robust branding contextual string for the LLM
+        brand_name = brand_intent.brand_name
+        tone = brand_intent.tone_override or "optimistic"
+        style_kw = ", ".join(brand_intent.style_keywords)
+        
+        brand_section = (
+            f"BRANDING & TONE (CRITICAL):\n"
+            f"  Brand Name: {brand_name}\n"
+            f"  Visual Tone: {tone.capitalize()} (Keywords: {style_kw})\n"
+            f"  Adaptive Layout: Blend all visual elements, shapes, typography, and alignments flawlessly with the '{visual_style}' theme, while strictly maintaining '{brand_name}' aesthetics.\n"
+            f"  Adaptive Color Contrast: Ensure the brand's primary colors pop and maintain perfect contrast. Adjust shape and text colors if they clash with the background, but do NOT change the background color itself (maintain the baseline theme background).\n\n"
+        )
+
+    bg_hex = str(tokens["bg_hex"])
+    bg_r, bg_g, bg_b = bg_hex[:2], bg_hex[2:4], bg_hex[4:6]
+    txt_hex = str(tokens["text_color"])
+    txt_r, txt_g, txt_b = txt_hex[:2], txt_hex[2:4], txt_hex[4:6]
+    acc_hex = str(tokens["accent_hex"])
+    acc_r, acc_g, acc_b = acc_hex[:2], acc_hex[2:4], acc_hex[4:6]
+    sec_hex = str(tokens["secondary_hex"])
+
+    brand_name_text = brand_intent.brand_name.upper() if brand_intent and brand_intent.brand_name else "LOGO"
+
+    return (
+        "\nVISUAL DESIGN SYSTEM (MANDATORY — follow these styling rules for every slide):\n"
+        "Style: %s\n\n"
+        "%s"
+        "BACKGROUND:\n"
+        "  Set the slide background for EVERY slide to #%s (%s). Do NOT change this color.\n"
+        "  Code: from pptx.util import Inches, Pt, Emu\n"
+        "        from pptx.dml.color import RGBColor\n"
+        "        slide.background.fill.solid()\n"
+        "        slide.background.fill.fore_color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n\n"
+        "TEXT COLORS (ADAPTIVE):\n"
+        "  Suggested body text: #%s (%s)\n"
+        "  Suggested title text: #%s (%s) at %dpt\n"
+        "  Body font size: %dpt minimum\n"
+        "  Font family: %s\n\n"
+        "LOGO (ADD TO EVERY SLIDE):\n"
+        "  Add a logo placeholder text at the top right corner of each slide:\n"
+        "    logo_box = slide.shapes.add_textbox(Inches(8.5), Inches(0.2), Inches(1.2), Inches(0.4))\n"
+        "    p_logo = logo_box.text_frame.paragraphs[0]\n"
+        "    p_logo.text = '%s'\n"
+        "    p_logo.font.bold = True\n"
+        "    p_logo.font.size = Pt(12)\n"
+        "    p_logo.font.color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n\n"
+        "ACCENT LINE (MUST ADD TO EVERY CONTENT SLIDE):\n"
+        "  Add a thin horizontal accent bar near the top of each content slide (not title slide):\n"
+        "    from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE\n"
+        "    bar = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,\n"
+        "        left=Inches(0.5), top=Inches(%.2f),\n"
+        "        width=Inches(9.0), height=Inches(%.2f))\n"
+        "    bar.fill.solid()\n"
+        "    bar.fill.fore_color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n"
+        "    bar.line.fill.background()  # no border\n"
+        "  This accent bar is a REQUIRED design element per the design system.\n\n"
+        "FOOTER (ADD TO EVERY SLIDE):\n"
+        "  Add a small footer text box at the bottom of each slide:\n"
+        "    from pptx.util import Inches, Pt\n"
+        "    footer = slide.shapes.add_textbox(\n"
+        "        Inches(0.5), Inches(6.9), Inches(9.0), Inches(0.35))\n"
+        "    tf = footer.text_frame\n"
+        "    tf.word_wrap = True\n"
+        "    p = tf.paragraphs[0]\n"
+        "    p.text = 'Slide N of M'  # Replace N with slide number, M with total\n"
+        "    p.font.size = Pt(9)\n"
+        "    p.font.color.rgb = RGBColor(0x%s, 0x%s, 0x%s) # (Adjust RGB if needed)\n"
+        "    p.alignment = PP_ALIGN.RIGHT  # from pptx.enum.text import PP_ALIGN\n\n"
+        "TITLE BAR (title slides only):\n"
+        "  For the first/title slide, add a full-width accent banner:\n"
+        "    banner = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,\n"
+        "        Inches(0), Inches(2.5), Inches(10), Inches(2.5))\n"
+        "    banner.fill.solid()\n"
+        "    banner.fill.fore_color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n"
+        "    banner.line.fill.background()\n"
+        "  Place the title text ON TOP of this banner with contrasting color.\n\n"
+        "COLOR PALETTE:\n"
+        "  Primary accent: #%s    Secondary accent: #%s\n"
+        "  Use these for chart series, table headers, card fills, and metric highlights.\n"
+        "  Do NOT introduce arbitrary colors outside this palette.\n"
+    ) % (
+        tokens["description"],
+        brand_section,
+        bg_hex, tokens["bg_label"],
+        bg_r, bg_g, bg_b,
+        txt_hex, tokens["text_label"],
+        txt_hex, tokens["text_label"], tokens["title_size"],
+        tokens["body_size"],
+        tokens["font_family"],
+        brand_name_text,
+        txt_r, txt_g, txt_b,
+        float(tokens["accent_bar_top_pct"]) / 100.0 * 7.5,  # Convert pct to inches (7.5" slide)
+        float(tokens["accent_bar_height_pct"]) / 100.0 * 7.5,
+        acc_r, acc_g, acc_b,
+        txt_r, txt_g, txt_b,  # footer text color = body text color
+        acc_r, acc_g, acc_b,  # title banner = accent color
+        acc_hex, sec_hex,
     )
 
 
@@ -2108,13 +2371,12 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "   or a simple next-steps diagram) instead of a standard bulleted list.\n"
         "4. **STORY ARC**: Ensure the narrative flows logically and matches the specified tone.\n"
         "5. **AUDIENCE INFERENCE (MANDATORY)**:\n"
-        "   Analyze the prompt to classify the primary audience. Set `target_audience` \n"
-        "   to a **specific** description (never generic). Common archetypes:\n"
-        "   - 'Potential clients / prospects' — Persuasive tone, ROI focus, case studies\n"
-        "   - 'Internal team / founders / leadership' — Strategic, data-heavy, actionable\n"
-        "   - 'Industry peers / conference attendees' — Thought leadership, trends, insights\n"
-        "   - 'General / educational audience' — Accessible language, clear explanations\n"
-        "   - 'Investors / board members' — Metrics-driven, concise, high-level\n"
+        "   From the given prompt input, understand and determine 'Who is the primary audience for this presentation?'\n"
+        "   Set `target_audience` to a **specific** description. Examples:\n"
+        "   - 'Potential clients' (Pitching expertise to prospects)\n"
+        "   - 'Internal team / founders' (Strategic planning for building the agency)\n"
+        "   - 'Industry peers / conference' (Thought leadership on trends & agency models)\n"
+        "   - 'Investors / board members' (Metrics-driven, concise, high-level)\n"
         "   Tailor depth, phrasing, and visual complexity to the inferred audience.\n"
         "6. **LAYOUT CONSTRAINTS**: For each slide, include a `layout_constraints` object:\n"
         "   - `max_content_blocks`: Maximum text/shape groups (default 4; use 2-3 for chart/visual slides, 4-5 for text slides).\n"
@@ -2127,12 +2389,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         "   - For chart/infographic slides, plan at most 1-2 text blocks alongside the visual.\n"
         "   - Title + footer consume ~24%% of vertical space — plan content accordingly.\n"
         "8. **VISUAL STYLE INFERENCE (when NO template is provided)**:\n"
-        "   Based on the prompt context and audience, select the most fitting visual style \n"
-        "   and set `visual_style` in the output JSON. Options:\n"
-        "   - 'bold_modern': Dark background, vibrant accents, high contrast — for tech, innovation\n"
-        "   - 'clean_minimal': Light background, whitespace, muted palette — for corporate, reports\n"
-        "   - 'creative_experimental': Gradients, asymmetric layouts, dynamic feel — for design, marketing\n"
-        "   - 'corporate_professional': Structured, conservative, data-focused — for finance, consulting\n"
+        "   From the given prompt, if not explicitly mentioned, try to understand what tone and visual style\n"
+        "   is applicable based on the prompt context and audience.\n"
+        "   **COMBINE audience (from step 5) + tone/style to determine the best cohesive pptx THEME:**\n"
+        "   - Primary and secondary colors (accent palette)\n"
+        "   - Suitable font style, font family, and font color\n"
+        "   - Layouts and alignments appropriate to the audience\n"
+        "   - Titles, subtitles, and footer styling\n"
+        "   Set `visual_style` in the output JSON. Options:\n"
+        "   - 'bold_modern': Dark background, vibrant accents, high contrast (best for: creative pitches, tech demos, startup decks)\n"
+        "   - 'clean_minimal': Light background, lots of whitespace, muted palette (best for: executive briefs, strategy docs, investor updates)\n"
+        "   - 'creative_experimental': Gradients, asymmetric layouts, dynamic feel (best for: design showcases, trend reports, thought leadership)\n"
+        "   - 'corporate_professional': Structured, conservative, data-focused (best for: board meetings, compliance, financial reports)\n"
+        "   If any Brand name, company name, or some explicit style or theme name is mentioned, you MUST follow it closely and blend it into the chosen style.\n"
         "   If a template IS provided, set `visual_style` to 'template_driven'.\n"
         "9. **CONTENT BALANCE (multi-topic prompts)**:\n"
         "   When the prompt covers multiple topics or domains, explicitly decide and set \n"
@@ -2649,6 +2918,7 @@ def generate_chunk_pptx(
         "## Per-Slide Content for This Chunk:\n\n"
         "%s\n\n"
         "%s"
+        "%s"
         "Please generate EXACTLY %d slides for this chunk with the content described above.\n"
         "Do not add extra slides. Do not include slide numbers outside the range %d-%d.\n"
         "Use clean formatting without custom fonts or colors. "
@@ -2682,19 +2952,21 @@ def generate_chunk_pptx(
         "6. SHAPE DENSITY: Create AT MOST 4 content shapes per slide (excluding title and footer). "
         "Fewer shapes means cleaner layout and zero overlap risk.\n\n"
         "TEMPLATE FIDELITY RULES (when template is provided):\n"
-        "7. HEADER/FOOTER STYLE: If the template has a header bar, title banner, or footer strip, "
-        "replicate that exact visual pattern — same position, height, and color. "
-        "If the template has no footer, do NOT add one.\n"
-        "8. SHAPES AND VISUAL ELEMENTS: Study the template's decorative shapes (lines, rectangles, "
+        "7. HEADER/FOOTER & LOGO RULES: The template's built-in slide layouts already contain footers, slide numbers, and logos. "
+        "DO NOT generate new shapes for them, as they will overlap, clip, or look misaligned. Keep the bottom footer area free of content shapes.\n"
+        "8. LOGO REPLACEMENT: If the Brand/Style Guidance provides a brand name, you MUST replace the template's default Logo image. "
+        "To achieve this, create a solid `RECTANGLE` matching the slide background color, place it over the original logo position "
+        "(usually top-left or top-right) to hide it, and then add a text box with the brand name on top.\n"
+        "9. SHAPES AND VISUAL ELEMENTS: Study the template's decorative shapes (lines, rectangles, "
         "accent bars, chevrons). When creating content shapes (cards, callout boxes, metric panels), "
         "use similar border radius, fill colors, and positioning patterns as the template.\n"
-        "9. CHARTS AND INFOGRAPHICS: When creating charts, use the template's theme colors "
+        "10. CHARTS AND INFOGRAPHICS: When creating charts, use the template's theme colors "
         "for series fills. Match the template's chart style (flat vs. 3D, border vs. borderless, "
         "data label position). If the template has no charts, use the template's accent colors.\n"
-        "10. COLOR THEME ADHERENCE: Use the template's color palette for ALL colored elements — "
+        "11. COLOR THEME ADHERENCE: Use the template's color palette for ALL colored elements — "
         "shape fills, text accents, chart series, table headers. If a template color is unsuitable, "
         "pick the closest matching color from the palette — do NOT introduce arbitrary colors.\n"
-        "11. SMARTART AND DIAGRAMS: If the template contains SmartArt or process diagrams AND "
+        "12. SMARTART AND DIAGRAMS: If the template contains SmartArt or process diagrams AND "
         "it fits or is relevant to the content, try to mimic that visual language using native shapes. "
         "If the SmartArt style is not relevant to the content, use simpler shapes with the same color theme.\n\n"
         "Save the output as 'chunk_%03d.pptx'."
@@ -2714,6 +2986,10 @@ def generate_chunk_pptx(
         _format_brand_context_for_prompt(
             session_state.get("brand_style_intent", BrandStyleIntent())
         ),
+        _build_no_template_design_system(
+            storyboard.visual_style if storyboard else "clean_minimal",
+            session_state.get("brand_style_intent"),
+        ) if not session_state.get("template_path") else "",
         len(chunk_slides),
         first_slide,
         last_slide,
@@ -3675,6 +3951,10 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "Synthesize plausible, specific data values from the visual_suggestion and key_points descriptions. Do NOT use generic placeholder data.",
     "CHART AXIS SAFETY: When styling chart axes, always wrap axis.format.line.fill.background(), axis.format.line.color.rgb, and axis.major_gridlines.format.line.color.rgb calls in try/except blocks to handle cases where the underlying XML element does not yet exist. Example: try: chart.value_axis.major_gridlines.format.line.color.rgb = RGBColor(0x80,0x80,0x80)\\nexcept Exception: pass",
     "CHART AXIS SAFETY: Similarly wrap axis.tick_labels.font.color.rgb, chart.legend.font.color.rgb, and series.data_labels.font.color.rgb in try/except blocks — these can raise 'NoneType object has no attribute attrib' if the XML element is absent.",
+    "FILL COLOR API (CRITICAL): The correct python-pptx API for shape fill colors is shape.fill.fore_color (NOT shape.fill.foreground_color — that attribute does NOT exist and will crash). "
+    "To set a solid fill: shape.fill.solid(); shape.fill.fore_color.rgb = RGBColor(0xFF,0x00,0x00). "
+    "To read a fill color: rgb_val = shape.fill.fore_color.rgb. "
+    "Always wrap fill color access in try/except since some shapes have no fill or use theme/pattern fills: try: shape.fill.fore_color.rgb = RGBColor(...) except Exception: pass.",
     "TITLE PLACEMENT (CRITICAL): DO NOT create a separate textbox for the slide title. The slide layout already has a title placeholder at index 0 — set title text on it: slide.shapes.title.text = 'Your Title'. Creating an extra title textbox causes duplicate/overlapping titles.",
     "Save the final presentation using prs.save('EXACT_OUTPUT_PATH') where EXACT_OUTPUT_PATH is the path given in the task.",
     "Execute the script using the save_to_file_and_run tool immediately after writing it.",
@@ -3820,6 +4100,8 @@ def generate_chunk_pptx_v2(
         global_ctx = global_ctx + "\n\n" + brand_ctx if global_ctx else brand_ctx
 
     # --- Fix 5: Build template constraints for LLM code gen ---
+    # When a template exists, extract its styling. When no template exists,
+    # inject the visual design system derived from the optimizer's visual_style.
     template_constraints = ""
     template_path_t2 = session_state.get("template_path", "")
     if template_path_t2 and os.path.isfile(template_path_t2):
@@ -3874,6 +4156,65 @@ def generate_chunk_pptx_v2(
                 "  [TEMPLATE CTX WARNING] Could not extract template context: %s" % e
             )
 
+        # --- Accent line pattern for Tier 2 code-gen ---
+        # Inject structured accent bar instructions so the code-gen LLM can
+        # programmatically reproduce template accent lines via python-pptx.
+        visual_profile = session_state.get("template_visual_profile")
+        if visual_profile and getattr(visual_profile, "has_accent_lines", False):
+            ap = getattr(visual_profile, "accent_pattern", {})
+            # Fix 16: Only inject accent instructions if the template genuinely
+            # has wide horizontal bars (avg_width_pct > 20%). Skip narrow
+            # diagonal decorations that mislead the LLM.
+            if ap and ap.get("avg_width_pct", 0) > 20:
+                color_code = ap.get("color", "")
+                color_instruction = (
+                    "RGBColor(0x%s, 0x%s, 0x%s)" % (color_code[:2], color_code[2:4], color_code[4:6])
+                    if color_code and len(color_code) == 6
+                    else "the template's primary accent color from the theme"
+                )
+                template_constraints += (
+                    "- ACCENT LINE PATTERN (MUST ADD TO EVERY CONTENT SLIDE):\n"
+                    "  The template has a consistent %s accent bar in the %s region.\n"
+                    "  For each content slide, add a thin rectangle shape:\n"
+                    "    shape = slide.shapes.add_shape(MSO_AUTO_SHAPE_TYPE.RECTANGLE,\n"
+                    "        left=Inches(%.2f), top=Inches(%.2f),\n"
+                    "        width=Inches(%.2f), height=Inches(%.2f))\n"
+                    "    shape.fill.solid()\n"
+                    "    shape.fill.fore_color.rgb = %s\n"
+                    "    shape.line.fill.background()\n"
+                    "  This bar is present on %.0f%% of template slides.\n"
+                ) % (
+                    ap.get("orientation", "horizontal"),
+                    ap.get("region", "top"),
+                    ap.get("avg_left_pct", 0) / 100.0 * 10.0,  # Convert pct to approx inches (10" slide)
+                    ap.get("avg_top_pct", 0) / 100.0 * 7.5,    # Convert pct to approx inches (7.5" slide)
+                    ap.get("avg_width_pct", 0) / 100.0 * 10.0,
+                    ap.get("avg_height_pct", 0) / 100.0 * 7.5,
+                    color_instruction,
+                    ap.get("slide_coverage_pct", 0),
+                )
+                if VERBOSE:
+                    print(
+                        "  [TEMPLATE CTX] Accent pattern injected into Tier 2 prompt "
+                        "(orientation=%s, region=%s, color=%s)."
+                        % (ap.get("orientation"), ap.get("region"), color_code or "auto")
+                    )
+    else:
+        # No template: inject design system from optimizer's visual_style
+        template_constraints = _build_no_template_design_system(
+            storyboard.visual_style if storyboard else "clean_minimal",
+            session_state.get("brand_style_intent"),
+        )
+        if template_constraints and VERBOSE:  # noqa: F405
+            print(
+                "[VERBOSE] [TIER2] No-template design system injected "
+                "(visual_style=%s, %d chars)"
+                % (
+                    storyboard.visual_style if storyboard else "clean_minimal",
+                    len(template_constraints),
+                )
+            )
+
     code_gen_prompt = (
         "Generate a complete Python script using python-pptx to create "
         "a PowerPoint file at this EXACT path: %s\n\n"
@@ -3885,7 +4226,7 @@ def generate_chunk_pptx_v2(
         "- For 'agenda'/'section' type slides: use prs.slide_layouts[2] (Section Header).\n"
         "- For 'content' type slides: use prs.slide_layouts[1] (Title and Content).\n"
         "- For 'data' type slides: use prs.slide_layouts[3] if available, else [1].\n"
-        "- For 'closing' type slides: use prs.slide_layouts[0].\n"
+        "- For 'closing' type slides: use prs.slide_layouts[1] (Title and Content) to ensure body text placeholders exist.\n"
         "SEMANTIC LAYOUT RULES (CRITICAL):\n"
         "- If Semantic Type is 'sequential': DO NOT use standard bullets. Programmatically draw a horizontal chevron/arrow process flow using native python-pptx shapes.\n"
         "- If Semantic Type is 'comparative': DO NOT use standard bullets. Programmatically draw a 2-4 column card grid using filled rectangles and textboxes.\n"
@@ -3977,7 +4318,7 @@ def generate_chunk_pptx_v2(
             "[TIMING] Chunk %d Tier 2 primary code generation: %.1fs" % (chunk_idx, t2_elapsed)
         )
         tier2_success = True
-    except Exception as e:
+    except (Exception, SystemExit) as e:
         t2_elapsed = time.time() - t2_start
         print(
             "[CHUNK %d TIER2] Primary agent (Sonnet) failed after %.1fs: %s"
@@ -4023,7 +4364,7 @@ def generate_chunk_pptx_v2(
                 % (chunk_idx, t2_lite_elapsed)
             )
             tier2_success = True
-        except Exception as e2:
+        except (Exception, SystemExit) as e2:
             t2_lite_elapsed = time.time() - t2_lite_start
             print(
                 "[CHUNK %d TIER2] Lite agent also failed after %.1fs: %s"
@@ -4266,6 +4607,8 @@ def generate_chunk_pptx_v2(
             prs = Presentation(chunk_output_path)
             # Clean up empty placeholders and hardcoded contrast issues
             clean_presentation_visual_noise_and_contrast(prs)
+            # Fix 16: Remove LLM-generated LINE/freeform/diagonal shapes
+            sanitize_llm_shapes(prs)
             sanitize_presentation(prs)  # noqa: F405
             prs.save(chunk_output_path)
             print(
