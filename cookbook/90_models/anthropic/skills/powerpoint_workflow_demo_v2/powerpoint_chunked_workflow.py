@@ -248,7 +248,62 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from agno.run.agent import RunOutput  # type: ignore
+# Global verbose flag (overridden in main() or by session_state)
+VERBOSE = True
+
+
+# === TELEMETRY SETUP (Langfuse via OpenInference) ===
+
+def setup_langfuse_telemetry():
+    """Setup Langfuse telemetry via OpenInference and OpenTelemetry following best practices."""
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://cloud.langfuse.com/api/public/otel")
+
+    if not public_key or not secret_key:
+        if VERBOSE:
+            print("[TELEMETRY] Langfuse keys missing. Observability disabled.")
+        return None
+
+    if not os.getenv("OTEL_EXPORTER_OTLP_HEADERS"):
+        import base64
+        auth = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
+        os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {auth}"
+
+    if not os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
+
+    try:
+        if VERBOSE:
+            import sys
+        from openinference.instrumentation.agno import AgnoInstrumentor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+        # Best Practice: Define Service Resource
+        resource = Resource(attributes={
+            "service.name": "agno-pptx-workflow",
+            "environment": os.getenv("APP_ENV", "development"),
+        })
+
+        tracer_provider = TracerProvider(resource=resource)
+        # Best Practice: BatchSpanProcessor for efficiency
+        tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        
+        # Instrument Agno
+        AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
+        
+        if VERBOSE:
+            print(f"[TELEMETRY] Langfuse initialized (Service: agno-pptx-workflow, Endpoint: {os.environ['OTEL_EXPORTER_OTLP_ENDPOINT']})")
+        
+        return tracer_provider
+    except ImportError as e:
+        if VERBOSE:
+            print(f"[TELEMETRY] Telemetry packages missing ({e}). Tracing disabled.")
+        return None
+
 
 # === WILDCARD IMPORT: Reuse all helpers, agents, models, and step functions ===
 # This gives us access to all ~6500 lines of helper logic without duplication.
@@ -257,13 +312,39 @@ from agno.run.agent import RunOutput  # type: ignore
 # step_plan_images, step_generate_images, step_assemble_template, step_visual_quality_review,
 # and all _helper functions.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from agno.agent import Agent  # type: ignore
+from agno.agent import Agent  # noqa: F811, F401
+from agno.run.agent import RunOutput  # noqa: E402
 from lib_patches.anthropic.claude import Claude  # type: ignore
 from agno.tools.python import PythonTools  # type: ignore
 from agno.workflow.step import Step  # type: ignore
 from agno.workflow.types import StepInput, StepOutput  # type: ignore
 from agno.workflow.workflow import Workflow  # type: ignore
 from anthropic import Anthropic  # type: ignore
+
+def build_chunked_workflow(session_state: Dict) -> Workflow:
+    """Build and return the Step-based Agno Workflow for chunked PPTX generation.
+
+    The workflow is conditional: it always plans and generates chunks, but processing
+    (template assembly) and visual review steps are only added if a template is provided
+    and the relevant flags are set.
+    """
+    has_template = bool(session_state.get("template_path"))
+    do_visual_review = has_template and bool(session_state.get("visual_review"))
+
+    steps = [
+        Step(name="Optimize and Plan", executor=step_optimize_and_plan),
+        Step(name="Generate Chunks", executor=step_generate_chunks),
+    ]
+
+    if has_template:                          # Process Chunks only with template
+        steps.append(Step(name="Process Chunks", executor=step_process_chunks))
+
+    if do_visual_review:                      # Visual Review only with template + flag
+        steps.append(Step(name="Visual Review Chunks", executor=step_visual_review_chunks))
+
+    steps.append(Step(name="Merge Chunks", executor=step_merge_chunks))
+    return Workflow(name="Chunked PPTX Workflow", steps=steps, session_state=session_state)
+
 from file_download_helper import download_skill_files  # type: ignore
 from powerpoint_template_workflow import *  # type: ignore # noqa: F401, F403, E402
 from powerpoint_template_workflow import (  # type: ignore
@@ -290,141 +371,7 @@ DEFAULT_INTER_CHUNK_DELAYS_MS = {
     "gemini": {"min": 1000, "max": 2000},   # 1-2K RPM, multi-million TPM
 }
 
-# Global verbose flag (overridden in main() or by session_state)
-VERBOSE = False
 
-# === TOKEN TRACKER LOGIC ===
-# Pricing (approximate USD per 1M tokens) - we use generous but standard 2026/2024 equivalent prices
-TOKEN_PRICES = {
-    "claude-3-5-sonnet-20241022": (3.0, 15.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-3-opus-20240229": (15.0, 75.0),
-    "claude-opus-4-6": (15.0, 75.0),
-    "claude-3-5-haiku-20241022": (0.8, 4.0),
-    "claude-haiku-4-5": (0.8, 4.0),
-    "claude-3-haiku": (0.25, 1.25),
-    "gpt-4o": (2.5, 10.0),
-    "gpt-4o-mini": (0.15, 0.6),
-    "gpt-5.2": (2.5, 10.0),
-    "gpt-5.4": (5.0, 15.0), # Flagship fallback
-    "o3-mini": (0.15, 0.6),  # Thinking mini
-    "gpt-5-mini": (0.15, 0.6),
-    "gemini-1.5-pro": (1.25, 5.0),
-    "gemini-1.5-flash": (0.075, 0.3),
-    "gemini-3.1-pro-preview": (1.25, 5.0),
-    "gemini-3-flash-preview": (0.075, 0.3),
-    "gemini-2.5-flash": (0.075, 0.3),
-    "default": (3.0, 15.0)
-}
-
-class TokenUsageTracker:
-    """Tracks token consumption and estimated cost across multiple LLM models.
-
-    This tracker is used to provide cost transparency at the end of a workflow run,
-    categorizing usage by model ID and applying estimated 2024/2026-equivalent
-    pricing per million tokens.
-    """
-
-    def __init__(self):
-        """Initialize a new token usage tracker with empty usage stats."""
-        self.usage = {}
-        self.total_cost = 0.0
-
-    def add_usage(self, model: Union[str, Any], input_tokens: int, output_tokens: int):
-        """Record token usage for a specific model.
-
-        Calculates the estimated cost based on the model ID and increments
-        global totals for that model.
-
-        Args:
-            model: The ID of the model used (e.g., 'claude-haiku-4-5').
-            input_tokens: Number of prompt tokens sent.
-            output_tokens: Number of completion tokens received.
-        """
-        # Defensive: handle Pydantic model objects or missing IDs
-        if not model:
-            model_id = "unknown"
-        elif hasattr(model, "id"):
-            model_id = str(model.id)
-        elif hasattr(model, "name"):
-            model_id = str(model.name)
-        else:
-            model_id = str(model)
-
-        if model_id not in self.usage:
-            self.usage[model_id] = {"inputs": 0, "outputs": 0, "calls": 0, "cost": 0.0}
-
-        self.usage[model_id]["inputs"] += input_tokens
-        self.usage[model_id]["outputs"] += output_tokens
-        self.usage[model_id]["calls"] += 1
-
-        price_in, price_out = TOKEN_PRICES.get(model_id, TOKEN_PRICES["default"])
-        if model_id not in TOKEN_PRICES:
-            for k, (pin, pout) in TOKEN_PRICES.items():
-                if k in model_id:
-                    price_in, price_out = pin, pout
-                    break
-
-        cost = (input_tokens / 1_000_000) * price_in + (output_tokens / 1_000_000) * price_out
-        self.usage[model_id]["cost"] += cost
-        self.total_cost += cost
-
-    def print_summary(self, verbose: bool = True):
-        """Print a formatted table of token usage and estimated costs to the console.
-
-        Args:
-            verbose: If False, the summary is suppressed. Defaults to True.
-        """
-        if not verbose:
-            return
-        print("\n\n" + "="*70)
-        print("📊 TOKEN USAGE & COST SUMMARY".center(70))
-        print("="*70)
-        if not self.usage:
-            print("No token usage recorded.")
-            print("="*70 + "\n")
-            return
-            
-        print(f"{'Model':<30} | {'Calls':<5} | {'Tokens (In/Out)':<20} | {'Est. Cost'}")
-        print("-" * 70)
-        for model, stats in self.usage.items():
-            in_t = stats["inputs"]
-            out_t = stats["outputs"]
-            calls = stats["calls"]
-            cost = stats["cost"]
-            print(f"{model[:29]:<30} | {calls:<5} | {f'{in_t} / {out_t}':<20} | ${cost:.4f}")
-        print("-" * 70)
-        print(f"{'TOTAL ESTIMATED COST:':<60} ${self.total_cost:.4f}")
-        print("="*70 + "\n")
-
-GLOBAL_TOKEN_TRACKER = TokenUsageTracker()
-
-_original_agent_run = Agent.run
-
-def _tracked_agent_run(self, *args, **kwargs):
-    stream = kwargs.get("stream", False)
-    result = _original_agent_run(self, *args, **kwargs)
-    
-    model_id = getattr(getattr(self, "model", None), "id", "unknown")
-    
-    if not stream:
-        if hasattr(self, "run_response") and self.run_response and hasattr(self.run_response, "metrics") and self.run_response.metrics:
-            in_t = getattr(self.run_response.metrics, "input_tokens", 0) or 0
-            out_t = getattr(self.run_response.metrics, "output_tokens", 0) or 0
-            GLOBAL_TOKEN_TRACKER.add_usage(model_id, in_t, out_t)
-        return result
-        
-    def _generator_wrapper(gen):
-        for item in gen:
-            yield item
-        if hasattr(self, "run_response") and self.run_response and hasattr(self.run_response, "metrics") and self.run_response.metrics:
-            in_t = getattr(self.run_response.metrics, "input_tokens", 0) or 0
-            out_t = getattr(self.run_response.metrics, "output_tokens", 0) or 0
-            GLOBAL_TOKEN_TRACKER.add_usage(model_id, in_t, out_t)
-            
-    return _generator_wrapper(result)
-
-Agent.run = _tracked_agent_run
 
 
 # === NEW PYDANTIC MODELS FOR CHUNKED WORKFLOW ===
@@ -833,20 +780,20 @@ class BrandStyleIntent(BaseModel):
 
 def _log_agent_banner(
     agent_name: str,
-    model_id: str,
-    provider: str,
-    step_name: str,
+    model_id: str = "unknown",
+    provider: str = "unknown",
+    step_name: str = "",
+    agent: Optional[Any] = None,
 ) -> None:
     """Print an always-on traceability banner before every agent invocation.
 
-    Shown regardless of --verbose so the user always knows which agent/LLM
-    is executing.  Format:
-        ┌─────────────────────────────────────────────────
-        │ 🤖 AGENT: Brand Style Analyzer
-        │ 📡 MODEL: gpt-4o-mini [OpenAI]
-        │ 📋 STEP:  step_optimize_and_plan / Brand Parse
-        └─────────────────────────────────────────────────
+    If 'agent' is provided, its properties override agent_name, model_id, and provider.
     """
+    if agent:
+        agent_name = getattr(agent, "name", agent_name)
+        model_id = getattr(getattr(agent, "model", None), "id", model_id)
+        provider = getattr(getattr(agent, "model", None), "provider", provider)
+
     line = "─" * 50
     print(
         "\n┌%s\n"
@@ -1183,12 +1130,13 @@ def parse_brand_style_intent(
 
     try:
         _log_agent_banner(
-            agent_name=getattr(brand_agent, 'name', 'Brand Style Analyzer'),
-            model_id=getattr(getattr(brand_agent, 'model', None), 'id', 'unknown'),
-            provider=getattr(getattr(brand_agent, 'model', None), 'provider', 'OpenAI'),
+            agent_name="Brand Style Analyzer",
+            agent=brand_agent,
             step_name='step_optimize_and_plan / Brand Parse',
         )
         response = brand_agent.run(user_prompt, stream=False)
+        # Tracking handled by Langfuse
+
 
         if response and response.content:
             content = response.content
@@ -1231,12 +1179,13 @@ def parse_brand_style_intent(
             print("[BRAND] Attempting fallback brand style analysis...")
             try:
                 _log_agent_banner(
-                    agent_name=getattr(brand_agent_fallback, 'name', 'Brand Style Analyzer (Fallback)'),
-                    model_id=getattr(getattr(brand_agent_fallback, 'model', None), 'id', 'unknown'),
-                    provider=getattr(getattr(brand_agent_fallback, 'model', None), 'provider', 'Fallback'),
+                    agent_name="Brand Style Analyzer (Fallback)",
+                    agent=brand_agent_fallback,
                     step_name='step_optimize_and_plan / Brand Parse (Fallback)',
                 )
                 response = brand_agent_fallback.run(user_prompt, stream=False)
+                # Tracking handled by Langfuse
+
                 
                 if response and response.content:
                     content = response.content
@@ -2689,9 +2638,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         else:
             actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
         _log_agent_banner(
-            agent_name=getattr(_query_optimizer, 'name', 'Presentation Strategist'),
-            model_id=actual_model_id,
-            provider=getattr(getattr(_query_optimizer, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
+            agent_name="Presentation Strategist",
+            agent=_query_optimizer,
             step_name='step_optimize_and_plan / Storyboard Generation',
         )
         # Check rate limits before calling
@@ -2703,6 +2651,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         response = _query_optimizer.run(
             optimizer_prompt, stream=False
         )
+        # Tracking handled by Langfuse
+
     except Exception as e:
         error_msg = str(e)
         status_code = getattr(getattr(e, "response", None), "status_code", None)
@@ -2739,6 +2689,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
                 response = _fallback_query_optimizer.run(
                     optimizer_prompt, stream=False
                 )
+                # Tracking handled by Langfuse
+
                         
             except Exception as fallback_e:
                 print("[ERROR] Fallback query optimizer failed during exception fallback: %s" % str(fallback_e))
@@ -2778,6 +2730,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             response = _fallback_query_optimizer.run(
                 optimizer_prompt, stream=False
             )
+            # Tracking handled by Langfuse
+
                     
         except Exception as fallback_e:
             print("[ERROR] Fallback query optimizer failed: %s" % str(fallback_e))
@@ -2848,6 +2802,8 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             fb_resp = _fallback_query_optimizer.run(
                 optimizer_prompt, stream=False
             )
+            # Tracking handled by Langfuse
+
             if fb_resp and fb_resp.content:
                 fb_content = fb_resp.content
                 if isinstance(fb_content, StoryboardPlan):
@@ -2998,6 +2954,8 @@ def _run_chunk_agent(chunk_agent, chunk_prompt):
         event_count += 1
         if isinstance(event, RunOutput):
             response = event
+    # Tracking handled by Langfuse
+
     return response, event_count
 
 
@@ -3528,6 +3486,8 @@ def generate_chunk_pptx(
                             _gemini_prompt, stream=True
                         ):
                             pass
+                        # Tracking handled by Langfuse
+
 
                         if os.path.exists(chunk_output_path):
                             try:
@@ -3598,6 +3558,8 @@ def generate_chunk_pptx(
                         chunk_prompt, stream=True
                     ):
                         pass
+                    # Tracking handled by Langfuse
+
 
                     if os.path.exists(chunk_output_path):
                         print(
@@ -3672,6 +3634,8 @@ def generate_chunk_pptx(
                         chunk_prompt, stream=True
                     ):
                         pass
+                    # Tracking handled by Langfuse
+
 
                     if os.path.exists(chunk_output_path):
                         print(
@@ -4483,6 +4447,8 @@ def generate_chunk_pptx_v2(
     try:
         for _ in _fallback_agent.run(code_gen_prompt, stream=True):
             pass
+        # Tracking handled by Langfuse
+
         t2_elapsed = time.time() - t2_start
         print(
             "[TIMING] Chunk %d Tier 2 primary code generation: %.1fs" % (chunk_idx, t2_elapsed)
@@ -4511,9 +4477,8 @@ def generate_chunk_pptx_v2(
         )
         t2_lite_start = time.time()
         _log_agent_banner(
-            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
-            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'unknown-lite'),
-            provider=getattr(getattr(_fallback_agent_lite, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
+            agent_name="PPTX Code Generator (Lite Fallback)",
+            agent=_fallback_agent_lite,
             step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
         )
         
@@ -4528,6 +4493,8 @@ def generate_chunk_pptx_v2(
         try:
             for _ in _fallback_agent_lite.run(code_gen_prompt, stream=True):
                 pass
+            # Tracking handled by Langfuse
+
             t2_lite_elapsed = time.time() - t2_lite_start
             print(
                 "[TIMING] Chunk %d Tier 2 lite code generation: %.1fs"
@@ -4562,21 +4529,15 @@ def generate_chunk_pptx_v2(
             )
             t2_gemini_start = time.time()
             _log_agent_banner(
-                agent_name=getattr(
-                    _gemini_pro, "name",
-                    "PPTX Code Generator (Gemini Fallback)",
-                ),
-                model_id=getattr(
-                    getattr(_gemini_pro, "model", None),
-                    "id", "gemini-3.1-pro-preview",
-                ),
-                provider="Google",
-                step_name="step_generate_chunks / Tier 2 Gemini Pro "
-                "Fallback (chunk %d)" % chunk_idx,
+                agent_name="PPTX Code Generator (Gemini Fallback)",
+                agent=_gemini_pro,
+                step_name="step_generate_chunks / Tier 2 Gemini Pro Fallback (chunk %d)" % chunk_idx,
             )
             try:
                 for _ in _gemini_pro.run(code_gen_prompt, stream=True):
                     pass
+                # Tracking handled by Langfuse
+
                 t2_gemini_elapsed = time.time() - t2_gemini_start
                 print(
                     "[TIMING] Chunk %d Tier 2 Gemini Pro: %.1fs"
@@ -4605,21 +4566,15 @@ def generate_chunk_pptx_v2(
             )
             t2_gflash_start = time.time()
             _log_agent_banner(
-                agent_name=getattr(
-                    _gemini_flash, "name",
-                    "PPTX Code Generator (Gemini Flash Fallback)",
-                ),
-                model_id=getattr(
-                    getattr(_gemini_flash, "model", None),
-                    "id", "gemini-2.5-flash",
-                ),
-                provider="Google",
-                step_name="step_generate_chunks / Tier 2 Gemini Flash "
-                "Fallback (chunk %d)" % chunk_idx,
+                agent_name="PPTX Code Generator (Gemini Flash Fallback)",
+                agent=_gemini_flash,
+                step_name="step_generate_chunks / Tier 2 Gemini Flash Fallback (chunk %d)" % chunk_idx,
             )
             try:
                 for _ in _gemini_flash.run(code_gen_prompt, stream=True):
                     pass
+                # Tracking handled by Langfuse
+
                 t2_gflash_elapsed = time.time() - t2_gflash_start
                 print(
                     "[TIMING] Chunk %d Tier 2 Gemini Flash: %.1fs"
@@ -4656,14 +4611,15 @@ def generate_chunk_pptx_v2(
             print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (with visual context)..." % chunk_idx)
             t2_univ_start = time.time()
             _log_agent_banner(
-                agent_name=_universal_pro.name,
-                model_id=_universal_pro.model.id,
-                provider=getattr(_universal_pro.model, 'provider', 'openai'),
+                agent_name="Universal Pro (OpenAI Fallback)",
+                agent=_universal_pro,
                 step_name='step_generate_chunks / Universal Pro Fallback (chunk %d)' % chunk_idx,
             )
             try:
                 for _ in _universal_pro.run(code_gen_prompt, stream=True):
                     pass
+                # Tracking handled by Langfuse
+
             except Exception as e_pro:
                 print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro failed with visual context: %s" % (chunk_idx, str(e_pro)))
             
@@ -4675,14 +4631,15 @@ def generate_chunk_pptx_v2(
                 print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro produced no file. Attempting o3-mini Lite Fallback (with visual context)..." % chunk_idx)
                 t2_univ_lite_start = time.time()
                 _log_agent_banner(
-                    agent_name=_universal_lite.name,
-                    model_id=_universal_lite.model.id,
-                    provider=getattr(_universal_lite.model, 'provider', 'openai'),
+                    agent_name="Universal Lite (OpenAI Fallback)",
+                    agent=_universal_lite,
                     step_name='step_generate_chunks / Universal Lite Fallback (chunk %d)' % chunk_idx,
                 )
                 try:
                     for _ in _universal_lite.run(code_gen_prompt, stream=True):
                         pass
+                    # Tracking handled by Langfuse
+
                 except Exception as e_lite:
                     print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite failed with visual context: %s" % (chunk_idx, str(e_lite)))
                 
@@ -4700,14 +4657,15 @@ def generate_chunk_pptx_v2(
                 print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (stripped context)..." % chunk_idx)
                 t2_univ_stripped_start = time.time()
                 _log_agent_banner(
-                    agent_name=_universal_pro.name,
-                    model_id=_universal_pro.model.id,
-                    provider=getattr(_universal_pro.model, 'provider', 'openai'),
+                    agent_name="Universal Pro Stripped (OpenAI Fallback)",
+                    agent=_universal_pro,
                     step_name='step_generate_chunks / Universal Pro Fallback Stripped (chunk %d)' % chunk_idx,
                 )
                 try:
                     for _ in _universal_pro.run(openai_fallback_code_gen_prompt_stripped, stream=True):
                         pass
+                    # Tracking handled by Langfuse
+
                 except Exception as e_pro_stripped:
                     print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped failed: %s" % (chunk_idx, str(e_pro_stripped)))
                 
@@ -4719,14 +4677,15 @@ def generate_chunk_pptx_v2(
                     print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped produced no file. Attempting o3-mini Lite Fallback (stripped context)..." % chunk_idx)
                     t2_univ_lite_stripped_start = time.time()
                     _log_agent_banner(
-                        agent_name=_universal_lite.name,
-                        model_id=_universal_lite.model.id,
-                        provider=getattr(_universal_lite.model, 'provider', 'openai'),
+                        agent_name="Universal Lite Stripped (OpenAI Fallback)",
+                        agent=_universal_lite,
                         step_name='step_generate_chunks / Universal Lite Fallback Stripped (chunk %d)' % chunk_idx,
                     )
                     try:
                         for _ in _universal_lite.run(openai_fallback_code_gen_prompt_stripped, stream=True):
                             pass
+                        # Tracking handled by Langfuse
+
                     except Exception as e_lite_stripped:
                         print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite stripped failed: %s" % (chunk_idx, str(e_lite_stripped)))
                     
@@ -4741,9 +4700,8 @@ def generate_chunk_pptx_v2(
         )
         t2_lite_start = time.time()
         _log_agent_banner(
-            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
-            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'claude-haiku-4-5'),
-            provider=getattr(getattr(_fallback_agent_lite, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
+            agent_name="PPTX Code Generator (Lite Fallback)",
+            agent=_fallback_agent_lite,
             step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
         )
         _get_rate_tracker().check_and_wait(
@@ -4754,6 +4712,8 @@ def generate_chunk_pptx_v2(
         try:
             for _ in _fallback_agent_lite.run(code_gen_prompt, stream=True):
                 pass
+            # Tracking handled by Langfuse
+
             t2_lite_elapsed = time.time() - t2_lite_start
             print(
                 "[TIMING] Chunk %d Tier 2 lite code generation: %.1fs"
@@ -5148,12 +5108,13 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                 from agents import get_agents as _get_agents  # type: ignore
                 _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
                 _log_agent_banner(
-                    agent_name=getattr(_image_planner, 'name', 'Image Planner'),
-                    model_id=getattr(getattr(_image_planner, 'model', None), 'id', 'gemini-3-flash-preview'),
-                    provider=getattr(getattr(_image_planner, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
+                    agent_name="Image Planner",
+                    agent=_image_planner,
                     step_name='step_process_chunks / Image Planning (chunk %d)' % chunk_idx,
                 )
                 img_plan_response = _image_planner.run(combined_message, stream=False)
+                # Tracking handled by Langfuse
+
 
                 if img_plan_response and img_plan_response.content:
                     content = img_plan_response.content
@@ -5317,9 +5278,8 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
         from agents import get_agents as _get_agents_vr  # type: ignore
         _vr_reviewer = _get_agents_vr(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
         _log_agent_banner(
-            agent_name=getattr(_vr_reviewer, 'name', 'Senior UI/UX Presentation Designer'),
-            model_id=getattr(getattr(_vr_reviewer, 'model', None), 'id', 'gemini-2.5-flash'),
-            provider=getattr(getattr(_vr_reviewer, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
+            agent_name="Senior UI/UX Presentation Designer",
+            agent=_vr_reviewer,
             step_name='step_visual_review_chunks / Visual QA (chunk %d)' % chunk_idx,
         )
 
@@ -5344,6 +5304,8 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
                     previous_step_content="",
                 )
                 result = step_visual_quality_review(mock_input, chunk_session)  # noqa: F405
+                # Tracking handled by Langfuse
+
 
                 # Check if any actionable issues exist (mirrors _apply_visual_corrections logic).
                 # PresentationQualityReport has 'total_critical_issues', NOT 'total_corrections_applied'.
@@ -5555,6 +5517,28 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                 src_prs_rels = etree.fromstring(src_prs_rels_xml)
                 src_slide_nums = sorted(_get_slide_numbers(src_prs_rels))
 
+                # Read source content types for Overrides so we can attach them to renamed parts
+                src_ct_map = {}
+                if "[Content_Types].xml" in src_names:
+                    src_ct_tree = etree.fromstring(src_zip.read("[Content_Types].xml"))
+                    src_ct_map = {
+                        el.get("PartName", ""): el.get("ContentType", "")
+                        for el in src_ct_tree.findall("{%s}Override" % NS_CT)
+                    }
+
+                def _ensure_content_type(target_path: str, old_path: str):
+                    part_uri = "/" + target_path
+                    old_uri = "/" + old_path
+                    if old_uri in src_ct_map:
+                        existing_ct_parts = {
+                            el.get("PartName", "")
+                            for el in base_ct_tree.findall("{%s}Override" % NS_CT)
+                        }
+                        if part_uri not in existing_ct_parts:
+                            ct_el = etree.SubElement(base_ct_tree, "{%s}Override" % NS_CT)
+                            ct_el.set("PartName", part_uri)
+                            ct_el.set("ContentType", src_ct_map[old_uri])
+
                 for src_slide_num in src_slide_nums:
                     new_slide_num = next_slide_num
                     next_slide_num += 1  # type: ignore
@@ -5624,6 +5608,7 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                             # Copy the part
                             part_bytes = src_zip.read(actual_old)
                             out_zip.writestr(new_part_name, part_bytes)
+                            _ensure_content_type(new_part_name, actual_old)
 
                             # If chart, also copy its rels and embedded workbook
                             if "chart" in actual_old:
@@ -5676,6 +5661,7 @@ def _merge_pptx_zip_level(pptx_paths: List[str], output_path: str) -> bool:
                                                     out_zip.namelist()
                                                 ):
                                                     out_zip.writestr(wb_new, wb_bytes)
+                                                    _ensure_content_type(wb_new, wb_old)
                                                 # Update the chart rels entry to point
                                                 # to the renamed workbook.
                                                 # The new target must be relative to the
@@ -5854,181 +5840,55 @@ def _try_auto_repair_with_libreoffice(pptx_path: str) -> bool:
     return False
 
 
-def merge_pptx_files(pptx_paths: List[str], output_path: str) -> bool:
-    """Merge multiple PPTX files into a single presentation using ZIP-level manipulation.
-
-    Uses _merge_pptx_zip_level() which copies all binary parts (images, charts,
-    workbooks) at the raw bytes level, avoiding OPC package context issues that
-    cause PowerPoint to report "found a problem with content" on the merged file.
-
-    Args:
-        pptx_paths: List of PPTX file paths to merge in order.
-        output_path: Destination path for the merged presentation.
-
-    Returns:
-        True if merge succeeded, False otherwise.
-    """
-    merge_start = time.time()
-    valid_paths = [p for p in pptx_paths if p and os.path.exists(p)]
-    print("[MERGE] Merging %d PPTX files into %s" % (len(valid_paths), output_path))
-    if VERBOSE:  # noqa: F405
-        for i, p in enumerate(valid_paths):
-            print("[VERBOSE][MERGE] Source %d: %s" % (i, p))
-    result = _merge_pptx_zip_level(valid_paths, output_path)
-    merge_elapsed = time.time() - merge_start
-    print("[TIMING] merge_pptx_files completed in %.1fs" % merge_elapsed)
-    return result
-
-
-# === WORKFLOW STEP 5 (FINAL): MERGE ALL CHUNKS ===
+# === MAIN ENTRY POINT ===
 
 
 def step_merge_chunks(step_input: StepInput, session_state: Dict) -> StepOutput:
-    """Step 5 (Final): Merge all processed/reviewed chunk PPTX files into the final output.
+    """Merge all processed/reviewed chunks into a single PPTX using _merge_pptx_zip_level.
 
-    Source selection priority (explicit, robust):
-    1. Template + visual review + reviewed_chunks present -> use reviewed_chunks
-    2. Template + processed_chunks present             -> use processed_chunks
-    3. No template (raw mode)                          -> use raw chunk_files
-
-    Chunks are merged in order (by chunk_idx).
-    """
-    step_start = time.time()
-
-    print("\n" + "=" * 60)
-    print("Step 5 (Final): Merging chunks into final presentation...")
-    print("=" * 60)
-
-    output_path = session_state.get("output_path", "presentation_chunked.pptx")
-    has_template = bool(session_state.get("template_path"))
-    visual_review = session_state.get("visual_review", False)
-    chunk_files: List[Optional[str]] = session_state.get("chunk_files", [])
-    processed_chunks: Dict[int, Optional[str]] = session_state.get(
-        "processed_chunks", {}
-    )
-    reviewed_chunks: Dict[int, Optional[str]] = session_state.get("reviewed_chunks", {})
-
-    # Determine which chunk paths to use (priority: reviewed > processed > raw)
-    if has_template and visual_review and reviewed_chunks:
-        source_label = "reviewed (template + visual review)"
-        ordered_paths = [reviewed_chunks.get(i) for i in sorted(reviewed_chunks.keys())]
-    elif has_template and processed_chunks:
-        source_label = "processed (template-assembled)"
-        ordered_paths = [
-            processed_chunks.get(i) for i in sorted(processed_chunks.keys())
-        ]
-    else:
-        # No template path: use raw chunk files directly
-        source_label = "raw (no template)"
-        ordered_paths = [f for f in chunk_files if f is not None]
-
-    if not ordered_paths:
-        print("[MERGE] No chunk files found to merge")
-        return StepOutput(
-            content="No files to merge",
-            success=False,
-        )
-
-    print(
-        "Merging from: %s (%d total, %d valid)"
-        % (
-            source_label,
-            len(ordered_paths),
-            sum(1 for p in ordered_paths if p and os.path.exists(p)),
-        )
-    )
-
-    if VERBOSE:  # noqa: F405
-        print("[VERBOSE] Ordered chunk files for merge:")
-        for i, p in enumerate(ordered_paths):
-            print("[VERBOSE]   %d. %s" % (i, p))
-
-    success = merge_pptx_files(
-        [str(p) for p in ordered_paths if p],
-        output_path,
-    )
-
-    # Attempt optional auto-repair (only if LibreOffice is available)
-    if success:
-        _try_auto_repair_with_libreoffice(output_path)
-
-    step_elapsed = time.time() - step_start
-    final_file = os.path.basename(output_path)
-    print(
-        "[TIMING] step_merge_chunks completed in %.1fs (final: %s)"
-        % (step_elapsed, final_file)
-    )
-
-    if success:
-        summary = "Merged %d chunks (%s) -> %s. Duration: %.1fs" % (
-            len([p for p in ordered_paths if p]),
-            source_label,
-            output_path,
-            step_elapsed,
-        )
-        print("[MERGE] %s" % summary)
-        return StepOutput(
-            content=summary,
-            success=True,
-        )
-    else:
-        return StepOutput(
-            content="Merge failed. No output file produced.",
-            success=False,
-        )
-
-
-# === WORKFLOW BUILDER ===
-
-
-def build_chunked_workflow(session_state: Dict) -> Workflow:
-    """Build the chunked PPTX workflow with the appropriate set of steps.
-
-    Steps included:
-    - Step 1: Optimize & Plan   (always)
-    - Step 2: Generate Chunks   (always)
-    - Step 3: Process Chunks    (only when template_path is set)
-    - Step 4: Visual Review     (when visual_review is set; works with or without template)
-    - Step 5: Merge Chunks      (always)
-
-    No-template pipeline: Step 1 -> Step 2 [-> Step 4] -> Step 5
-    Template pipeline:    Step 1 -> Step 2 -> Step 3 [-> Step 4] -> Step 5
-
-    Args:
-        session_state: Shared workflow state; must contain template_path and visual_review
-                       to determine which optional steps to include.
-
-    Returns:
-        Configured Workflow instance with the appropriate step sequence.
+    Collects all chunk paths from session_state["reviewed_chunks"] (if visual review was
+    enabled) or session_state["processed_chunks"] (standard template assembly) or
+    session_state["chunk_files"] (fallback raw generation).
     """
     has_template = bool(session_state.get("template_path"))
-    do_visual_review = bool(session_state.get("visual_review"))
+    do_visual_review = has_template and bool(session_state.get("visual_review"))
 
-    steps = [
-        Step(name="Optimize and Plan", executor=step_optimize_and_plan),
-        Step(name="Generate Chunks", executor=step_generate_chunks),
-    ]
+    # Priority: reviewed > processed > raw chunk files
+    chunks_to_merge = []
+    total_slides = session_state.get("total_slides", 0)
+    
+    for i in range(total_slides):
+        chunk_path = None
+        if do_visual_review:
+            chunk_path = session_state.get("reviewed_chunks", {}).get(i)
+        if not chunk_path:
+            chunk_path = session_state.get("processed_chunks", {}).get(i)
+        if not chunk_path:
+            # Correct lookup for session_state["chunk_files"] which is a list indexed by chunk
+            # (We assume 1-slide chunks here for safety if no template, but the logic handles lists)
+            cf = session_state.get("chunk_files", [])
+            if i < len(cf):
+                chunk_path = cf[i]
+        
+        if chunk_path and os.path.isfile(chunk_path):
+            chunks_to_merge.append(chunk_path)
+            if VERBOSE:
+                print("[MERGE] Merged chunk %d: %s" % (i, chunk_path))
 
-    # Template assembly + image pipeline only runs when a template is provided
-    if has_template:
-        steps.append(Step(name="Process Chunks", executor=step_process_chunks))
+    if not chunks_to_merge:
+        print("[MERGE ERROR] No chunks found to merge.")
+        return StepOutput(content="Merge failed: no chunks", success=False)
 
-    # Visual review: runs with or without template (template-independent contrast checks available)
-    if do_visual_review:
-        steps.append(
-            Step(name="Visual Review Chunks", executor=step_visual_review_chunks)
-        )
-
-    steps.append(Step(name="Merge Chunks", executor=step_merge_chunks))
-
-    return Workflow(
-        name="Chunked PPTX Workflow",
-        steps=steps,
-        session_state=session_state,
-    )
-
-
-# === MAIN ENTRY POINT ===
+    try:
+        # Call the low-level zipper
+        success = _merge_pptx_zip_level(chunks_to_merge, session_state["output_path"])
+        if success:
+            return StepOutput(content="Merge completed", success=True)
+        else:
+            return StepOutput(content="Merge failed in zipper", success=False)
+    except Exception as e:
+        print("[MERGE ERROR] Exception in zipper: %s" % str(e))
+        return StepOutput(content="Merge failed with exception: %s" % str(e), success=False)
 
 
 def main() -> None:
@@ -6043,7 +5903,7 @@ def main() -> None:
     silent. OUTPUT.md is cleared at the start of each run.
     """
     parser = argparse.ArgumentParser(
-        description="Chunked PPTX generation workflow — overcomes Claude API limits for large presentations."
+        description="Chunked PPTX generation workflow -- overcomes Claude API limits for large presentations."
     )
 
     # Existing args (compatible with powerpoint_template_workflow.py)
@@ -6090,7 +5950,7 @@ def main() -> None:
         "--template-visuals",
         "-tv",
         action="store_true",
-        help="Inject base64 images of template slides into LLM prompts to improve visual accuracy (consumes more tokens).",
+        help="Inject base64 images of template slides into LLM prompts to improve visual accuracy.",
     )
     parser.add_argument(
         "--footer-text",
@@ -6120,9 +5980,7 @@ def main() -> None:
         choices=["claude", "openai", "gemini"],
         default="claude",
         help=(
-            "LLM provider for swappable agents (brand analyzer, query optimizer, "
-            "fallback code gen, image planner, visual reviewer). "
-            "The Content Generator always uses Claude (PPTX skill). Default: claude."
+            "LLM provider for swappable agents. Default: claude."
         ),
     )
 
@@ -6131,62 +5989,57 @@ def main() -> None:
         "--chunk-size",
         type=int,
         default=1,
-        help="Number of slides per LLM API chunk call (default: 1). "
-             "Using 1 ensures each chunk sends only the single best-matching "
-             "template slide image, keeping prompts within all model context windows.",
+        help="Number of slides per LLM API chunk call.",
     )
     parser.add_argument(
         "--max-retries",
         type=int,
         default=2,
-        help="Max retries per chunk on failure (default: 2).",
+        help="Max retries per chunk on failure.",
     )
     parser.add_argument(
         "--visual-passes",
         type=int,
         default=3,
-        help="Maximum visual inspection passes per chunk (default: 3).",
+        help="Maximum visual inspection passes per chunk.",
     )
     parser.add_argument(
         "--start-tier",
         type=int,
         choices=[1, 2, 3],
         default=1,
-        help=(
-            "Starting tier for chunk generation (default: 1). "
-            "1=Claude PPTX skill (best quality), "
-            "2=LLM code generation (80-92%% quality, faster, python-pptx native charts), "
-            "3=text-only (structural, instant). "
-            "Fallback continues from selected tier."
-        ),
+        help=("Starting tier (default: 1)."),
     )
     parser.add_argument(
         "--inter-chunk-delay-min",
         type=float,
         default=None,
         metavar="MS",
-        help=(
-            "Minimum inter-chunk delay in milliseconds (default: provider-specific). "
-            "A random value in [min, max] is chosen between each chunk."
-        ),
     )
     parser.add_argument(
         "--inter-chunk-delay-max",
         type=float,
         default=None,
         metavar="MS",
-        help=(
-            "Maximum inter-chunk delay in milliseconds (default: provider-specific). "
-            "When a 429 rate-limit error is detected, max_delay is used directly."
-        ),
     )
 
-
     args = parser.parse_args()
+    global VERBOSE
+    VERBOSE = args.verbose
 
-    # Update module-level VERBOSE (imported from powerpoint_template_workflow via *)
-    global VERBOSE  # noqa: F405
-    VERBOSE = args.verbose  # noqa: F405
+    # Initialize telemetry
+    tracer_provider = setup_langfuse_telemetry()
+    try:
+        _run_main_workflow(args)
+    finally:
+        if tracer_provider:
+            if VERBOSE:
+                print("[TELEMETRY] Flushing and shutting down tracer...")
+            tracer_provider.shutdown()
+
+
+def _run_main_workflow(args):
+    # Split the original main() body into this helper to manage the telemetry lifecycle.
 
     # Validate API keys
     # ANTHROPIC_API_KEY is always required (Content Generator is locked to Claude).
@@ -6248,6 +6101,8 @@ def main() -> None:
         "(override with --inter-chunk-delay-min / --inter-chunk-delay-max)."
         % (getattr(args, "inter_chunk_delay_min", 2000), getattr(args, "inter_chunk_delay_max", 5000))
     )
+    # Initialize observability via Langfuse (Agno / OpenInference)
+
 
     # Setup output directory with unique session ID + timestamp per run
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -6399,7 +6254,8 @@ def main() -> None:
     print("Output: %s" % output_path)
     print("=" * 60)
     
-    GLOBAL_TOKEN_TRACKER.print_summary(VERBOSE)
+    # GLOBAL_TOKEN_TRACKER replaced by Langfuse/OpenInference telemetry.
+
 
 
 if __name__ == "__main__":
