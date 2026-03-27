@@ -6,7 +6,9 @@ For a presentation file generation WITHOUT TEMPLATE file follow these rules as t
 
 Combine point no. 1 and 2 and then determine the best suitable pptx THEME with combination of colors usage like Primary, Secondary colors etc., suitable Font style, font family, ,font color etc., Layouts, Alignments; texts and font styles of Titles, Subtitles and Footers etc.
 
-====
+3. If any Brand name or intent captured from the prompt determine, primary, secondary and accent colors, font style, font family, font color etc. and use them throughout the presentation.
+
+===================
 
 (With Template file): Follow these rules for the final PPTX file generation,
 

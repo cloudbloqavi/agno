@@ -296,8 +296,9 @@ When using `--template`, several automatic safeguards protect presentation quali
 | **Per-slide rendering** | Renders every slide to PNG via PPTX→PDF→PNG pipeline (`pdftoppm`) for visual review |
 | **Background detection** | 6-layer detection (shape → slide → layout → master → theme → large shapes) prevents wrong contrast |
 | **Minimum font size** | Enforces 10pt body / 14pt title minimum — prevents unreadable text from `fit_text()` shrinkage |
-| **Layout Sanitization** | 8-pass correction engine: boundary clamping, min size enforcement, overlap orphan removal, icon purging, column alignment snapping, and iterative reflow (preserves structural template elements) |
-| **Smart Template Purge** | Intelligent classification (Fix 13) preserves branded headers, footers, and decorative motifs while clearing placeholder text |
+| **Layout Sanitization** | 10-pass correction engine: boundary clamping, min size enforcement, overlap orphan removal, icon purging, column alignment snapping, and iterative reflow (preserves structural template elements) |
+| **Template-Agnostic Purge** | Principled Zone + Fill + Text classification (Fix 22) preserves branded headers, footers, and decorative motifs while clearing placeholder text |
+| **Content Overflow Guard** | Final hard boundary clamp (Fix 19) at 90%/87% lines with relaxed 0.60 scaling |
 | **Template-aware prompts** | Tier 2 LLM code generation includes spatial grid rules, decoration bans, and layout constraints |
 | **Visual Profile Analysis** | Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer |
 | **Accent Line Purge** | Automatic detection and removal of slanting/diagonal LINE geometry from templates |

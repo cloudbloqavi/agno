@@ -98,13 +98,14 @@ An internal `_RateLimitTracker` aggregates estimated token counts dynamically ac
 When using `--template`, these automatic safeguards protect presentation quality:
 - **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
 - **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization (Fix 13B)** — 8-pass deterministic correction engine:
+- **Layout sanitization (Fix 13B)** — 10-pass deterministic correction engine:
   - Pass 1-3: Boundary clamping, minimum size enforcement, and initial overlap reflow (preserves structural template elements).
   - Pass 4: **Overlap Orphan Removal** — Deletes redundant shapes in high-overlap clusters (keeping higher text density).
   - Pass 5: **Orphaned Decorative Icon Removal** — Purges non-contextual symbols and emojis often hallucinated as decorations.
   - Pass 6: **Column Alignment Snapping** — Snaps elements to a consistent 12-column grid for clean vertical alignment.
   - Pass 7-8: Final iterative reflow and title font floor (min 20pt).
-- **Smart Template Purge (Fix 13)** — Intelligent classification distinguishes between structural, content-carrier, and disposable shapes, preserving branded headers, footers, and decorative motifs while clearing placeholder text.
+  - Pass 9: **Content Overflow Guard (Fix 19)** — Final hard boundary clamp at 90% slide boundary and 87% footer line with relaxed 0.60 scaling.
+- **Template-Agnostic Purge (Fix 22)** — Principled Zone + Fill + Text classification logic (`_classify_template_shape`) ensures branded motifs (accent lines, headers, footers) are preserved while generic content decorations are cleared.
 - **Template-aware LLM prompts** — Tier 2 code generation includes spatial grid rules, decoration bans, and layout constraints.
 - **Single-Slide Visual References (Optional via `--template-visuals`)** — Inspired by single-shot cloning, chunk prompts can inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts. **Disabled by default** to optimize token usage and cost; enabled with `-tv` or `--template-visuals`.
 - **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.

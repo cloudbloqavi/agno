@@ -628,7 +628,8 @@ Fix 3: Font size guard         →  Prevents unreadable text after fit_text()
 Fix 4: Overlap reflow          →  Resolves shape collisions after transfer
 Fix 7: Title font floor        →  Prevents unreadable 10pt fallback titles
 Fix 8: Iterative overlap       →  Catches cascading overlaps (up to 3 passes)
-Fix 13: Smart Template Purge   →  Intelligent classification preserves branded elements (headers/footers)
+Fix 19: Content Overflow Guard →  Hard boundary clamping at 87% footer line
+Fix 22: Template-Agnostic Purge→  Zone+Fill+Text classification logic
 Fix 2: Background detection    →  Ensures correct contrast decisions
 Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remaining issues
 ```
@@ -649,6 +650,25 @@ Fix 1: Per-slide rendering     →  Visual review sees ALL slides to catch remai
 | Per-slide rendering | QA (detective) | `_render_pptx_to_images()` | During `--visual-review` step |
 | Duck-Typing Pydantic | System (preventative) | `step_visual_quality_review()` | Resolves framework-level module loading failures |
 | Spatial Overflow Offset | Assembly (corrective) | `enforce_final_contrast()` | Staggers sequentially upscaled bounding boxes |
+| Content Overflow Guard | Assembly (corrective) | `_fix_overlapping_shapes()` | Fix 19: 87% footer boundary clamping and 0.60 scaling |
+| Template-Agnostic Purge | Assembly (corrective) | `_classify_template_shape()` | Fix 22: Zone + Fill + Text principled classification |
+
+### Layout Sanitization Pipeline (Fix 13B + Fix 19)
+
+The assembly step concludes with a 10-pass deterministic sanitization pipeline that ensures visual consistency across different templates:
+
+```mermaid
+flowchart TD
+    S[Step 3 Output: Assembled Slide] --> P13["Pass 1-3: Boundary Clamping & First Reflow"]
+    P13 --> P4["Pass 4: Overlap Orphan Removal (High Density)"]
+    P4 --> P5["Pass 5: Orphaned Decorative Icon Removal (Fix 18)"]
+    P5 --> P6["Pass 6: Column Alignment Snapping (Grid)"]
+    P6 --> P78["Pass 7-8: Iterative Overlap Reflow (Cascading)"]
+    P78 --> P9["Pass 9: Content Overflow Guard (Fix 19)"]
+    P9 --> C["Final Boundary & Footer Clamp (87%)"]
+    C --> AC["Fix 2: Background Contrast Detection"]
+    AC --> End[Step 3 Result: Sanitized Slide]
+```
 
 See [`DESIGN_visual_quality.md`](DESIGN_visual_quality.md) → Phase 3 for technical deep-dives, root cause analysis, and implementation trade-offs.
 

@@ -12,8 +12,7 @@ Models used:
 
 Web search: 
     - brand_style_analyzer uses Gemini's built-in Google Search (search=True).
-    - query_optimizer uses DuckDuckGoTools to avoid JSON truncation issues known
-      to occur when search=True is combined with large structured outputs.
+    - query_optimizer uses Gemini's built-in Google Search (search=True).
 """
 
 from pathlib import Path
@@ -23,7 +22,6 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIResponses
 from agno.tools.python import PythonTools
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 from agents._shared import (
     BRAND_STYLE_ANALYZER_INSTRUCTIONS,
@@ -55,13 +53,10 @@ def create_agents() -> Dict[str, Agent]:
     )
 
     # Storyboard strategist grounded in web research.
-    # Note: search=True is intentionally omitted here to prevent Gemini's internal 
-    # search grounding from truncating the large StoryboardPlan JSON output.
-    # Instead, we use DuckDuckGoTools as an explicit tool call.
+    # Enabling native search (search=True) as requested by the user.
     query_optimizer = Agent(
         name="Presentation Strategist",
-        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=8192),
-        tools=[DuckDuckGoTools()],
+        model=Gemini(id="gemini-3.1-pro-preview", max_output_tokens=8192, search=True),
         description=(
             "You are a presentation strategist who first searches the web for current, "
             "relevant facts and data about the topic, then creates an optimized presentation "

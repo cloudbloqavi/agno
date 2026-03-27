@@ -1093,3 +1093,56 @@ A series of high-precision deterministic passes added to `sanitize_slide_layout`
 - **Pie Chart Square Constraint:** Forced pie charts to render as perfect squares within their allocated `ContentArea`. Prevents the common "elliptical pie" defect.
 - **Template Chart Styling:** Re-added `_apply_chart_style` call in `_transfer_charts` to ensure generated charts inherit the template's axis fonts, legend positioning, and series colors.
 - **Chart Label Enforcement:** Added `--chart-labels` logic (mapped to `show_data_labels` in storyboard) to force-enable numeric labels on complex charts.
+
+---
+
+### Phase 9: Template-Agnostic Safeguards & Overflow Protection — COMPLETE ✅
+
+Two major architectural enhancements to ensure visual integrity across diverse templates and prevent layout regressions (March 2026).
+
+| Component | Function(s) | Status |
+|-----------|------------|--------|
+| Multi-Layer Spatial Defense (Fix 19) | `_fix_overlapping_shapes()` | ✅ Implemented |
+| Template-Agnostic Cleaning (Fix 22) | `_classify_template_shape()` | ✅ Implemented |
+
+#### Fix 19: Content Overflow Protection — Technical Deep-Dive
+
+**Root cause:** Despite previous overlap resolution logic, dense content (especially long bullet lists or multiple tables) could still push shapes below the footer boundary or even off the bottom of the slide. The previous 85% scaling threshold was too aggressive, causing shapes to remain too large and overflow.
+
+**Solution — Multi-layered spatial defense:**
+
+1. **Reflow Clamping:** During the vertical reflow phase, the `new_top` calculation is now clamped to ensure shapes do not push below the **87% footer boundary**.
+2. **Relaxed Scale-down Guard:** The proportional scaling threshold was relaxed from **0.85 to 0.60**. This allows the system to shrink dense content more significantly to fit within the safe zone while still maintaining legibility.
+3. **Phase 4 Hard Boundary Clamp:** Added a final "Safety Pass" after all reflow and scaling logic. This pass iterates through all shapes and forcibly shifts (or trims height if necessary) any shape that still penetrates the 90% slide boundary or the 87% footer line.
+
+**Logging:** `[OVERLAP FIX] Phase 4: Enforced hard boundary clamp on N shapes.`
+
+---
+
+#### Fix 22: Template-Agnostic Cleaning (Smart Purge) — Technical Deep-Dive
+
+**Root cause:** The previous cleanup logic relied on generic heuristics (like "remove all shapes without text") which frequently either purged important branded motifs (accent lines, background shapes) or left behind random "orphaned" icons from the template that didn't match the new content.
+
+**Solution — Zone + Fill + Text Classification:**
+Replaced the old heuristic with a principled classification system that evaluates shapes based on three primary signals:
+
+1. **Spatial Zone:**
+   - **Header Zone (<10%):** Shapes here are considered structural (titles, top accents).
+   - **Footer Zone (>88%):** Shapes here are considered structural (footers, page numbers).
+   - **Content Zone (10-88%):** Shapes here are candidates for processing or purging.
+2. **Fill Metadata:**
+   - Shapes using any of the template's **Accent Colors** are marked as "Structural" and protected, regardless of their content or position.
+3. **Text Content:**
+   - Shapes containing text are classified as "Content Carriers" and are preserved for processing (formatting/alignment).
+
+**Classification Result Matrix:**
+
+| Category | Definition | Action |
+|----------|------------|--------|
+| **Structural** | In Header/Footer zones OR uses Accent Fill | **Keep & Protect** |
+| **Content Carrier** | In Content Zone AND contains text | **Preserve for processing** |
+| **Disposable** | In Content Zone AND (No Text AND No Accent Fill) | **Purge** |
+
+**Special Case (Connectors):** Generic thin lines/connectors in the content zone that span >40% of the slide width/height are now specifically targeted for removal if they aren't part of a protected group, preventing "stray lines" from cluttered templates.
+
+**Logging:** `[CLEANUP] Classified N shapes: M structural, K content, J disposable.`

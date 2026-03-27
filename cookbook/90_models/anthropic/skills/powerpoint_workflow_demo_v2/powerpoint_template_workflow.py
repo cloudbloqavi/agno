@@ -50,9 +50,10 @@ Template Quality Safeguards:
   - Per-slide rendering: PPTX→PDF→PNG pipeline (via pdftoppm) renders every slide for visual review and prompt context
   - Background detection: 6-layer detection (shape→slide→layout→master→theme→large shapes)
   - Layout sanitization (Fix 13B): 3-pass boundary clamping, min size enforcement, and shape overlap reflow (preserves structural template elements)
+  - Content Overflow Protection (Fix 19): Reflow boundary clamping at 87% (footer zone) and final Phase 4 hard boundary clamp.
   - Template-aware LLM prompts: Tier 2 prompt includes template constraints (bg color, text color, max shapes)
   - Template visual references: Injects rendered template PNGs into chunk prompts for spatial layout context
-  - Smart Template Purge (Fix 13): Intelligent classification preserves branded headers, footers, and decorative motifs while clearing placeholder text.
+  - Template-Agnostic Cleaning (Fix 22): Principled Zone + Fill + Text classification preserves branded motifs while purging all content-zone decorations.
 
 Usage:
     # Basic usage with a template:
@@ -153,7 +154,7 @@ from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 
 # Module-level verbose flag (set from CLI args)
-VERBOSE = True
+VERBOSE = False
 
 # Minimum body font size in points — fit_text() and MSO_AUTO_SIZE can shrink text
 # to as little as 4pt which is unreadable. This floor ensures legibility.
@@ -171,20 +172,45 @@ _MIN_TITLE_FONT_PT = 14
 # survives serialization.
 
 
-def _mark_as_backdrop(shape) -> None:
-    """Mark a shape as a template backdrop via XML attribute (survives save/load)."""
-    try:
-        shape._element.set("templateBackdrop", "1")
-    except Exception:
-        pass  # Fallback: silently skip if element is inaccessible
-
-
 def _is_backdrop(shape) -> bool:
-    """Check if a shape is a template backdrop (reads from XML)."""
+    """
+    Determines if a shape is a structural template backdrop.
+    Uses persistent name-aware identification logic.
+    """
+    # Robust name check (case-insensitive)
+    name = getattr(shape, "name", "")
+    if name and "[backdrop]" in name.lower():
+        return True
+
+    # XML attribute check (backward compatibility)
     try:
-        return shape._element.get("templateBackdrop") == "1"
+        element = getattr(shape, "element", None)
+        if element is None:
+            element = getattr(shape, "_element", None)
+        if element is not None:
+            val = element.get("templateBackdrop")
+            if val in ("true", "1"):
+                return True
     except Exception:
-        return False
+        pass
+
+    return False
+
+
+def _mark_as_backdrop(shape) -> None:
+    """Mark a shape as a protected backdrop that should never be reflowed.
+    
+    Adds a persistent [BACKDROP] prefix to the shape name.
+    """
+    try:
+        # 1. Set XML attribute (in-memory session)
+        shape._element.set("templateBackdrop", "1")
+        # 2. Prefix name (persistent)
+        name = getattr(shape, "name", "")
+        if name and not name.startswith("[BACKDROP]"):
+            shape.name = f"[BACKDROP] {name}"
+    except Exception:
+        pass
 
 
 def _shape_has_any_text(shape) -> bool:
@@ -220,9 +246,7 @@ def _shape_has_any_text(shape) -> bool:
 _TEMPLATE_PLACEHOLDER_PATTERNS = (
     "xxx", "enter ", "lorem ", "click to ", "type ", "insert ",
     "your text", "sample text", "add text", "placeholder",
-    "project goal", "description here", "title here", "header here",
-    "text here", "lorem ipsum", "data here", "business analysis",
-    "strategic evaluation", "proposed solutions", "client name",
+    "project goal", "description here",
 )
 
 _BRANDING_PATTERNS = (
@@ -276,14 +300,18 @@ def _classify_template_shape(
 ) -> str:
     """Classify a template shape as 'structural', 'content_carrier', or 'disposable'.
 
-    Heuristics:
-    1.  Early Check: Shapes with 'line' geometry are 'disposable' (Fixes diagonal/slanting lines).
-    2.  Branding: Shapes with branding markers (powerslides, www., (c)) are 'structural'.
-    3.  Header Zone: Top 15% of slide. Short text (<=40 chars) becomes 'content_carrier' 
-        (text cleared, visual kept).
-    4.  Footer Zone: Bottom 10% of slide. Numeric text and branding are 'structural'.
-        Other text is 'content_carrier' (Fixes "AGILE PROJECT PLAN" repetition).
-    5.  Body Zone: Small decorative motifs are 'structural'; long text is 'content_carrier'.
+    Template-Agnostic Heuristics (Fix 22):
+    1.  Structural (KEEP):
+        - Shapes with 'line' geometry (Straight/Elbow/Curved connectors).
+        - Any shape in the Header (<10%) or Footer (>88%) zones.
+        - Any shape using the template's accent fill colors (brand motifs).
+    2.  Content Carrier (PROCESS/REMOVE):
+        - Any shape in the Content Zone (10-88%) that HAS text.
+        - Any shape in the Content Zone (10-88%) without text or accent fill (decorations).
+          (Note: these are identified as carriers and later purged if no-text).
+    3.  Disposable (REMOVE):
+        - Shapes with branding markers (powerslides, www., (c)) that are not in header/footer.
+        - Generic thin connectors that span >40% of the slide.
 
     Args:
         shape: pptx.shapes.base.BaseShape instance.
@@ -318,7 +346,22 @@ def _classify_template_shape(
         xml_str = shape._element.xml if hasattr(shape, '_element') else ""
     except Exception:
         xml_str = ""
-    if 'prstGeom prst="line"' in xml_str:
+    is_line = 'prstGeom prst="line"' in xml_str
+    if is_line:
+        # Fix: Detect and discard dotted/dashed template guides (Rule 1).
+        # These appear as distracting grey lines in the output.
+        is_dotted = any(dash in xml_str for dash in ['prstDash val="dot"', 'prstDash val="dash"', 'prstDash val="sysDot"', 'prstDash val="lgDash"'])
+        if is_dotted:
+            return "disposable"
+
+        # Prevent deletion of orthogonal accent lines (Rule 1).
+        w = max(shape_w, 1)
+        h = max(shape_h, 1)
+        ratio = w / h
+        
+        # If the line is at least 10x longer than it is thick, it's an orthogonal accent line.
+        if ratio > 10 or ratio < 0.1:
+            return "structural"
         return "disposable"
 
     # --- Heuristic 1: Header/footer zone shapes ---
@@ -345,6 +388,13 @@ def _classify_template_shape(
             return "content_carrier"
         return "structural"
 
+    # Guard: Numeric metric text (e.g. "88%", "72%", "$10M", "₹12") is template
+    # content, not structural design. Strip via content_carrier.
+    # Must run BEFORE ALL-CAPS branding check (which would match "88%" as branded).
+    import re
+    if has_text and text_len <= 15 and re.match(r'^[\d.,$/₹€£¥+\-\s%]+$', shape_text.strip()):
+        return "content_carrier"
+
     # Check branding text patterns anywhere on the slide
     if has_text and text_len <= 60:
         for bp in _BRANDING_PATTERNS:
@@ -352,24 +402,8 @@ def _classify_template_shape(
                 return "structural"
         # ALL-CAPS text with <=3 words is likely a branded label
         words = shape_text.split()
-        # Fix 13C: Reduce all-caps trust in the Body Zone (middle 80%).
-        # Standard corporate templates often have example titles like "PROBLEM" 
-        # or "ISSUE 1" in all-caps. These must be cleared, not preserved.
-        try:
-            top = int(shape.top) if shape.top is not None else 0
-            height = int(shape.height) if shape.height is not None else 0
-        except Exception:
-            top, height = 0, 0
-
-        in_header = top + height <= int(slide_height * 0.15)
-        in_footer = top >= int(slide_height * 0.90)
-        
-        # If it's a short all-caps label but it's in the BODY zone, 
-        # it's likely a content carrier (e.g. a box header) rather than branding.
         if len(words) <= 3 and shape_text == shape_text.upper() and text_len <= 30:
-            if in_header or in_footer:
-                return "structural"
-            return "content_carrier"
+            return "structural"
         # Copyright symbols
         if "\u00a9" in shape_text or "(c)" in text_lower:
             return "structural"
@@ -387,6 +421,7 @@ def _classify_template_shape(
     if not has_text and has_accent_fill:
         return "structural"
 
+
     if has_accent_fill and text_len <= 15:
         return "structural"
 
@@ -397,8 +432,24 @@ def _classify_template_shape(
     )
     if is_group:
         try:
-            child_count = len(list(shape.shapes))
+            children = list(shape.shapes)
+            child_count = len(children)
             if child_count >= 3:
+                # Fix 20: If any child has content text (not just labels),
+                # classify the group as content_carrier so it gets cleared.
+                _any_child_text = False
+                for _child in children:
+                    try:
+                        _ct = ''
+                        if hasattr(_child, 'text_frame'):
+                            _ct = _child.text_frame.text.strip()
+                        if _ct and len(_ct) > 2:
+                            _any_child_text = True
+                            break
+                    except Exception:
+                        pass
+                if _any_child_text:
+                    return "content_carrier"
                 return "structural"
         except Exception:
             pass
@@ -406,21 +457,34 @@ def _classify_template_shape(
         if has_accent_fill:
             return "structural"
 
-    # --- Heuristic 5: Small decorative shapes ---
+    # ================================================================
+    # TEMPLATE-AGNOSTIC DECORATION CLASSIFICATION (Fix 22)
+    # ================================================================
+    # Principle: presentation STYLE elements are kept (structural),
+    # while content-zone decorations are removed (content_carrier).
+    #
+    # STYLE (structural) = lines + accent-fill shapes + header/footer
+    #   → These define the visual identity independent of slide content.
+    # CONTENT DECORATION (content_carrier) = everything else in the
+    #   content zone with no text and no accent fill.
+    #   → These are tied to the original template's content and should
+    #     not appear in generated slides.
+    #
+    # This approach is template-agnostic: it doesn't rely on specific
+    # shape names, types, or sizes — only on ZONE + FILL + TEXT.
+    # ================================================================
+
     from pptx.util import Emu
 
-    _SMALL_THRESHOLD = Emu(457200)  # ~0.5 inch
-    is_small = shape_w <= _SMALL_THRESHOLD and shape_h <= _SMALL_THRESHOLD
-    if is_small and not has_text:
-        return "structural"
+    # Determine the shape's vertical zone
+    _footer_boundary = int(sh * 0.88)
+    _header_boundary = int(sh * 0.10)
+    _shape_center_y = shape_top + (shape_h // 2)
+    _in_content_zone = _header_boundary <= _shape_center_y <= _footer_boundary
 
-    # --- Heuristic 6: Short-text shapes with colored fills ---
-    if has_text and text_len <= 30 and fill_hex:
-        return "content_carrier"
-
-    # Non-text shapes with no fill — likely decorative lines/connectors
+    # --- Heuristic 5: No-text shapes — zone-and-fill principle ---
     if not has_text:
-        # Large non-text, non-accent shapes are visual noise
+        # 5a: Thin connectors spanning >40% of slide → disposable
         _THIN_THRESHOLD = Emu(72000)
         is_thin = shape_w <= _THIN_THRESHOLD or shape_h <= _THIN_THRESHOLD
         _CONNECTOR_SPAN_PCT = 0.40
@@ -430,11 +494,33 @@ def _classify_template_shape(
         )
         if is_connector:
             return "disposable"
-        # Keep other non-text decorative shapes (they are part of the template)
-        return "structural"
 
-    # --- Default: substantial text → disposable ---
-    return "disposable"
+        # 5b: Shapes in header/footer zone → structural (layout element)
+        if not _in_content_zone:
+            return "structural"
+
+        # 5c: Shapes WITH accent fill → structural (part of color scheme)
+        if has_accent_fill:
+            return "structural"
+
+        # 5d: Full-height shapes (>80% of slide) → structural (column
+        #     backgrounds, sidebar panels — layout elements, not decorations)
+        if shape_h > int(sh * 0.80):
+            return "structural"
+
+        # 5e: EVERYTHING ELSE in the content zone with no text and no
+        #     accent fill is a template content-specific decoration.
+        #     This catches: icons (PICTURE), decorative groups (GROUP),
+        #     decorative auto-shapes (ovals, triangles, rectangles), etc.
+        #     Fix 21 in smart purge will remove these entirely.
+        return "content_carrier"
+
+    # --- Heuristic 6: Short-text shapes with colored fills ---
+    if has_text and text_len <= 30 and fill_hex:
+        return "content_carrier"
+
+    # --- Default: substantial text → content_carrier ---
+    return "content_carrier"
 
 
 def _clear_shape_text_only(shape) -> None:
@@ -571,151 +657,6 @@ def _extract_header_style_from_preserved_shapes(
 
 
 
-# ---------------------------------------------------------------------------
-# Template Content Zone Calculator
-# ---------------------------------------------------------------------------
-# After the smart purge, structural shapes (hero images, decorative bars)
-# remain on the template slide.  This helper scans those shapes and returns
-# the largest remaining rectangular zone where LLM content can be safely
-# placed.  Generic for any template file.
-# ---------------------------------------------------------------------------
-
-def _compute_template_content_zone(
-    slide, slide_width: int, slide_height: int
-) -> "ContentArea":
-    """Calculate the available content zone on a template slide.
-
-    Scans all preserved structural shapes (picture placeholders, groups,
-    decorative elements marked ``templateBackdrop``) and computes the
-    bounding box of the *visual obstacle*.  Returns the largest remaining
-    rectangular area (left-of, right-of, above, or below the obstacle).
-
-    Falls back to the full slide area (with 5% margins) when no significant
-    obstacle is found.
-
-    This function is template-agnostic — it works for:
-    - Left-image / right-content layouts
-    - Right-image / left-content layouts
-    - Top-banner / bottom-content layouts
-    - Full-width layouts (no images)
-
-    Args:
-        slide: The template slide with preserved structural shapes.
-        slide_width: Slide width in EMU.
-        slide_height: Slide height in EMU.
-
-    Returns:
-        ContentArea defining the available zone for LLM content.
-    """
-    sw = int(slide_width) if slide_width else 1
-    sh = int(slide_height) if slide_height else 1
-
-    # Collect bounding boxes of visual/structural obstacles
-    obstacle_boxes: list[tuple[int, int, int, int]] = []
-    # Minimum area threshold: obstacle must occupy at least 8% of the slide
-    min_obstacle_area = int(sw * sh * 0.08)
-
-    for shape in slide.shapes:
-        # Only consider picture placeholders and large non-text shapes
-        is_visual = False
-        try:
-            if shape.is_placeholder:
-                ph_type = getattr(shape.placeholder_format, 'type', None)
-                # Picture placeholder type = 18
-                if ph_type is not None and int(ph_type) == 18:
-                    is_visual = True
-            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                is_visual = True
-            elif shape.shape_type == MSO_SHAPE_TYPE.GROUP:
-                # Large groups are likely decorative
-                s_area = (getattr(shape, 'width', 0) or 0) * (getattr(shape, 'height', 0) or 0)
-                if s_area >= min_obstacle_area:
-                    is_visual = True
-        except Exception:
-            continue
-
-        if not is_visual:
-            continue
-
-        s_left = getattr(shape, 'left', 0) or 0
-        s_top = getattr(shape, 'top', 0) or 0
-        s_width = getattr(shape, 'width', 0) or 0
-        s_height = getattr(shape, 'height', 0) or 0
-        s_area = s_width * s_height
-
-        if s_area >= min_obstacle_area:
-            obstacle_boxes.append((s_left, s_top, s_width, s_height))
-
-    if not obstacle_boxes:
-        # No significant obstacles — use full slide with 5% margins
-        margin_x = int(sw * 0.05)
-        margin_y = int(sh * 0.12)  # top/bottom slightly larger for title/footer
-        return ContentArea(
-            left=margin_x, top=margin_y,
-            width=sw - (2 * margin_x), height=sh - (2 * margin_y)
-        )
-
-    # Merge obstacle boxes into one bounding box
-    obs_left = min(b[0] for b in obstacle_boxes)
-    obs_top = min(b[1] for b in obstacle_boxes)
-    obs_right = max(b[0] + b[2] for b in obstacle_boxes)
-    obs_bottom = max(b[1] + b[3] for b in obstacle_boxes)
-
-    # Calculate four candidate zones: left-of, right-of, above, below
-    margin = int(sw * 0.02)  # small margin from obstacle edge
-    top_margin = int(sh * 0.05)  # top margin for title
-    bottom_margin = int(sh * 0.10)  # bottom margin for footer
-
-    candidates: list[ContentArea] = []
-
-    # Right-of obstacle (most common: left-image templates)
-    right_left = obs_right + margin
-    right_width = sw - right_left - margin
-    if right_width > int(sw * 0.25):  # zone must be at least 25% of slide width
-        candidates.append(ContentArea(
-            left=right_left, top=top_margin,
-            width=right_width, height=sh - top_margin - bottom_margin
-        ))
-
-    # Left-of obstacle (right-image templates)
-    left_width = obs_left - margin - margin
-    if left_width > int(sw * 0.25):
-        candidates.append(ContentArea(
-            left=margin, top=top_margin,
-            width=left_width, height=sh - top_margin - bottom_margin
-        ))
-
-    # Below obstacle (top-banner templates)
-    below_top = obs_bottom + margin
-    below_height = sh - below_top - bottom_margin
-    if below_height > int(sh * 0.35):
-        candidates.append(ContentArea(
-            left=margin, top=below_top,
-            width=sw - (2 * margin), height=below_height
-        ))
-
-    # Above obstacle (bottom-image templates)
-    above_height = obs_top - top_margin - margin
-    if above_height > int(sh * 0.35):
-        candidates.append(ContentArea(
-            left=margin, top=top_margin,
-            width=sw - (2 * margin), height=above_height
-        ))
-
-    if not candidates:
-        # Obstacle is small or centered — use full slide with margins
-        margin_x = int(sw * 0.05)
-        margin_y = int(sh * 0.12)
-        return ContentArea(
-            left=margin_x, top=margin_y,
-            width=sw - (2 * margin_x), height=sh - (2 * margin_y)
-        )
-
-    # Pick the largest candidate by area
-    best = max(candidates, key=lambda c: c.width * c.height)
-    return best
-
-
 def _inject_content_into_carriers(
     slide, content, carrier_shapes: list, template_style=None
 ):
@@ -738,14 +679,6 @@ def _inject_content_into_carriers(
     if hasattr(content, "body_paragraphs"):
         # SlideContent dataclass
         items = list(getattr(content, "body_paragraphs", []) or [])
-        # Fix 17: Include text_box_paragraphs in the injection pool. 
-        # Tier-2 LLM code-gen often puts slide content into non-placeholder 
-        # text boxes which _extract_slide_content puts into text_box_paragraphs.
-        # Merging them ensures they can fill template carrier shapes.
-        extra_boxes = getattr(content, "text_box_paragraphs", []) or []
-        for box in extra_boxes:
-            if box not in items:
-                items.append(box)
         items_attr = "body_paragraphs"
     elif isinstance(content, dict):
         items = content.get("key_points", []) or content.get("bullet_points", [])
@@ -2444,6 +2377,11 @@ def _extract_slide_content(slide) -> SlideContent:
                 content.image_placeholder_indices.append(ph_fmt.idx)
 
     for shape in slide.shapes:
+        if _is_backdrop(shape):
+            # Fix 9: Do not extract backdrops into Shapes XML payload.
+            # They belong to the template context, not the transferable content.
+            continue
+
         if shape.has_table:
             table = shape.table
             rows_data = []
@@ -4208,18 +4146,19 @@ def _apply_template_font_to_shape_xml(shape_elem, font_family: str) -> None:
 
 
 def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
-    """Fix 4: Detect and resolve overlapping non-placeholder shapes.
-
-    After shape transfer, multiple shapes may overlap because the LLM generated
-    them for a full slide but they were rescaled into a smaller template region.
+    """Fixes overlapping non-placeholder shapes and enforces slide boundaries.
 
     Algorithm:
-      1. Collect all non-placeholder shapes with text content.
+      1. Collect all movable non-placeholder shapes.
       2. Sort by top position (natural reading order).
-      3. For each pair of adjacent shapes, if they vertically overlap,
-         push the lower shape down to just below the upper shape.
-      4. Enforce minimum shape dimensions (prevent near-invisible shapes).
-      5. If shapes would push off-slide, scale down proportionally.
+      3. Vertical Reflow (Fix 19A): For each pair of adjacent shapes, if they
+         vertically overlap, push the lower shape down, clamped at the 87%
+         footer boundary (safe_bottom).
+      4. Enforce minimum shape dimensions.
+      5. Proportionate Shrink (Fix 19B): If shapes push off-slide, scale down.
+         Max shrink is 40% (scale 0.60) to maintain readability.
+      6. Hard Boundary Clamp (Fix 19C): Final pass to shift or trim any
+         remaining overflow at the safe_bottom boundary.
 
     Returns True if any shapes were adjusted.
     """
@@ -4229,18 +4168,24 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
     # for overlap detection. These won't be moved but free-floating shapes
     # that collide with them will be reflowed.
     anchor_shapes = []
-    for shape in list(slide.shapes):
+    for shape in slide.shapes:
         try:
+            # Skip template backdrop shapes FIRST — decorative elements that should
+            # not be widened, moved, or cause reflow of LLM content (Fix 9/10).
+            # We skip these even if they have 0 width/height (orthogonal lines).
+            is_bd = _is_backdrop(shape)
+            if is_bd:
+                if VERBOSE:
+                    print("  [DEBUG OVERLAP] Skipping backdrop: %s" % getattr(shape, "name", ""))
+                continue
+
             # Only process shapes that have meaningful dimensions
             if shape.width <= 0 or shape.height <= 0:
                 continue
-            # Skip template backdrop shapes — decorative elements that should
-            # not be widened, moved, or cause reflow of LLM content (Fix 9/10).
-            if _is_backdrop(shape):
-                continue
+
             if shape.is_placeholder:
                 # Include placeholders with visible text as anchors
-                if getattr(shape, "has_text_frame", False) and shape.text.strip():
+                if getattr(shape, "has_text_frame", False) and getattr(shape, "text", "").strip():
                     anchor_shapes.append(shape)
             else:
                 movable_shapes.append(shape)
@@ -4306,6 +4251,10 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
                 # Only move the lower shape if it's a movable (non-placeholder) shape
                 if id(lower) in movable_set:
                     new_top = upper_bottom + MARGIN
+                    # Fix 19A: Clamp reflow target — don't push below footer zone
+                    _safe_bottom = int(slide_height * 0.87)
+                    if new_top + lower.height > _safe_bottom:
+                        new_top = max(upper_bottom + MARGIN, _safe_bottom - lower.height)
                     if VERBOSE:
                         print(
                             "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
@@ -4330,7 +4279,7 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
             safe_bottom = int(slide_height * 0.87)  # 13% bottom margin
             if max_bottom > safe_bottom and max_bottom > 0:
                 scale = safe_bottom / max_bottom
-                if scale < 1.0 and scale > 0.85:  # Don't shrink more than 15%
+                if scale < 1.0 and scale > 0.60:  # Fix 19B: Allow up to 40% shrink for dense slides
                     for shape in movable_shapes:
                         try:
                             shape.top = int(shape.top * scale)
@@ -4344,6 +4293,32 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
                         )
         except Exception:
             pass
+
+    # --- Phase 4: Hard boundary clamp (Fix 19C — final safety net) ---
+    # After all reflow + scaling, ensure no movable shape overflows
+    # past the footer zone (87% of slide height).
+    _safe_bottom_final = int(slide_height * 0.87)
+    for shape in movable_shapes:
+        try:
+            bottom = shape.top + shape.height
+            if bottom > _safe_bottom_final:
+                overflow = bottom - _safe_bottom_final
+                if overflow > shape.height * 0.5:
+                    # Shape is mostly below footer — move it up
+                    shape.top = max(0, _safe_bottom_final - shape.height)
+                else:
+                    # Trim height to fit
+                    shape.height = max(
+                        int(slide_height * 0.02), shape.height - overflow
+                    )
+                if VERBOSE:
+                    print(
+                        "  [BOUNDARY CLAMP] Shape clamped to safe bottom "
+                        "(was %d EMU below footer)" % overflow
+                    )
+                modified = True
+        except Exception:
+            continue
 
     if overlap_count > 0:
         print(
@@ -4448,6 +4423,8 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
 
     # Snapshot the collection with list() to avoid proxy/iterator issues
     for shape in list(slide.placeholders):
+        if _is_backdrop(shape):
+            continue  # Never purge protected template backdrops
         ph_idx = shape.placeholder_format.idx
         if ph_idx in populated_indices:
             continue  # This placeholder was populated, keep it
@@ -4470,6 +4447,14 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
             if VERBOSE:
                 print("[VERBOSE] Exception suppressed: %s" % str(e))
 
+        # Fix 13: Preserve semantic footer placeholders (slide numbers, dates, footers)
+        # to ensure page numbering and branding elements are NOT purged.
+        try:
+            if shape.placeholder_format.type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
+                continue
+        except Exception:
+            pass
+
         # Mark for removal -- removing from XML is the only reliable cleanup
         elements_to_remove.append(shape._element)
 
@@ -4488,13 +4473,10 @@ def _remove_empty_textboxes(slide) -> None:
     to_remove = []
     for shape in list(slide.shapes):
         try:
+            if _is_backdrop(shape):
+                continue
             if shape.is_placeholder:
                 continue
-            # Fix: Do not remove structural background elements from the template
-            # as many decorative shapes (rectangles, circles) have empty text frames.
-            if getattr(shape, "_element", None) is not None:
-                if shape._element.get("templateBackdrop") == "1":
-                    continue
             if not getattr(shape, "has_text_frame", False):
                 continue
             text = shape.text
@@ -4515,7 +4497,9 @@ def _remove_empty_textboxes(slide) -> None:
     to_remove_ph = []
     for shape in list(slide.placeholders):
         try:
-            if not getattr(shape, "has_text_frame", False):
+            if _is_backdrop(shape):
+                continue
+            if shape.placeholder_format.type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
                 continue
             text = shape.text
             if text is None or text.strip() == "":
@@ -4664,7 +4648,18 @@ def _classify_slide_semantics(
     """
     ctx = SemanticSlideContext(storyboard_hint=storyboard_hint)
     try:
-        paragraphs = content.body_paragraphs or []
+        # --- Fix: Prevent Semantic Router from hijacking LLM custom geometry ---
+        # If the LLM successfully wrote code to draw custom non-placeholder shapes 
+        # (like bounding cards, grids, ribbons), they will be extracted into shapes_xml.
+        # We MUST return DEFAULT immediately to avoid overwriting them with generic semantic layouts.
+        if content.shapes_xml and len(content.shapes_xml) > 0:
+            if VERBOSE:
+                print("[SEMANTIC] Detected %d custom LLM structural shapes. Bypassing semantic router to preserve custom geometry." % len(content.shapes_xml))
+            return ctx  # DEFAULT
+
+        paragraphs = list(content.body_paragraphs) if content.body_paragraphs else []
+        if getattr(content, "text_box_paragraphs", None):
+            paragraphs.extend(content.text_box_paragraphs)
 
         # Bail early on empty / trivially small content
         all_text = " ".join(
@@ -5525,7 +5520,6 @@ def _populate_slide(
     footer_text: str = "",
     date_text: str = "",
     show_slide_number: bool = False,
-    template_content_zone: "ContentArea | None" = None,
 ):
     """Transfer all content into a new slide using template-aware positioning.
 
@@ -5553,6 +5547,12 @@ def _populate_slide(
         date_text: Text for the date/time placeholder (idx=10). Empty = remove.
         show_slide_number: If True, keep the slide number placeholder (idx=12).
     """
+    # Ensure all pre-existing shapes on the slide (before we add LLM shapes)
+    # are firmly marked as template backdrops so they aren't moved, scaled,
+    # or extracted as custom LLM geometry.
+    for _shape in list(new_slide.shapes):
+        _mark_as_backdrop(_shape)
+
     # Classify content mix and compute region map
     content_mix = _classify_content_mix(
         content, has_generated_image=generated_image_bytes is not None
@@ -5582,13 +5582,17 @@ def _populate_slide(
             )
         )
 
-    # -----------------------------------------------------------------------
     # Phase A: Semantic Classifier & Layout Routing
     # -----------------------------------------------------------------------
+    # Fix: Bypass semantic builders if custom LLM shapes exist (P1-1).
+    # This prevents overwriting rich visual layouts (like "Signal stack")
+    # with generic card grids or dashboards.
+    has_custom_shapes = bool(content.shapes_xml or content.text_shapes_xml)
+    
     semantic_ctx = _classify_slide_semantics(content, getattr(content, "visual_suggestion", "default"))
     
     handled_by_semantic = False
-    if semantic_ctx.confidence >= 0.60:
+    if semantic_ctx.confidence >= 0.60 and not has_custom_shapes:
         if VERBOSE:
             print("[SEMANTIC] Routing to %s builder (confidence: %.2f)" % (
                 semantic_ctx.semantic_type, semantic_ctx.confidence
@@ -5607,6 +5611,14 @@ def _populate_slide(
     if handled_by_semantic:
         content.body_paragraphs = []
         content.text_box_paragraphs = []
+        
+        # --- Fix: Prevent Duplicate Titles on HERO ---
+        # If semantic builder chose HERO, it draws its own big title.
+        # Clear native titles so the native placeholders don't double-draw them.
+        if semantic_ctx.semantic_type == SlideSemanticType.HERO:
+            content.title = ""
+            content.subtitle = ""
+
         # --- Fix 8: Prevent Semantic vs HTML duplication ---
         # Clear raw extracted shapes so they don't get squashed and overlay the clean semantic layout
         content.shapes_xml = []
@@ -5650,35 +5662,6 @@ def _populate_slide(
                 shape.width = region_map.text_region.width
                 shape.height = region_map.text_region.height
 
-    # --- Content Zone Constraint ---
-    # If a template_content_zone was computed, constrain all native text
-    # placeholders (Title, Body, Subtitle) so they don't overlap structural visuals.
-    if template_content_zone is not None:
-        zone_right = template_content_zone.left + template_content_zone.width
-        zone_bottom = template_content_zone.top + template_content_zone.height
-        for shape in new_slide.placeholders:
-            try:
-                if shape.has_text_frame and shape.placeholder_format.type in {
-                    PP_PLACEHOLDER.TITLE,
-                    PP_PLACEHOLDER.CENTER_TITLE,
-                    PP_PLACEHOLDER.BODY,
-                    PP_PLACEHOLDER.OBJECT,
-                    PP_PLACEHOLDER.SUBTITLE,
-                }:
-                    # Clamp the placeholder to the content zone
-                    new_left = max(shape.left, template_content_zone.left)
-                    new_top = max(shape.top, template_content_zone.top)
-                    new_right = min(shape.left + shape.width, zone_right)
-                    new_bottom = min(shape.top + shape.height, zone_bottom)
-                    
-                    if new_right > new_left and new_bottom > new_top:
-                        shape.left = new_left
-                        shape.top = new_top
-                        shape.width = new_right - new_left
-                        shape.height = new_bottom - new_top
-            except Exception:
-                pass
-
     for shape in new_slide.placeholders:
         ph_idx = shape.placeholder_format.idx
         if ph_idx == 0 and content.title:
@@ -5687,6 +5670,19 @@ def _populate_slide(
             )
             populated_indices.add(ph_idx)
             title_placed = True
+
+            # Fix: Ensure title placeholder is below any top accent lines (structural backdrops).
+            # If the placeholder overlaps with a structural backdrop shape in the header zone,
+            # shift the placeholder down to maintain visual separation.
+            header_threshold = int(slide_height * 0.15)
+            max_header_bottom = 0
+            for s in new_slide.shapes:
+                if _is_backdrop(s) and s.top < header_threshold:
+                    max_header_bottom = max(max_header_bottom, s.top + s.height)
+            
+            if max_header_bottom > 0 and shape.top < max_header_bottom:
+                # Add 0.1" buffer below the barrier
+                shape.top = max_header_bottom + Inches(0.1)
         elif ph_idx == 1:
             if body_paragraphs and (
                 preferred_text_ph is None or shape == preferred_text_ph
@@ -5739,9 +5735,20 @@ def _populate_slide(
 
     # Fallback text boxes using text_region bounds
     if not title_placed and content.title:
+        # Fix: Align titles below any top accent lines (structural shapes in header zone).
+        # Default fallback title Y is 0.3". If a structural line exists at the top,
+        # adjust Y to be below that line.
+        title_top = Inches(0.3)
+        for s in new_slide.shapes:
+            if _is_backdrop(s) and s.top < int(slide_height * 0.15):
+                # If a structural shape sits at the very top (e.g. at Y=0.3"),
+                # ensure fallback title is shifted down relative to its bottom.
+                if s.top + s.height > title_top:
+                    title_top = s.top + s.height + Inches(0.1)
+
         txBox = new_slide.shapes.add_textbox(
             region_map.text_region.left,
-            Inches(0.3),
+            title_top,
             region_map.text_region.width,
             Inches(1.0),
         )
@@ -5936,32 +5943,6 @@ def _populate_slide(
     else:
         shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
         text_shapes_target_area = ContentArea(0, 0, slide_width, slide_height)
-
-    # --- Content Zone Override ---
-    # When a template_content_zone is provided (computed from preserved
-    # structural shapes like hero images), override the target areas to
-    # constrain ALL LLM-generated shapes within the available content zone.
-    # This prevents text from overlapping template visual elements.
-    if template_content_zone is not None:
-        shapes_target_area = template_content_zone
-        text_shapes_target_area = template_content_zone
-        # Also clamp the text_region and visual_region in the region_map
-        # so that tables, charts, and images are also constrained.
-        region_map = RegionMap(
-            text_region=template_content_zone,
-            visual_region=template_content_zone,
-            layout_type=region_map.layout_type,
-        )
-        if VERBOSE:
-            print(
-                "[VERBOSE] Content zone override: target=(%d,%d,%d,%d)"
-                % (
-                    template_content_zone.left,
-                    template_content_zone.top,
-                    template_content_zone.width,
-                    template_content_zone.height,
-                )
-            )
 
     # P1-1: Pass source slide dimensions and target area so shapes are rescaled
     # proportionally to the template's content region instead of being copied
@@ -7513,10 +7494,12 @@ def _build_assembly_knowledge_file(
 def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOutput:
     """Apply template styling and assemble the final presentation.
 
-    This is the most critical and knowledge-intensive step in the entire pipeline.
-    Before constructing any slide, it first consolidates all necessary context into
-    a comprehensive knowledge file that acts as the single source of truth for every
-    design and content decision made during file generation.
+    Visual Quality Safeguards:
+    - Template-Agnostic Cleaning (Fix 22): Principled Zone + Fill classification
+      distinguishes structural branded elements from content decorations (icons).
+    - Content Overflow Protection (Fix 19): Multi-layered spatial defense prevents
+      shapes from overflowing slide boundaries or footer zones.
+    - Backdrop Protection: Branding-aware exclusion prevents deletion of accent lines.
 
     The knowledge file is built from four mandatory inputs:
 
@@ -7946,11 +7929,8 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             _decorative_removed = 0
             _placeholders_cleared = 0
 
-            # Footer placeholder types to preserve (13=SlideNum, 14=Header, 15=Footer, 16=Date)
-            _FOOTER_PH_TYPES = {13, 14, 15, 16}
-            # Picture/Chart/Table/Media placeholder types — keep as structural
-            # (these hold the template's visual identity: hero images, charts, etc.)
-            _VISUAL_PH_TYPES = {18, 12, 19, 20}  # PICTURE, TABLE, MEDIA_CLIP, ORG_CHART
+            # Footer placeholder indices to preserve (date, footer, number).
+            _FOOTER_PH_INDICES = {10, 11, 12, 13, 14, 15, 16}
 
             # Extract accent colors for shape classification
             _accent_colors = []
@@ -7965,30 +7945,25 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             for shape in list(new_slide.shapes):
                 _mark_as_backdrop(shape)
 
-                # --- Placeholders: keep footers & visual media, clear text from rest ---
+                # --- Placeholders: keep footers, clear text from rest ---
                 if shape.is_placeholder:
                     try:
-                        ph_type = getattr(shape.placeholder_format, 'type', None)
-                        # Footer placeholders — preserve exactly as-is
-                        if ph_type in _FOOTER_PH_TYPES:
-                            _structural_kept += 1
-                            continue
-                        # Picture/Chart/Table placeholders — structural visual identity
-                        if ph_type in _VISUAL_PH_TYPES:
-                            _structural_kept += 1
-                            continue
-                        # Also preserve any placeholder that has no text frame
-                        # (e.g. picture placeholders whose type is unknown/custom)
-                        if not getattr(shape, 'has_text_frame', False):
-                            _structural_kept += 1
-                            continue
-                        # Text-bearing placeholder — clear and track for injection
-                        print("  [DEBUG PURGE] Clearing text from placeholder '%s' (type: %s)" % (shape.name, ph_type))
-                        for para in shape.text_frame.paragraphs:
-                            para.clear()
-                        _placeholders_cleared += 1
-                        # Add to tracking so it gets filled or eventually removed
-                        _carrier_shapes.append(shape)
+                        ph_idx = shape.placeholder_format.idx
+                        # Fix 13: Robustly preserve footers by type, not just index.
+                        is_footer = False
+                        try:
+                            ph_type = shape.placeholder_format.type
+                            if ph_type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
+                                is_footer = True
+                        except Exception:
+                            pass
+
+                        if ph_idx not in _FOOTER_PH_INDICES and not is_footer:
+                            if _shape_has_any_text(shape):
+                                if getattr(shape, 'has_text_frame', False):
+                                    for para in shape.text_frame.paragraphs:
+                                        para.clear()
+                                _placeholders_cleared += 1
                     except Exception:
                         pass
                     continue
@@ -8003,6 +7978,24 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                     _structural_kept += 1
                     continue
                 elif classification == "content_carrier":
+                    # Fix 22: Template-agnostic content decoration removal.
+                    # If the content_carrier has no actual text, it's purely
+                    # decorative (icon, graph, ornamental shape, etc.) tied to
+                    # the original template — remove it entirely.
+                    # If it HAS text, clear the text and reuse the shape as
+                    # a carrier for the generated slide content.
+                    _has_shape_text = False
+                    try:
+                        if hasattr(shape, 'text_frame'):
+                            _has_shape_text = bool(shape.text_frame.text.strip())
+                        elif hasattr(shape, 'text'):
+                            _has_shape_text = bool(shape.text.strip())
+                    except Exception:
+                        pass
+                    if not _has_shape_text:
+                        _elements_to_remove.append(shape._element)
+                        _shapes_removed += 1
+                        continue
                     # Clear text but keep the shape's visual structure
                     _clear_shape_text_only(shape)
                     _carrier_shapes.append(shape)  # Phase 2: track for injection
@@ -8057,20 +8050,10 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 new_slide, content, _carrier_shapes, template_style
             )
 
-        # Compute template content zone after smart purge to constrain
-        # all LLM content into the area not occupied by structural shapes.
-        _content_zone = None
-        if idx < _template_slide_count:
-            _content_zone = _compute_template_content_zone(
-                new_slide, slide_width, slide_height
-            )
-            if VERBOSE and _content_zone is not None:
-                print(
-                    "[VERBOSE] Slide %d: computed content zone "
-                    "left=%d top=%d width=%d height=%d"
-                    % (idx + 1, _content_zone.left, _content_zone.top,
-                       _content_zone.width, _content_zone.height)
-                )
+        print("[DEBUG LIFECYCLE] Before _populate_slide:")
+        for s in new_slide.shapes:
+            if getattr(s, "name", "") == "Straight Connector 135":
+                print("  Shape 135 is_backdrop:", _is_backdrop(s))
 
         _populate_slide(
             new_slide,
@@ -8084,8 +8067,12 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
             footer_text=session_state.get("footer_text", ""),
             date_text=session_state.get("date_text", ""),
             show_slide_number=session_state.get("show_slide_numbers", False),
-            template_content_zone=_content_zone,
         )
+
+        print("[DEBUG LIFECYCLE] After _populate_slide:")
+        for s in new_slide.shapes:
+            if getattr(s, "name", "") == "Straight Connector 135":
+                print("  Shape 135 is_backdrop:", _is_backdrop(s))
 
         # ---------------------------------------------------------------
         # Phase C: Logo Detection & Brand Swap for Template Slides
@@ -8809,10 +8796,10 @@ def _replace_logo_with_brand(
     logo_info: dict,
     brand_logo_path: str,
 ) -> bool:
-    """Replace a detected logo shape with a brand logo image.
+    """Replace a detected logo shape with a brand logo image or text box.
 
     Preserves the original logo's position and size. Adds the new logo image
-    at the same coordinates, then removes the original shape.
+    or text at the same coordinates, then removes the original shape.
 
     Args:
         slide: The slide object containing the logo.
@@ -8823,9 +8810,10 @@ def _replace_logo_with_brand(
         True if replacement was successful, False otherwise.
     """
     import os
-    from pptx.util import Emu
+    from pptx.util import Emu, Pt
+    from pptx.enum.text import PP_ALIGN
 
-    if not brand_logo_path or not os.path.isfile(brand_logo_path):
+    if not brand_logo_path:
         return False
 
     try:
@@ -8835,8 +8823,19 @@ def _replace_logo_with_brand(
         width = logo_info["width"]
         height = logo_info["height"]
 
-        # Add replacement image at the same position
-        slide.shapes.add_picture(brand_logo_path, left, top, width, height)
+        if os.path.isfile(brand_logo_path):
+            # Add replacement image at the same position
+            slide.shapes.add_picture(brand_logo_path, left, top, width, height)
+        else:
+            # Not a file? Treat as a textual brand name (Rule 2)
+            txBox = slide.shapes.add_textbox(left, top, width, height)
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = brand_logo_path
+            p.alignment = PP_ALIGN.LEFT
+            p.font.bold = True
+            p.font.size = Pt(20)
 
         # Remove original shape by finding it in the slide's XML tree
         sp_tree = slide.shapes._spTree
@@ -12288,12 +12287,6 @@ def sanitize_llm_shapes(prs) -> int:
 
                 # --- Criterion 3: Diagonal decorative shape ---
                 # Only check shapes with no meaningful content
-                
-                # Fix: Skip structural template visuals preserving the brand
-                if getattr(shape, "_element", None) is not None:
-                    if shape._element.get("templateBackdrop") == "1":
-                        continue
-                        
                 has_text = False
                 if getattr(shape, "has_text_frame", False):
                     has_text = bool(shape.text_frame.text.strip())
@@ -12320,12 +12313,12 @@ def sanitize_llm_shapes(prs) -> int:
                     # This shape is neither clearly horizontal nor vertical —
                     # it's diagonal or square-ish decorative noise
                     elements_to_remove.append(shape._element)
-                    if VERBOSE or getattr(shape, "name", "") == "Rectangle 16":
+                    if VERBOSE:
                         name = getattr(shape, "name", "")
                         print(
                             "  [SHAPE SANITIZE] Removing DIAGONAL shape: '%s' "
-                            "sz=(%.2f,%.2f) ratio=%.2f, text=%s"
-                            % (name, w / 914400.0, h / 914400.0, ratio, has_text)
+                            "sz=(%.2f,%.2f) ratio=%.2f"
+                            % (name, w / 914400.0, h / 914400.0, ratio)
                         )
                     continue
 
@@ -12334,11 +12327,10 @@ def sanitize_llm_shapes(prs) -> int:
 
         for elem in elements_to_remove:
             try:
-                print(f"!!! TRULY REMOVING: {elem.tag} !!!")
                 spTree.remove(elem)
                 removed += 1
-            except Exception as e:
-                print(f"Failed to remove: {e}")
+            except Exception:
+                pass
 
     if removed > 0:
         print(
