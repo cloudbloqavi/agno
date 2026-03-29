@@ -731,6 +731,13 @@ class BrandStyleIntent(BaseModel):
             "(e.g. template filename, or 'user query')."
         ),
     )
+    theme_definition: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "The autonomously selected or generated Theme metadata containing "
+            "color palette (hex codes) and typography for Tier 2 extraction."
+        )
+    )
 
 
 # === MODULE-LEVEL AGENTS ===
@@ -1022,6 +1029,92 @@ def _build_visual_reference_section(
 
 
 # === BRAND/STYLE HELPER FUNCTIONS ===
+
+def _resolve_theme_with_factory(brand_intent: "BrandStyleIntent", agent_model) -> "BrandStyleIntent":
+    """
+    Uses the Agno Skills Architecture to either select an existing theme or dynamically generate
+    a custom theme if a template wasn't provided but branding is required.
+    """
+    try:
+        import os
+        from agno.agent import Agent # type: ignore
+        from agno.skills import Skills, LocalSkills # type: ignore
+        from pydantic import BaseModel, Field
+        
+        class ThemeDefinition(BaseModel):
+            name: str = Field(..., description="Name of the theme.")
+            source: str = Field(..., description="Must be exactly 'predefined' if citing a theme from the folder, or 'custom' if you generated it from scratch.")
+            description: str = Field(..., description="Description of the theme usage.")
+            palette: dict[str, str] = Field(..., description="Dictionary mapping color names (e.g., 'accent1', 'dk1', 'lt1', 'lt2') to hex codes.")
+            typography: dict[str, str] = Field(..., description="Dictionary with 'major' and 'minor' font names.")
+        
+        # Point LocalSkills to the directory containing 'theme-factory/SKILL.md'
+        skills_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        print(f"[BRAND] Activating Theme Factory to resolve presentation styling (fallback agent: {getattr(agent_model, 'id', 'unknown')})...")
+        
+        theme_agent = Agent(
+            name="Theme Selector Agent",
+            model=agent_model,
+            skills=Skills(loaders=[LocalSkills(skills_dir)]),
+            instructions=[
+                "You are an expert design director. Select or generate the best Theme for a presentation.",
+                "Use the 'theme-factory' skill from your available skills.",
+                "1. Read the instructions for the 'theme-factory' skill.",
+                "2. Check available themes using get_skill_script with 'theme-factory' and 'scripts/list_themes.py'.",
+                "3. Use get_skill_reference to read details of a specific theme if needed.",
+                f"Extracted brand intent: {brand_intent.model_dump()}",
+                "RULES:",
+                "1. If the user explicitly asks for a specific preset theme OR if a preset matches the basic mood, output that strictly and set source='predefined'.",
+                "2. If the brand is highly specific (e.g., real-world distinct brand colors) AND no preset is a perfect match, you MUST generate a new custom theme and set source='custom'.",
+                "Your final output MUST be a valid JSON matching the ThemeDefinition schema.",
+                "Always output valid JSON."
+            ],
+            output_schema=ThemeDefinition,
+            markdown=False,
+        )
+        
+        response = theme_agent.run("Resolve the best theme for the given brand intent.", stream=False)
+        
+        if response and response.content and isinstance(response.content, ThemeDefinition):
+            brand_intent.theme_definition = response.content.model_dump()
+            
+            source_type = brand_intent.theme_definition.get('source', 'unknown').upper()
+            theme_name = brand_intent.theme_definition.get('name', 'Unknown')
+            print(f"[BRAND] Theme Factory successfully resolved a [{source_type}] theme: {theme_name}")
+            
+            # --- CRITICAL: Propagate theme palette back into brand_intent fields ---
+            # This ensures _build_no_template_design_system and
+            # _format_brand_context_for_prompt use the resolved theme hex codes
+            # instead of the initial Brand Analyzer's generic color names.
+            theme_palette = brand_intent.theme_definition.get('palette', {})
+            if theme_palette:
+                brand_intent.color_palette = list(theme_palette.values())
+                print("[BRAND] Propagated theme palette → brand_intent.color_palette: %s" % brand_intent.color_palette)
+            theme_typo = brand_intent.theme_definition.get('typography', {})
+            if theme_typo:
+                brand_intent.typography_hints = list(theme_typo.values())
+                print("[BRAND] Propagated theme typography → brand_intent.typography_hints: %s" % brand_intent.typography_hints)
+            
+            try:
+                import json
+                # Always show a high-level summary of the decision
+                print("[BRAND] Theme Palette Colors: %s" % str(list(theme_palette.values())))
+                print("[BRAND] Theme Typography: %s" % str(list(theme_typo.values())))
+                
+                # If VERBOSE is enabled globally, dump the full structure
+                if "VERBOSE" in globals() and globals()["VERBOSE"]:
+                    print("[VERBOSE] [BRAND] Detailed Theme Metadata injected into layout prompt:")
+                    print("[VERBOSE]\n%s" % json.dumps(brand_intent.theme_definition, indent=2))
+            except Exception:
+                pass
+        else:
+            print("[BRAND] Theme Factory did not return a valid ThemeDefinition.")
+            
+    except Exception as e:
+        print(f"[WARNING] Theme Factory resolution failed: {e}")
+        
+    return brand_intent
 
 
 def parse_brand_style_intent(
@@ -1805,6 +1898,31 @@ def _format_brand_context_for_prompt(brand_intent: "BrandStyleIntent") -> str:
             "**Typography:** %s" % ", ".join(brand_intent.typography_hints[:3])  # type: ignore
         )
 
+    # Include resolved Theme Factory definition if available
+    theme_def = getattr(brand_intent, 'theme_definition', None)
+    if theme_def and isinstance(theme_def, dict):
+        sections.append("")
+        sections.append("### Resolved Theme Definition (from Theme Factory)")
+        sections.append("**Theme Name:** %s" % theme_def.get('name', 'Unknown'))
+        sections.append("**Theme Source:** %s" % theme_def.get('source', 'unknown'))
+        palette = theme_def.get('palette', {})
+        if palette:
+            palette_str = ", ".join(
+                "%s: %s" % (k, v) for k, v in palette.items()
+            )
+            sections.append("**Theme Palette (hex):** %s" % palette_str)
+        typo = theme_def.get('typography', {})
+        if typo:
+            typo_str = ", ".join(
+                "%s: %s" % (k, v) for k, v in typo.items()
+            )
+            sections.append("**Theme Typography:** %s" % typo_str)
+        sections.append(
+            "\nYou MUST use the Theme Palette hex codes above for ALL slide backgrounds, "
+            "text colors, accent fills, and chart series colors. These hex codes take "
+            "precedence over any generic color names mentioned elsewhere.\n"
+        )
+
     sections.append(
         "\nUse these brand guidelines to inform visual direction, tone, terminology, "
         "and content framing throughout the presentation. Reflect the brand's identity "
@@ -2027,8 +2145,89 @@ def _build_no_template_design_system(
         Multi-line prompt string with python-pptx design instructions,
         or empty string for template_driven.
     """
+    # When visual_style == "template_driven" but there is NO actual template file,
+    # we still need to build a design system. The theme_definition from the Theme
+    # Factory provides the concrete hex codes. If theme_definition is absent AND
+    # visual_style is template_driven, fall back to clean_minimal.
     if visual_style == "template_driven":
-        return ""
+        if brand_intent and getattr(brand_intent, 'theme_definition', None):
+            # Theme Factory resolved a theme — build design system from it
+            td = brand_intent.theme_definition
+            palette = td.get('palette', {})
+            typo = td.get('typography', {})
+            # Map theme palette keys to design tokens
+            dk1 = palette.get('dk1', '1A1A2E').lstrip('#')
+            accent1 = palette.get('accent1', '00D4AA').lstrip('#')
+            lt1 = palette.get('lt1', 'CCCCCC').lstrip('#')
+            lt2 = palette.get('lt2', 'FFFFFF').lstrip('#')
+            major_font = typo.get('major', 'Segoe UI')
+            minor_font = typo.get('minor', 'Calibri')
+
+            # Determine if dark or light background
+            try:
+                lum = (int(dk1[:2], 16) * 0.299 + int(dk1[2:4], 16) * 0.587 + int(dk1[4:6], 16) * 0.114) / 255
+            except Exception:
+                lum = 0.1
+            text_hex = lt2 if lum < 0.4 else '333333'
+            text_label = 'light/white' if lum < 0.4 else 'dark'
+
+            brand_name_text = brand_intent.brand_name.upper() if brand_intent.brand_name else 'LOGO'
+
+            if VERBOSE:
+                print(
+                    "[VERBOSE] [DESIGN SYSTEM] Building from Theme Factory definition: "
+                    "bg=#%s, accent=#%s, text=#%s, fonts=%s/%s"
+                    % (dk1, accent1, text_hex, major_font, minor_font)
+                )
+
+            return (
+                "\nVISUAL DESIGN SYSTEM (MANDATORY — follow these styling rules for every slide):\n"
+                "Style: Theme Factory — %s\n\n"
+                "BACKGROUND:\n"
+                "  Set the slide background for EVERY slide to #%s. Do NOT use white or any other color.\n"
+                "  Code: from pptx.util import Inches, Pt, Emu\n"
+                "        from pptx.dml.color import RGBColor\n"
+                "        slide.background.fill.solid()\n"
+                "        slide.background.fill.fore_color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n\n"
+                "TEXT COLORS (ADAPTIVE):\n"
+                "  Body text: #%s (%s) — ensures readability on the dark background\n"
+                "  Title text: #%s at 32pt using font '%s'\n"
+                "  Body font: '%s' at 16pt minimum\n\n"
+                "ACCENT COLOR:\n"
+                "  Primary accent: #%s — use for accent bars, shape fills, chart series, highlights\n"
+                "  Secondary/soft accent: #%s — use for subtle highlights, secondary elements\n\n"
+                "LOGO (ADD TO EVERY SLIDE):\n"
+                "  Add a logo placeholder text at the top right corner of each slide:\n"
+                "    logo_box = slide.shapes.add_textbox(Inches(8.0), Inches(0.3), Inches(1.5), Inches(0.4))\n"
+                "    logo_tf = logo_box.text_frame\n"
+                "    logo_p = logo_tf.paragraphs[0]\n"
+                "    logo_p.text = '%s'\n"
+                "    logo_p.font.size = Pt(14)\n"
+                "    logo_p.font.bold = True\n"
+                "    logo_p.font.color.rgb = RGBColor(0x%s, 0x%s, 0x%s)\n\n"
+                "COLOR RULES:\n"
+                "  - NEVER use white (#FFFFFF) as background. The theme background is #%s.\n"
+                "  - ALL text must be readable against the #%s background.\n"
+                "  - Use #%s for accent bars, dividers, chart fills, and highlighted shapes.\n"
+                "  - Use #%s for soft highlights and secondary fills.\n"
+                "  - For charts: use theme accent colors for data series, NOT default Office colors.\n"
+                "  - For tables: header row fill=#%s with text=#%s; body rows alternate #%s and background.\n"
+            ) % (
+                td.get('name', 'Custom Theme'),
+                dk1, dk1[:2], dk1[2:4], dk1[4:6],
+                text_hex, text_label,
+                lt2, major_font,
+                minor_font,
+                accent1, lt1,
+                brand_name_text,
+                accent1[:2], accent1[2:4], accent1[4:6],
+                dk1, dk1,
+                accent1, lt1,
+                accent1, lt2, lt1,
+            )
+        else:
+            # No theme definition and no template — fall back to clean_minimal
+            visual_style = "clean_minimal"
 
     # --- Style-specific design tokens ---
     STYLE_MAP = {
@@ -2101,9 +2300,55 @@ def _build_no_template_design_system(
     if brand_intent and brand_intent.has_branding:
         tokens = dict(tokens)  # copy
         
-        if brand_intent.color_palette:
+        # --- Theme Factory full override (highest priority) ---
+        # When a theme_definition is present, it contains the authoritative
+        # palette (dk1=background, accent1=accent, lt1=soft, lt2=text).
+        # Override ALL design tokens from the theme definition.
+        theme_def = getattr(brand_intent, 'theme_definition', None)
+        if theme_def and isinstance(theme_def, dict):
+            td_palette = theme_def.get('palette', {})
+            td_typo = theme_def.get('typography', {})
+            
+            # Background: dk1
+            dk1 = td_palette.get('dk1', '').lstrip('#')
+            if len(dk1) == 6:
+                tokens["bg_hex"] = dk1
+                tokens["bg_label"] = "theme background (%s)" % theme_def.get('name', 'custom')
+            
+            # Text color: lt1 (or lt2 as fallback)
+            lt1 = td_palette.get('lt1', '').lstrip('#')
+            lt2 = td_palette.get('lt2', '').lstrip('#')
+            text_hex = lt1 if len(lt1) == 6 else (lt2 if len(lt2) == 6 else '')
+            if len(text_hex) == 6:
+                tokens["text_color"] = text_hex
+                tokens["text_label"] = "theme text"
+            
+            # Accent: accent1
+            accent1 = td_palette.get('accent1', '').lstrip('#')
+            if len(accent1) == 6:
+                tokens["accent_hex"] = accent1
+                tokens["accent_label"] = "theme accent"
+            
+            # Secondary: lt2 (or lt1 as fallback for soft accent)
+            soft = lt2 if len(lt2) == 6 else (lt1 if len(lt1) == 6 else '')
+            if len(soft) == 6:
+                tokens["secondary_hex"] = soft
+            
+            # Typography from theme
+            if td_typo.get('major'):
+                tokens["font_family"] = td_typo['major']
+            
+            if VERBOSE:
+                print(
+                    "[VERBOSE] [DESIGN SYSTEM] Theme Factory FULL override: "
+                    "bg=#%s, text=#%s, accent=#%s, secondary=#%s, font=%s (theme: %s)"
+                    % (tokens["bg_hex"], tokens["text_color"], tokens["accent_hex"],
+                       tokens["secondary_hex"], tokens["font_family"],
+                       theme_def.get('name', 'unknown'))
+                )
+        elif brand_intent.color_palette:
+            # Fallback: no theme_definition, use raw brand colors for accent/secondary only
             palette = brand_intent.color_palette
-            # Use first brand color as accent, second as secondary
             if len(palette) >= 1:
                 raw = palette[0].lstrip("#")
                 if len(raw) == 6:
@@ -2114,13 +2359,13 @@ def _build_no_template_design_system(
                     tokens["secondary_hex"] = raw2
             if VERBOSE:
                 print(
-                    "[VERBOSE] [DESIGN SYSTEM] Brand palette override: "
+                    "[VERBOSE] [DESIGN SYSTEM] Brand palette override (no theme): "
                     "accent=#%s, secondary=#%s (from brand: %s)"
                     % (tokens["accent_hex"], tokens["secondary_hex"], brand_intent.brand_name)
                 )
                     
-        # Apply brand typography if available
-        if brand_intent.typography_hints:
+        # Apply brand typography if available (only if not already set by theme)
+        if brand_intent.typography_hints and not (theme_def and isinstance(theme_def, dict)):
             tokens["font_family"] = brand_intent.typography_hints[0]
             if VERBOSE:
                 print(
@@ -2381,6 +2626,12 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             override_log = _build_brand_override_log(query_brand_intent, template_intent)
             print(override_log)
         brand_intent = template_intent
+    else:
+        # No template provided. If there is branding intent or default theme requested, use Theme Factory.
+        # Haiku 4.5 is extremely fast and effective for theme resolution
+        model = agents.get("fallback_code_agent_lite").model if agents.get("fallback_code_agent_lite") else None
+        if model:
+            brand_intent = _resolve_theme_with_factory(brand_intent, model)
 
     session_state["brand_style_intent"] = brand_intent
     brand_parse_elapsed = time.time() - brand_parse_start

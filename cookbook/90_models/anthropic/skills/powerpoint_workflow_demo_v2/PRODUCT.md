@@ -2,13 +2,43 @@
 
 ## Overview
 
-AI-powered pipeline that transforms a text prompt into a polished, template-styled `.pptx` presentation. Combines multi-model AI content generation, intelligent brand detection, chunked orchestration for large decks, deterministic template assembly, and optional vision-based quality assurance — all orchestrated through Agno's Workflow framework.
+AI-powered pipeline that transforms a text prompt into a polished, template-styled `.pptx` presentation. Imagine an **AI Creative Director** that understands your brand, researches your mission, and builds a professional deck from scratch—all while maintaining the highest visual standards.
 
-**Entry point:** `powerpoint_chunked_workflow.py` (imports core logic from `powerpoint_template_workflow.py`)
+**Entry point:** `powerpoint_chunked_workflow.py` (orchestrates branding, planning, and generation).
+
+---
+
+## 📘 Product Manager's Operational Guide
+
+This section explains how to leverage the workflow's key visual and branding features in your daily operations.
+
+### 1. How to Use "Themes" (Theme Factory)
+The workflow includes an autonomous **Theme Factory** that stores high-fidelity design definitions.
+*   **Usage**: Simply add `Stictly use the '{theme-name}' theme` to your prompt.
+*   **Predefined Themes**:
+    *   `midnight-galaxy`: Dark, premium, cosmic purple/navy aesthetic.
+    *   `arctic-frost`: Clean, icy blue, high-modern professional look.
+    *   `botanical-garden`: Organic, green-toned, sustainable-focused design.
+*   **Benefit**: Guaranteed color harmony and typography without needing a template file.
+
+### 2. Autonomous Branding (The "Acting as..." Prompt)
+The engine doesn't just write text; it researches your brand identity live.
+*   **Prompting**: Start your request with `"Acting as a marketing manager at Tissot..."`.
+*   **What Happens**: The system triggers an autonomous web search to find the latest Tissot logos, hex codes, and "Swiss Heritage" brand tone.
+*   **Benefit**: Zero manual configuration for brand-aligned presentations.
+
+### 3. Template vs. No-Template Modes
+*   **No-Template**: Best for rapid brainstorming or pitch ideas. The system builds a "Design System" on the fly based on your brand or chosen theme.
+*   **With Template (`-t`)**: Best for board decks or corporate reports. The system "inherits" the template's exact colors, fonts, and layouts, then cleans up placeholder text automatically.
+
+### 4. Cost & Performance Tracking
+Use the `--verbose` flag to see a **Usage Summary** at the end of every run. This helps you track the budget per presentation and understand which AI models were utilized.
+
+---
 
 ## Solution Architecture
 
-```
+```mermaid
                     ┌─────────────────┐
                     │   YOUR INPUTS   │
                     │  Text Prompt    │
@@ -20,26 +50,26 @@ AI-powered pipeline that transforms a text prompt into a polished, template-styl
                   powerpoint_chunked_
                   workflow.py (entry point)
                              │
-              ┌──────────────┼──────────────┐
-              │              │              │
-                ▼              ▼              ▼
-         Brand Parse    Visual Profile    Storyboard    Chunk Generation
-        (Haiku+web)     (Analysis)       (Haiku+web)    (3-tier fallback)
-              │              │                │              │
-              └──────────────┴────────────────┼──────────────┘
+               ┌──────────────┼──────────────┐
+               │              │              │
+                 ▼              ▼              ▼
+          Brand Parse    Visual Profile    Storyboard    Chunk Generation
+         (Haiku+web)     (Analysis)       (Haiku+web)    (3-tier fallback)
+               │              │                │              │
+               └──────────────┴────────────────┼──────────────┘
                              │
                     ┌────────┴────────┐
                     │  Core Pipeline  │
                     │  (template_wf)  │
                     └────────┬────────┘
                              │
-              ┌──────────────┼──────────────┐
-              │              │              │
-              ▼              ▼              ▼
-        Image Pipeline  Template Assembly  Visual QA
-        (Gemini+Nano)   (deterministic)   (Gemini vision)
-              │              │              │
-              └──────────────┼──────────────┘
+               ┌──────────────┼──────────────┐
+               │              │              │
+               ▼              ▼              ▼
+         Image Pipeline  Template Assembly  Visual QA
+         (Gemini+Nano)   (deterministic)   (Gemini vision)
+               │              │              │
+               └──────────────┼──────────────┘
                              │
                              ▼
                     ┌─────────────────┐
@@ -47,140 +77,178 @@ AI-powered pipeline that transforms a text prompt into a polished, template-styl
                     └─────────────────┘
 ```
 
+---
+
 ## Key Features
 
-### 1. Chunked Orchestration
-Splits large presentations (8-15+ slides) into configurable chunks (default: 3 slides/chunk), generates each independently, then merges with OPC-aware relationship management.
+### 1. Zero-Failure Delivery (Chunking & Fallbacks)
+Large decks (10-20 slides) are split into small groups (chunks). Each group has a **3-Tier Safety Net**:
+*   **Primary**: High-fidelity native PowerPoint shapes (charts, grids).
+*   **Secondary**: Visual-heavy code generation.
+*   **Tertiary**: Text-only structural fallback.
+*   *Outcome: You always get a slide, even if the primary AI engine is under high load.*
 
-### 2. Brand-Aware Generation
-Autonomous `brand_style_analyzer` agent uses a two-stage approach: a zero-cost Regex keyword pre-check to log explicit intent, followed by an OpenAI `gpt-4o-mini` extraction that runs *on every prompt* to catch any implicit styling directives the pre-check might miss (preserving Anthropic token budget). It discovers brand directives, researches guidelines online, and injects structured `BrandStyleIntent` into downstream calls. Template styling overrides query-level branding when a template is provided.
+### 2. Intelligent Brand Discovery
+The `brand_style_analyzer` researches your brand guidelines online. It extracts hex codes and typography, then propagates them through the entire generation process to ensure consistent identity.
 
-### 3. Multi-Provider Architecture
-Supports swapping auxiliary agents via `--llm-provider {claude,openai,gemini}`. The workflow dynamically routes to different model variants depending on the selected provider mode:
+### 3. High-Fidelity Theme Factory
+A dedicated design layer that stores expert-curated palettes. When you select a theme like `midnight-galaxy`, the engine overrides generic defaults with high-contrast, premium styling rules specific to that aesthetic.
+
+### 4. Template-Agnostic Sanitization
+When using your corporate `.pptx` template, the engine automatically:
+*   Deletes "PLACEHOLDER TEXT" without touching your logo or branded borders.
+*   Enforces a **Font Floor** (min 10pt body / 14pt title) to ensure readability.
+*   Corrects shape overlaps and text overflows in real-time.
+
+---
+
+## Multi-Provider Architecture
+
+The workflow dynamically routes to the best model for each task:
 
 | Agent Role | Claude (Default) | OpenAI | Gemini |
 |------------|------------------|--------|--------|
 | **Brand Analysis** | `claude-haiku-4-5` | `gpt-5-mini` | `gemini-3-flash-preview` |
-| **Brand Fallback** | `gpt-5-mini` | `gemini-3-flash-preview`| `gpt-4o-mini` |
 | **Storyboard / Plan** | `claude-haiku-4-5` | `gpt-5.2` | `gemini-3.1-pro-preview` |
-| **Storyboard Fallback**| `gpt-5.2` | `gemini-3.1-pro-preview` | `gpt-5.2` |
 | **Code Fallback** | `claude-haiku-4-5` | `gpt-5.2` / `mini` | `gemini-3.1-pro-preview` / `flash` |
-| **Image Plan** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
-| **Image Plan Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
+| **Image Planning** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
 | **Visual Review** | `gemini-2.5-flash`* | `gpt-5-mini` | `gemini-2.5-flash` |
-| **Visual Review Fallback**| `gpt-5-mini` | `gemini-2.5-flash` | `gpt-5-mini` |
-| **Search Tool** | `DuckDuckGoTools()` | `web_search_preview`| `search=True` |
-
-*(Note: The core Content Generator (Tier 1) in the chunked workflow has been optimized to **Claude Haiku 4.5** for cost efficiency, while the standalone Content Generator in the template workflow remains locked to higher variants for maximal quality. Additionally, Image Planning and Visual Review use Gemini models even under the Claude provider setting due to multimodal feature requirements).*
-
-### 4. 3-Tier Fallback System with Universal HA
-| Tier | Generator | Quality | Speed | Condition |
-|------|-----------|---------|-------|-----------|
-| 1 | Claude PPTX skill (`haiku`) | 100% | 15s–2min/chunk | Primary |
-| 2 | LLM code gen (1st: Primary w/ visuals, 2nd: OpenAI 4-step) | 80–92% | 10–30s/chunk | Tier 1 Failure |
-| 3 | Text-only (deterministic) | Structural | <1s/chunk | Complete LLM Failure |
-
-*(High Availability Note: If the primary provider hits a 429 Rate Limit or 529 Overloaded error, or experiences persistent errors, the system automatically intercepts the failure and routes the chunk to the **Universal OpenAI Fallback** layer. This layer uses a 4-step visual context stripping hierarchy (Pro w/ images -> Lite w/ images -> Pro stripped -> Lite stripped) to avoid OpenAI token limits, ensuring presentation building continues uninterrupted.)*
-
-### 5. Template-Faithful Assembly
-Fully deterministic Step 3 builds a comprehensive **assembly knowledge file** — combining user intent, content plan, deep per-layout template analysis, and AI image assets — then maps content onto template layouts, fonts, colors, and placeholder regions. No LLM in the loop.
-
-### 6. AI Image Generation
-Gemini-based planning decides which slides need visuals. NanoBanana generates 16:9 PNG images, scaled/centered within the template's content area preserving aspect ratio.
-
-### 7. Vision-Based Quality Assurance
-Optional Gemini 2.5 Flash renders each slide to PNG (via LibreOffice headless), detects visual defects, and auto-corrects critical issues. Includes upfront missing key validation to prevent crash blocks. Fully non-blocking.
-
-### 8. Global API Rate Limit Tracker
-An internal `_RateLimitTracker` aggregates estimated token counts dynamically across all Claude API calls throughout the entire pipeline. It detects incoming transient `429` rate limit hits without breaking the machine state, and handles execution pacing using parameterized (random provider-specific milliseconds, e.g., 2000-5000ms for Claude) inter-chunk sleeps with live countdowns.
-
-### 9. Template Quality Safeguards
-When using `--template`, these automatic safeguards protect presentation quality:
-- **Per-slide rendering** — PPTX→PDF→PNG pipeline renders every slide individually so the visual review inspects all slides and creates layout context prompts
-- **Background detection** — 6-layer cascade correctly identifies dark template backgrounds for proper text contrast
-- **Layout sanitization (Fix 13B)** — 10-pass deterministic correction engine:
-  - Pass 1-3: Boundary clamping, minimum size enforcement, and initial overlap reflow (preserves structural template elements).
-  - Pass 4: **Overlap Orphan Removal** — Deletes redundant shapes in high-overlap clusters (keeping higher text density).
-  - Pass 5: **Orphaned Decorative Icon Removal** — Purges non-contextual symbols and emojis often hallucinated as decorations.
-  - Pass 6: **Column Alignment Snapping** — Snaps elements to a consistent 12-column grid for clean vertical alignment.
-  - Pass 7-8: Final iterative reflow and title font floor (min 20pt).
-  - Pass 9: **Content Overflow Guard (Fix 19)** — Final hard boundary clamp at 90% slide boundary and 87% footer line with relaxed 0.60 scaling.
-- **Template-Agnostic Purge (Fix 22)** — Principled Zone + Fill + Text classification logic (`_classify_template_shape`) ensures branded motifs (accent lines, headers, footers) are preserved while generic content decorations are cleared.
-- **Template-aware LLM prompts** — Tier 2 code generation includes spatial grid rules, decoration bans, and layout constraints.
-- **Single-Slide Visual References (Optional via `--template-visuals`)** — Inspired by single-shot cloning, chunk prompts can inject EXACTLY one 72-DPI template image (as a base64 encoded image) + full textual theme metadata (fonts, hex colors) to precisely recreate SmartArt and charts. **Disabled by default** to optimize token usage and cost; enabled with `-tv` or `--template-visuals`.
-- **Template Retention** — Intelligent semantic preservation of template headers, footers, slide numbers, and date placeholders.
-- **Template Visual Profile** — Programmatic analysis of layout density, dark/light dominance, and content constraints injected into the storyboard optimizer.
-- **Token Usage & Cost Transparency** — Integrated `TokenUsageTracker` monkey-patches `Agent.run` to capture input/output tokens for every API call across all pipeline stages. Provides a detailed per-model cost break-down at the end of the run when `--verbose` is enabled, ensuring full cost transparency.
-
-Requires `poppler-utils` (`sudo apt-get install -y poppler-utils`). See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for technical details.
-
----
-
-## Workflow Steps
-
-| Step | Name | Agent/Function | Output |
-|------|------|----------------|--------|
-| 0 | Brand/Style Parse | `brand_style_analyzer` (Sonnet) | `BrandStyleIntent` |
-| 1 | Optimize & Plan | `query_optimizer` (Opus) | `StoryboardPlan` (Template-aware) |
-| 2 | Generate Chunks | Claude PPTX skill / fallback agents | N chunk `.pptx` files |
-| 3 | Process Chunks | Deterministic template assembly | N assembled `.pptx` files |
-| 4 | Visual Review | `slide_quality_reviewer` (Gemini) | Quality reports + fixes |
-| 5 | Merge Chunks | `_merge_pptx_zip_level()` | Final `.pptx` |
-
----
-
-## Technical Stack
-
-| Component | Technology |
-|-----------|-----------|
-| **Runtime** | Python 3.8+ |
-| **Orchestration** | Agno Workflow (sequential Steps + shared `session_state`) |
-| **Provider Factory** | `agents/` package dynamically loads Swappable Agent Modules |
-| **Content LLM** | **Claude** `claude-haiku-4-5` + `pptx` skill + `context-1m` beta (Locked in Chunked Mode) |
-| **Brand Analysis** | Two-Stage (Regex Fast-Check + OpenAI `gpt-4o-mini`) |
-| **Storyboard** | Swappable (Claude Haiku / GPT-5.2 / Gemini 3 Pro) |
-| **Code Fallback** | Swappable (Claude Haiku / GPT-5 Mini) |
-| **Image Planning** | Swappable (Gemini 3 Flash / GPT-5 Mini) |
-| **Image Gen** | NanoBanana (Gemini, 16:9 aspect ratio) |
-| **Vision QA** | Swappable (Gemini 2.5 Flash / GPT-5 Mini) + LibreOffice headless |
-| **PPTX Engine** | python-pptx + lxml |
-| **Data Validation** | Pydantic v2 |
-| **File Download** | Anthropic Files API + magic-byte detection |
-
----
-
-## File Inventory
-
-| File | Lines | Purpose |
-|------|-------|---------|
-| `powerpoint_chunked_workflow.py` | ~3,380 | **Entry point** — chunked orchestration |
-| `powerpoint_template_workflow.py` | ~7,218 | Core pipeline (imported via wildcard) |
-| `agents/` | Package | Multi-provider agent implementations (Claude, OpenAI, Gemini) |
-| `file_download_helper.py` | ~162 | Claude skill file download utility |
-| `test_brand_style_parsing.py` | ~400 | Unit tests for brand/style parsing |
-
----
-
-## Current Status
-
-| Metric | Value |
-|--------|-------|
-| **Phase** | Production (iterative improvement) |
-| **Capacity** | Scalable (chunked architecture via `powerpoint_chunked_workflow.py`) |
-| **Steps** | 6 (Step 4 optional, Step 5 visual review optional) |
-| **Fallback** | 3-tier (Skill → Code Gen → Text-only) |
-| **Template Safeguards** | 6 (rendering, background detection, font guard, layout sanitization, prompt constraints, visual profile) |
-| **Tests** | Brand parsing: 10 unit tests, template fixes: 14 integration tests |
-| **Last Updated** | 2026-03-18 |
 
 ---
 
 ## Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| **Reliability** | 3-tier fallback → ~100% completion rate per chunk |
-| **Template Fidelity** | Knowledge-file-driven assembly matches template fonts, colors, layouts |
-| **Visual Quality** | WCAG contrast ≥3.0, ghost-text removal, fit-text auto-sizing, 10pt/14pt font guard, layout sanitization |
-| **Performance** | Tier 1: 2-5 min/chunk; Tier 2: 10-30s; Tier 3: <100ms |
-| **Brand Accuracy** | Autonomous web search + structured `BrandStyleIntent` |
+| Metric | Business Target |
+|--------|----------------|
+| **Reliability** | ~100% completion rate via 3-tier fallback. |
+| **Brand Fidelity** | Automatic match of brand colors/fonts via web-research. |
+| **Visual Accessibility** | WCAG contrast ≥3.0 and readable font sizes (min 10pt). |
+| **Performance** | Rapid turnaround (approx. 30s - 1min per slide group). |
+| **Efficiency** | Significant reduction in manual Slide-Master editing. |
+
+---
+
+## Technical Inventory
+
+| File | Purpose |
+|------|---------|
+| `powerpoint_chunked_workflow.py` | **Main entry point** — chunked orchestration & state. |
+| `powerpoint_template_workflow.py` | Technical core — layout logic, sanitization, and assembly. |
+| `theme-factory/` | High-fidelity design definitions and theme references. |
+| `file_download_helper.py` | Asset management for AI-generated artifacts. |
+
+> [!NOTE]
+> Requires `poppler-utils` and `libreoffice` for visual review features. See [DESIGN_visual_quality.md](DESIGN_visual_quality.md) for deeper technical layout rules.
+
+---
+
+## 🚀 Supplemental PM Guide: Setup & Testing
+
+### 1. Step-by-Step Environment Setup
+
+#### A. Install Python & UV (Package Manager)
+If you don't have Python or the `uv` package manager installed, run these commands first:
+
+```bash
+# Install Python (Linux)
+sudo apt update && sudo apt install -y python3 python3-pip
+
+# Install UV (High-performance package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.cargo/env  # Refresh your terminal environment
+```
+
+#### B. Install Project Dependencies
+Once `uv` is installed, run the following to install the required AI frameworks and PowerPoint libraries:
+```bash
+uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+```
+
+#### C. Install System Libraries (Required for --visual-review)
+These tools allow the AI to "see" your slides for visual QA:
+```bash
+sudo apt-get install -y libreoffice poppler-utils
+```
+
+#### D. Configure `.env` File
+Create a `.env` file in the root directory. This configuration is critical for both generation and observability.
+
+```env
+# AI Provider Keys
+ANTHROPIC_API_KEY="sk-ant-..."      # Required for Claude Content Generator
+GOOGLE_API_KEY="AIzaSy..."          # Required for Image Gen & Visual QA
+OPENAI_API_KEY="sk-proj-..."        # Required if using --llm-provider openai
+
+# Observability (Langfuse)
+LANGFUSE_PUBLIC_KEY="pk-lf-..."     # For tracing and quality monitoring
+LANGFUSE_SECRET_KEY="sk-lf-..."
+OTEL_EXPORTER_OTLP_ENDPOINT="https://cloud.langfuse.com/api/public/otel"
+```
+
+### 📋 CLI Reference: Command Line Arguments
+
+| Flag | Meaning | Default |
+| :--- | :--- | :--- |
+| `--prompt, -p` | The topic or brand directive for the presentation. | (Required) |
+| `--template, -t` | Path to a `.pptx` template file to inherit styling. | `None` |
+| `--output, -o` | Desired filename for the final presentation. | `presentation_chunked.pptx` |
+| `--llm-provider` | Provider for all swappable agents (`claude`, `openai`, `gemini`). | `claude` |
+| `--chunk-size` | Number of slides generated per Claude API call. | `1` |
+| `--start-tier` | Starting quality tier (`1`=Skill, `2`=Code-Gen, `3`=Text-Only). | `1` |
+| `--visual-review` | Enable vision-agent QA to fix design defects. | `False` |
+| `--visual-passes` | Maximum correction attempts per slide. | `3` |
+| `--no-images` | Disable AI image generation entirely. | `False` |
+| `--no-web-search` | Disable the agent's ability to research the prompt online. | `False` |
+| `--verbose, -v` | Enable detailed debug logs and Cost/Token summary. | `False` |
+
+### 🧪 Example Gallery: Testing the Pipeline
+
+#### 1. Basic Brainstorming (Auto-decide slides)
+```bash
+python powerpoint_chunked_workflow.py -p "Future of AI in Healthcare"
+```
+
+#### 2. Branded Executive Pitch (Live Research)
+```bash
+python powerpoint_chunked_workflow.py \
+    -p "Create a 7-slide presentation about AI trends using Nike branding"
+```
+*Detects "Nike branding", performs web search for hex codes, and applies them.*
+
+#### 3. Branded Corporate Template (Large Deck)
+```bash
+python powerpoint_chunked_workflow.py \
+    -t templates/my_template.pptx --chunk-size 4 \
+    -p "15-slide enterprise AI strategy for the board"
+```
+*Generates 15 slides in batches of 4, ensuring no API timeouts.*
+
+#### 4. High-Fidelity Branded Pitch (Template Visuals)
+```bash
+python powerpoint_chunked_workflow.py \
+    -t templates/my_template.pptx --template-visuals \
+    -p "Create a premium sales deck for Tesla"
+```
+*Injects actual template screenshots into the AI's prompt for better layout context.*
+
+#### 5. High-Stakes Review (Vision-Agent QA)
+```bash
+python powerpoint_chunked_workflow.py \
+    -t templates/my_template.pptx --visual-review --visual-passes 5 \
+    -p "Complex multi-chart financial report"
+```
+*LibreOffice renders slides; Gemini Vision inspects and fixes overlaps.*
+
+#### 6. Provider Face-off (OpenAI Mode)
+```bash
+python powerpoint_chunked_workflow.py \
+    -p "Quarterly Review" --llm-provider openai --verbose
+```
+*Uses GPT-5 for planning/coding while Claude still handles content gen.*
+
+#### 7. Emergency Safe Mode (Tier 2 Code-Gen)
+```bash
+python powerpoint_chunked_workflow.py \
+    -p "Quick status update" --start-tier 2
+```
+*Skips the slow primary skill; uses high-speed Python code generation directly.*

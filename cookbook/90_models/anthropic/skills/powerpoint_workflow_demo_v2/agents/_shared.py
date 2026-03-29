@@ -9,7 +9,7 @@ is selected at runtime.
 
 import os
 import sys
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
 
@@ -88,6 +88,13 @@ class BrandStyleIntent(BaseModel):
             "Human-readable detail about the source "
             "(e.g. template filename, or 'user query')."
         ),
+    )
+    theme_definition: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "The autonomously selected or generated Theme metadata containing "
+            "color palette (hex codes) and typography for Tier 2 extraction."
+        )
     )
 
 
@@ -292,10 +299,10 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "Do not add speaker notes, animations, or transitions.",
     "Do not print to stdout or write any files other than the final prs.save() call.",
     "COLOR AND CONTRAST RULES:",
-    "- If a VISUAL DESIGN SYSTEM section is provided in the prompt, follow its background "
+    "- If a THEME DEFINITION or VISUAL DESIGN SYSTEM is provided in the prompt, follow its background "
     "color, accent colors, text colors, and typography instructions EXACTLY. Do NOT "
     "override with white or ignore the design system's palette.",
-    "- If NO visual design system is specified, default to white (#FFFFFF) background.",
+    "- If NO visual design system/theme is specified, default to white (#FFFFFF) background.",
     "- Default body text: dark colors (#333333 or #000000) for readability on light backgrounds.",
     "- If using a dark background (luminance < 0.3), use white (#FFFFFF) or very light text.",
     "- If using colored shape fills for headers/accents, ensure text color has sufficient contrast.",
