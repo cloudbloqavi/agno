@@ -146,32 +146,47 @@ The workflow dynamically routes to the best model for each task:
 
 ### 1. Step-by-Step Environment Setup
 
-#### A. Install Python & UV (Package Manager)
-If you don't have Python or the `uv` package manager installed, run these commands first:
+#### A. Install Python 3.10+
+- **Windows**: [Download and install](https://www.python.org/downloads/windows/) or use `winget install Python.Python.3.11`.
+- **macOS**: `brew install python` (Requires [Homebrew](https://brew.sh/)).
+- **WSL (Ubuntu)**: `sudo apt update && sudo apt install -y python3 python3-pip`.
 
+#### B. Install UV (The Agno Recommended Package Manager)
+- **Windows (PowerShell)**:
+  ```powershell
+  powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+  ```
+- **macOS / Linux / WSL**:
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.cargo/env  # Refresh terminal environment
+  ```
+
+#### C. Install Project Dependencies
+Once `uv` is installed, run the following to install the required AI frameworks, PowerPoint libraries, and Langfuse observability packages:
 ```bash
-# Install Python (Linux)
-sudo apt update && sudo apt install -y python3 python3-pip
-
-# Install UV (High-performance package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.cargo/env  # Refresh your terminal environment
+uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv \
+    openinference-instrumentation-agno opentelemetry-exporter-otlp-proto-http opentelemetry-sdk
 ```
 
-#### B. Install Project Dependencies
-Once `uv` is installed, run the following to install the required AI frameworks and PowerPoint libraries:
-```bash
-uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
-```
+#### D. Install System Libraries (Critical for Visual Review)
+The vision-based defect fixing (Visual QA) requires these tools:
 
-#### C. Install System Libraries (Required for --visual-review)
-These tools allow the AI to "see" your slides for visual QA:
-```bash
-sudo apt-get install -y libreoffice poppler-utils
-```
+- **Windows**:
+  1. Install [LibreOffice](https://www.libreoffice.org/download/download/): `winget install LibreOffice.LibreOffice`
+  2. Install [Poppler](https://github.com/oschwartz10612/poppler-windows/releases/): Download and add to your PATH.
+- **macOS**:
+  ```bash
+  brew install --cask libreoffice
+  brew install poppler
+  ```
+- **WSL (Ubuntu)**:
+  ```bash
+  sudo apt update && sudo apt install -y libreoffice poppler-utils
+  ```
 
-#### D. Configure `.env` File
-Create a `.env` file in the root directory. This configuration is critical for both generation and observability.
+#### E. Configure `.env` File
+Create a `.env` file in the root directory.
 
 ```env
 # AI Provider Keys
@@ -205,50 +220,55 @@ OTEL_EXPORTER_OTLP_ENDPOINT="https://cloud.langfuse.com/api/public/otel"
 
 #### 1. Basic Brainstorming (Auto-decide slides)
 ```bash
-python powerpoint_chunked_workflow.py -p "Future of AI in Healthcare"
+python powerpoint_chunked_workflow.py -p "Future of AI in Healthcare" \
+--chunk-size 1 \
+--start-tier 2 \
+--no-images \
+--verbose \
+--visual-review \
+--visual-passes 3 \
+--llm-provider openai
 ```
 
 #### 2. Branded Executive Pitch (Live Research)
 ```bash
 python powerpoint_chunked_workflow.py \
     -p "Create a 7-slide presentation about AI trends using Nike branding"
+    --chunk-size 1 \
+    --start-tier 2 \
+    --no-images \
+    --verbose \
+    --visual-review \
+    --visual-passes 3 \
+    --llm-provider openai
 ```
 *Detects "Nike branding", performs web search for hex codes, and applies them.*
 
 #### 3. Branded Corporate Template (Large Deck)
 ```bash
 python powerpoint_chunked_workflow.py \
-    -t templates/my_template.pptx --chunk-size 4 \
+    -t templates/my_template.pptx
+    --chunk-size 1 \
+    --start-tier 2 \
+    --no-images \
+    --verbose \
+    --visual-review \
+    --visual-passes 3 \
+    --llm-provider openai
     -p "15-slide enterprise AI strategy for the board"
 ```
-*Generates 15 slides in batches of 4, ensuring no API timeouts.*
-
-#### 4. High-Fidelity Branded Pitch (Template Visuals)
-```bash
-python powerpoint_chunked_workflow.py \
-    -t templates/my_template.pptx --template-visuals \
-    -p "Create a premium sales deck for Tesla"
-```
-*Injects actual template screenshots into the AI's prompt for better layout context.*
 
 #### 5. High-Stakes Review (Vision-Agent QA)
 ```bash
 python powerpoint_chunked_workflow.py \
-    -t templates/my_template.pptx --visual-review --visual-passes 5 \
+    -t templates/my_template.pptx \
+    --chunk-size 1 \
+    --start-tier 2 \
+    --no-images \
+    --verbose \
+    --visual-review \
+    --visual-passes 3 \
+    --llm-provider openai
     -p "Complex multi-chart financial report"
 ```
 *LibreOffice renders slides; Gemini Vision inspects and fixes overlaps.*
-
-#### 6. Provider Face-off (OpenAI Mode)
-```bash
-python powerpoint_chunked_workflow.py \
-    -p "Quarterly Review" --llm-provider openai --verbose
-```
-*Uses GPT-5 for planning/coding while Claude still handles content gen.*
-
-#### 7. Emergency Safe Mode (Tier 2 Code-Gen)
-```bash
-python powerpoint_chunked_workflow.py \
-    -p "Quick status update" --start-tier 2
-```
-*Skips the slow primary skill; uses high-speed Python code generation directly.*
