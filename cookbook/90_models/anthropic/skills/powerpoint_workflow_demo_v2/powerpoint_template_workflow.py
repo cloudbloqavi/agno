@@ -37,10 +37,14 @@ Operating modes:
     template is available.
 
 Prerequisites:
-- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv \
+    openinference-instrumentation-agno opentelemetry-exporter-otlp-proto-http opentelemetry-sdk
 - export ANTHROPIC_API_KEY="your_api_key_here" (always required)
 - export OPENAI_API_KEY="your_openai_api_key_here" (for --llm-provider openai)
 - export GOOGLE_API_KEY="your_google_api_key_here" (for --llm-provider gemini)
+- export LANGFUSE_PUBLIC_KEY="..."                  # Optional: Observability
+- export LANGFUSE_SECRET_KEY="..."
+- export OTEL_EXPORTER_OTLP_ENDPOINT="..."
 - A .pptx template file (optional — omit to get raw Claude output)
 - LibreOffice (required for --visual-review step: `sudo apt-get install -y libreoffice`)
 - poppler-utils (required for per-slide PNG rendering: `sudo apt-get install -y poppler-utils`)

@@ -7,12 +7,18 @@ brand-aware styling, and a 3-tier fallback for production reliability.
 
 ```bash
 # Install dependencies
-uv pip install agno anthropic python-pptx google-genai pillow lxml python-dotenv
+uv pip install agno anthropic python-pptx google-genai pillow lxml python-dotenv \
+    openinference-instrumentation-agno opentelemetry-exporter-otlp-proto-http opentelemetry-sdk
 
 # Set API keys (or use .env file)
 export ANTHROPIC_API_KEY="your_anthropic_key" # Required for Claude PPTX generator
 export OPENAI_API_KEY="your_openai_key"       # Required if using --llm-provider openai
 export GOOGLE_API_KEY="your_google_key"       # Required if using --llm-provider gemini
+
+# Set Langfuse (Observability) keys (Optional)
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://cloud.langfuse.com/api/public/otel"
 
 # Run
 python powerpoint_chunked_workflow.py \
@@ -37,43 +43,36 @@ file_download_helper.py          ← Claude skill file download utility (~160 li
 ## Usage Examples
 
 ```bash
-# Basic (auto-decides slide count, 3 slides per chunk):
+# Basic (auto-decides slide count):
 python powerpoint_chunked_workflow.py \
-    -p "Create a presentation about AI in healthcare"
+    -p "Future of AI in Healthcare" \
+    --chunk-size 1 --start-tier 2 --no-images --verbose \
+    --visual-review --visual-passes 3 --llm-provider openai
 
-# Brand-aware generation:
+# Branded Executive Pitch (Live Research):
 python powerpoint_chunked_workflow.py \
-    -p "Create a 7-slide presentation about AI trends using Nike branding"
+    -p "Create a 7-slide presentation about AI trends using Nike branding" \
+    --chunk-size 1 --start-tier 2 --no-images --verbose \
+    --visual-review --visual-passes 3 --llm-provider openai
 
-# With template (template styling overrides query branding):
-python powerpoint_chunked_workflow.py \
-    -t templates/my_template.pptx --chunk-size 4 \
-    -p "12-slide enterprise AI strategy deck"
-
-# Full options: visual review, custom output:
+# Branded Corporate Template (Large Deck):
 python powerpoint_chunked_workflow.py \
     -t templates/my_template.pptx \
-    -p "12-slide enterprise AI strategy deck" \
-    --chunk-size 3 --visual-review --visual-passes 5 \
-    -o final_deck.pptx
+    -p "15-slide enterprise AI strategy for the board" \
+    --chunk-size 1 --start-tier 2 --no-images --verbose \
+    --visual-review --visual-passes 3 --llm-provider openai
 
-# Quick: no images, no template:
+# High-Stakes Review (Vision-Agent QA):
 python powerpoint_chunked_workflow.py \
-    -p "Startup pitch deck for SaaS product" --no-images
+    -t templates/my_template.pptx \
+    -p "Complex multi-chart financial report" \
+    --chunk-size 1 --start-tier 2 --no-images --verbose \
+    --visual-review --visual-passes 3 --llm-provider openai
 
-# Enable template visual references (high-fidelity, higher token cost):
+# Emergency Safe Mode (Tier 2 Code-Gen Directly):
 python powerpoint_chunked_workflow.py \
-    -t templates/my_template.pptx --template-visuals \
-    -p "Premium brand presentation"
-
-# Switch LLM Provider for swappable agents (OpenAI gpt-5.2 or Gemini 3 Pro):
-# Note: Content Generator always uses Claude to retain native PPTX skills
-python powerpoint_chunked_workflow.py \
-    -p "Quarterly review deck" --llm-provider openai
-
-# Start at Tier 2 (skip Claude PPTX skill, use LLM code gen directly):
-python powerpoint_chunked_workflow.py \
-    -p "Quarterly review deck" --start-tier 2
+    -p "Quick status update" --start-tier 2 \
+    --chunk-size 1 --no-images --verbose
 ```
 
 ## CLI Flags
@@ -260,12 +259,20 @@ Or create a `.env` file in this directory with the same key-value pairs.
 
 ### System Dependencies
 
+#### Windows
+1.  Install [LibreOffice](https://www.libreoffice.org/download/download/): `winget install LibreOffice.LibreOffice`
+2.  Install [Poppler](https://github.com/oschwartz10612/poppler-windows/releases/): Download and add to your PATH.
+
+#### macOS
+```bash
+brew install --cask libreoffice
+brew install poppler
+```
+
+#### WSL (Ubuntu) / Linux
 ```bash
 # Required for --visual-review (slide rendering)
-sudo apt-get install -y libreoffice
-
-# Required for per-slide PNG rendering (used by visual review)
-sudo apt-get install -y poppler-utils
+sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils
 ```
 
 > **Note:** Both system dependencies are only required when using `--visual-review` with `--template`. The workflow skips visual review gracefully if either is missing.

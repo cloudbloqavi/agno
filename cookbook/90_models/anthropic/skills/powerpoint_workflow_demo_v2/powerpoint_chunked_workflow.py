@@ -6,7 +6,7 @@ by splitting generation into manageable chunks, then merging the results.
 
 Problem solved: Single Claude API calls fail for 10+ slide presentations;
                Claude PPTX skill is also prone to throttling and timeouts.
-Solution: Generate slides in configurable chunks (default: 3 slides per call),
+Solution: Generate slides in configurable chunks (default: 1 slide per call),
           then merge all chunks into one final presentation.
           A 3-tier fallback ensures production reliability when the primary
           Claude PPTX skill is unavailable or too slow.
@@ -92,10 +92,14 @@ Key Agents (all except Content Generator are swappable via --llm-provider):
   (LOCKED)              - chunk_agent + content_agent always use Claude (native PPTX skill dep.)
 
 Prerequisites:
-- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv
+- uv pip install agno anthropic openai google-genai python-pptx pillow lxml python-dotenv \
+    openinference-instrumentation-agno opentelemetry-exporter-otlp-proto-http opentelemetry-sdk
 - export ANTHROPIC_API_KEY="your_anthropic_key"    # ALWAYS required (Content Generator)
-- export OPENAI_API_KEY="your_openai_key"           # Required if --llm-provider openai
-- export GOOGLE_API_KEY="your_google_key"           # Required if --llm-provider gemini (also for image gen)
+- export OPENAI_API_KEY="your_openai_key"           # Required for brand analysis / --llm-provider openai
+- export GOOGLE_API_KEY="your_google_key"           # Required for vision QA / --llm-provider gemini (also for image gen)
+- export LANGFUSE_PUBLIC_KEY="..."                  # Optional: Observability
+- export LANGFUSE_SECRET_KEY="..."
+- export OTEL_EXPORTER_OTLP_ENDPOINT="..."
 - A .pptx template file (optional)
 - LibreOffice (required for --visual-review step: `sudo apt-get install -y libreoffice`)
 - poppler-utils (required for per-slide PNG rendering: `sudo apt-get install -y poppler-utils`)
@@ -109,38 +113,30 @@ Template Quality Safeguards (active when --template is provided):
   - Template visual references: Renders template slides as PNGs and injects into chunk prompts for layout context
 
 Usage:
-    # Basic usage (auto-decide slide count, 3 slides per chunk):
-    python powerpoint_chunked_workflow.py \\
-        -p "Create a presentation about AI in healthcare"
+    # 1. Basic (auto-decides slide count):
+    python powerpoint_chunked_workflow.py \
+        -p "AI in Healthcare" --chunk-size 1 --start-tier 2 --verbose
 
-    # With brand-aware generation:
-    python powerpoint_chunked_workflow.py \\
-        -p "Create a 7-slide presentation about AI trends using Nike branding"
+    # 2. Branded Executive Pitch (Live Research):
+    python powerpoint_chunked_workflow.py \
+        -p "Create a 7-slide presentation about AI trends using Nike branding" \
+        --chunk-size 1 --start-tier 2 --no-images --verbose \
+        --visual-review --visual-passes 3 --llm-provider openai
 
-    # With template (template styling overrides query branding):
-    python powerpoint_chunked_workflow.py \\
-        -t templates/my_template.pptx --chunk-size 4
+    # 3. Branded Corporate Template (Large Deck):
+    python powerpoint_chunked_workflow.py \
+        -t templates/my_template.pptx \
+        -p "15-slide enterprise AI strategy for the board" \
+        --chunk-size 1 --start-tier 2 --no-images --verbose \
+        --visual-review --visual-passes 3 --llm-provider openai
 
-    # Large presentation with visual review (5 passes max):
-    python powerpoint_chunked_workflow.py \\
-        -t templates/my_template.pptx -p "12-slide enterprise AI strategy deck" \\
-        --chunk-size 3 --visual-review --visual-passes 5
+    # 4. Use Gemini for all swappable agents + template:
+    python powerpoint_chunked_workflow.py \
+        -t templates/my_template.pptx \
+        -p "10-slide AI strategy deck" --llm-provider gemini
 
-    # Quick generation without images or template:
-    python powerpoint_chunked_workflow.py \\
-        -p "Startup pitch deck for SaaS product" --no-images
-
-    # Use OpenAI for all swappable agents (Claude still runs the PPTX generator):
-    python powerpoint_chunked_workflow.py \\
-        -p "Create a 10-slide AI strategy deck" --llm-provider openai
-
-    # Use Gemini for all swappable agents + template:
-    python powerpoint_chunked_workflow.py \\
-        -t templates/my_template.pptx \\
-        -p "Create a 10-slide AI strategy deck" --llm-provider gemini
-
-    # Skip directly to Tier 2 LLM code-gen (useful when Claude skill is overloaded):
-    python powerpoint_chunked_workflow.py \\
+    # 5. Skip directly to Tier 2 LLM code-gen (instant charts, high reliable):
+    python powerpoint_chunked_workflow.py \
         -p "Quarterly review deck" --start-tier 2
 
 CLI Flags:
@@ -185,9 +181,9 @@ CLI Flags:
                          3 = Text-only (structural only, instant, no API calls)
                          Fallback chain continues from selected tier (e.g., Tier 2 → Tier 3).
     --inter-chunk-delay-min
-                         Minimum delay in seconds between chunks to avoid rate limits (default: 60.0).
+                         Minimum delay in ms between chunks (default: provider-specific).
     --inter-chunk-delay-max
-                         Maximum delay in seconds between chunks to avoid rate limits (default: 120.0).
+                         Maximum delay in ms between chunks (default: provider-specific).
     --no-web-search      Disable web search for query optimization.
 
 Logging conventions:
@@ -204,21 +200,15 @@ Logging conventions:
         [TOKEN SUMMARY] Final table of token counts and USD cost per model
 
 Usage Examples:
-    # Basic (default 3 slides per chunk):
-    python powerpoint_chunked_workflow.py -p "AI in Healthcare"
+    # Basic (default 1 slide per chunk, tier 2 code-gen):
+    python powerpoint_chunked_workflow.py -p "AI Trends" --start-tier 2
 
-    # With template and custom chunk size:
-    python powerpoint_chunked_workflow.py -t templates/my_template.pptx --chunk-size 4 -p "Enterprise Strategy"
+    # High-fidelity with template, visual review, and verbose logs:
+    python powerpoint_chunked_workflow.py -t templates/corp.pptx \
+        -p "Annual Report" --visual-review --verbose
 
-    # Enable high-fidelity template visual references (higher token usage):
-    python powerpoint_chunked_workflow.py -t templates/my_template.pptx --template-visuals -p "Branded Pitch"
-
-    # Enable Token Usage & Cost Summary (Verbose mode):
-    python powerpoint_chunked_workflow.py -p "Market Research" --verbose
-
-    # Full pipeline: Visual review, 5 passes, custom output:
-    python powerpoint_chunked_workflow.py -t templates/my_template.pptx -p "Board Deck" \
-        --visual-review --visual-passes 5 -o board_final.pptx
+    # OpenAI-powered auxiliary agents:
+    python powerpoint_chunked_workflow.py -p "Market Analysis" --llm-provider openai
 """
 
 import argparse
@@ -729,6 +719,17 @@ class BrandStyleIntent(BaseModel):
         description=(
             "Human-readable detail about the source "
             "(e.g. template filename, or 'user query')."
+        ),
+    )
+    brand_voice: str = Field(
+        "",
+        description="The brand's voice and personality (e.g. 'direct', 'playful', 'authoritative').",
+    )
+    target_audience: str = Field(
+        "General",
+        description=(
+            "Primary audience (e.g. 'Potential clients', 'Internal team', "
+            "'Industry peers'). Extracted per Rule 1 of RULES.md."
         ),
     )
     theme_definition: Optional[Dict[str, Any]] = Field(
@@ -3253,6 +3254,7 @@ def generate_chunk_pptx(
         "You are generating a CHUNK of a larger presentation. "
         "This chunk contains %d slides.\n"
         "Maintain the presentation's tone (%s) and brand voice (%s).\n"
+        "Design for the PRIMARY AUDIENCE: %s (Rule 1, RULES.md).\n"
         'These are slides %d-%d of the full %d-slide deck titled "%s".\n\n'
         "## Per-Slide Content for This Chunk:\n\n"
         "%s\n\n"
@@ -3317,6 +3319,7 @@ def generate_chunk_pptx(
         len(chunk_slides),
         storyboard.tone,
         storyboard.brand_voice,
+        session_state.get("brand_style_intent", BrandStyleIntent()).target_audience,
         first_slide,
         last_slide,
         storyboard.total_slides,

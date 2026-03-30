@@ -89,6 +89,17 @@ class BrandStyleIntent(BaseModel):
             "(e.g. template filename, or 'user query')."
         ),
     )
+    brand_voice: str = Field(
+        "",
+        description="The brand's voice and personality (e.g. 'direct', 'playful', 'authoritative').",
+    )
+    target_audience: str = Field(
+        "General",
+        description=(
+            "Primary audience (e.g. 'Potential clients', 'Internal team', "
+            "'Industry peers'). Extracted per Rule 1 of RULES.md."
+        ),
+    )
     theme_definition: Optional[Dict[str, Any]] = Field(
         default=None,
         description=(
@@ -235,10 +246,17 @@ BRAND_STYLE_ANALYZER_INSTRUCTIONS = [
     "  - For less familiar brands, regional brands, or when you are unsure about "
     "    specific hex colors or typography, USE web search to look up "
     "    '<brand_name> brand guidelines colors typography'.",
-    "Fill in color_palette with specific hex codes when possible.",
+    "RULES.md Compliance:",
+    "  1. Determine the 'Primary Audience' (Potential clients, Internal team, or "
+    "     Industry peers/conference). Set target_audience appropriately.",
+    "  2. Categorize the 'Visual Style' based on context: 'Bold & modern' (dark bg), "
+    "     'Clean & minimal' (light bg), or 'Creative & experimental' (gradients). "
+    "     Add the chosen category to style_keywords.",
+    "Fill in brand_voice based on brand tone (Rule 2).",
+    "Fill in color_palette with specific hex codes when possible (Rule 3).",
     "Fill in content_query with the user's query MINUS the branding clause.",
     "Keep style_keywords to 3-5 concise descriptors.",
-    "Keep typography_hints to 1-3 font families.",
+    "Keep typography_hints to 1-3 font families (Rule 3).",
     "Set source='query' and source_detail='user query'.",
 ]
 
@@ -298,6 +316,9 @@ PPTX_CODE_GEN_INSTRUCTIONS = [
     "If a visual cannot be implemented exactly, keep the slide and add a concise native textbox note. Do not skip slides.",
     "Do not add speaker notes, animations, or transitions.",
     "Do not print to stdout or write any files other than the final prs.save() call.",
+    "RULES.md COMPLIANCE:",
+    "- AUDIENCE-AWARE DESIGN: Align typography, spacing, and use of whitespace with the TARGET AUDIENCE (e.g. clean/minimal for executives, data-dense for engineering peers).",
+    "- LOGO REPLACEMENT: If a BRAND NAME is provided, you MUST replace the template's default Logo image. To achieve this, create a solid RECTANGLE matching the slide background color, place it over the original logo position (typically top-left or top-right) to hide it, and then add a text box with the brand name on top in a professional font.",
     "COLOR AND CONTRAST RULES:",
     "- If a THEME DEFINITION or VISUAL DESIGN SYSTEM is provided in the prompt, follow its background "
     "color, accent colors, text colors, and typography instructions EXACTLY. Do NOT "

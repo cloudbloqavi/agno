@@ -5,7 +5,7 @@
 - `cookbook/90_models/anthropic/skills/powerpoint_workflow_demo/powerpoint_chunked_workflow.py` — Main chunked orchestrator for all presentations
 
 **Date:** 2026-02-25
-**Last Updated:** 2026-03-06
+**Last Updated:** 2026-03-30
 **Pattern:** Sequential Agno Workflow with mixed agent steps and executor functions
 
 ---
@@ -139,6 +139,30 @@ if not args.template and args.visual_review:
 if not args.template and args.visual_passes != 3:
     print("[WARNING] --visual-passes is ignored when --template is not provided")
 ```
+
+---
+
+## Observability & Telemetry
+
+The workflow implements a dedicated observability layer using **Langfuse** via the **OpenInference** and **OpenTelemetry** standards. This allows for real-time tracing of all agent steps, token usage monitoring, and cost tracking without manual calculations.
+
+### Implementation Details
+
+**1. Setup (`setup_langfuse_telemetry`)**
+The `setup_langfuse_telemetry()` function initializes the `AgnoInstrumentor` and configures an OTLP HTTP exporter. It reads the following environment variables:
+- `LANGFUSE_PUBLIC_KEY`
+- `LANGFUSE_SECRET_KEY`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (typically `https://cloud.langfuse.com/api/public/otel`)
+
+**2. Auto-Instrumentation**
+Once instrumented, the system automatically captures:
+- Every `Agent.run()` call (including prompt, response, and model parameters).
+- Every `Workflow.run()` execution graph.
+- Latency per step.
+- Error stack traces.
+
+**3. Cleanup**
+The `tracer_provider` is explicitly shut down in the `main()` `finally` block to ensure all buffered spans are flushed to Langfuse before the script exits.
 
 ---
 
@@ -383,28 +407,29 @@ This pipeline turns a simple text prompt into a polished PowerPoint presentation
 | `--show-slide-numbers` | Keep slide number placeholders | Off |
 | `--verbose` / `-v` | Show detailed diagnostic output | Off |
 
-### What You Control (`powerpoint_chunked_workflow.py`)
+### CLI Flag Reference (`powerpoint_chunked_workflow.py`)
 
 | Option | What It Does | Default | Notes |
 |--------|-------------|---------|-------|
 | `--template` / `-t` | .pptx template (optional) | None | Without it: raw generation mode |
 | `--prompt` / `-p` | Presentation topic | Built-in demo | |
 | `--output` / `-o` | Output filename | `presentation_chunked.pptx` | |
-| `--chunk-size` | Slides per Claude API call | 3 | Tune for quality vs. speed |
+| `--chunk-size` | Slides per Claude API call | 1 | Set to 1 for high-fidelity template matching |
 | `--llm-provider`| LLM provider (claude, openai, gemini) | `claude` | Content gen remains fixed to Claude |
 | `--max-retries` | Retries per chunk on failure | 2 | |
-| `--no-images` | Skip image generation | Off | Only applies when `--template` is set |
-| `--visual-review` | Enable per-chunk visual QA | Off | **Ignored** when `--template` is not set |
-| `--visual-passes` | Max visual QA passes per chunk | 3 | **Ignored** when `--template` is not set |
-| `--template-visuals` | Inject base64 template slide images into prompts | Off | Reduces token cost when disabled (default) |
-| `--footer-text` | Footer text for all slides | Empty | Only applies when `--template` is set |
-| `--date-text` | Date text for footer | Empty | Only applies when `--template` is set |
-| `--show-slide-numbers` | Keep slide number placeholders | Off | Only applies when `--template` is set |
-| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude PPTX skill (opus), 2=LLM code gen (sonnet/haiku), 3=text-only |
+| `--no-images` | Skip image generation | Off | |
+| `--visual-review` | Enable per-chunk visual QA | Off | |
+| `--visual-passes` | Max visual QA passes per chunk | 3 | |
+| `--template-visuals` | Inject base64 template slide images into prompts | Off | Higher token cost when enabled |
+| `--footer-text` | Footer text for all slides | Empty | |
+| `--date-text` | Date text for footer | Empty | |
+| `--show-slide-numbers` | Keep slide number placeholders | Off | |
+| `--start-tier` | Starting tier for chunk generation | 1 | 1=Claude Skill, 2=LLM Code-Gen, 3=Text-only |
 | `--verbose` / `-v` | Verbose/debug logging | Off | |
 | `--inter-chunk-delay-min` | Minimum random delay between chunks (ms) | Provider Specific | |
 | `--inter-chunk-delay-max` | Maximum random delay between chunks (ms) | Provider Specific | |
 | `--no-web-search` | Disable web search | Off | |
+| `--no-stream` | Use non-streaming API mode | Streaming On | |
 
 ### Quick Example
 
@@ -1424,3 +1449,30 @@ The workflow implements a dynamic token tracking system to provide visibility in
 
 ### Global Pacing
 While the `TokenUsageTracker` handles reporting, the `_RateLimitTracker` (separate) handles real-time execution pacing to respect provider quotas (429 handling).
+
+---
+
+## RULES.md Compliance
+
+The workflow is architected to strictly adhere to the project's visual and logical constraints defined in `RULES.md`.
+
+### 1. Audience-Aware Generation (No-Template Rule 1)
+The `brand_style_analyzer` agent now explicitly identifies the **Primary Audience** from the user prompt:
+- **Potential Clients**: Focuses on high-impact visuals and persuasive "Punchy" summaries.
+- **Internal Team**: Prioritizes logical deep-dives and strategic clarity.
+- **Industry Peers**: Emphasizes thought leadership, detailed metrics, and technical sophistication.
+
+### 2. Style Categorization (No-Template Rule 2)
+Styling intent is categorized into three principled buckets:
+- **Bold & modern**: Dark backgrounds, high contrast, vibrant accents.
+- **Clean & minimal**: Light backgrounds, extensive whitespace, muted palettes.
+- **Creative & experimental**: Gradients, asymmetric layouts, dynamic visual flow.
+
+### 3. Logo Replacement (Template Rule 2)
+When a brand name is detected in the prompt and a template is being used, the system automatically:
+1. Identifies the logo's position and background color for each template layout.
+2. Instructs the generation agent to mask the original logo with a background-matched rectangle.
+3. Overlays the branded name text at the same coordinates, preserving the layout's original intent while satisfying the brand directive.
+
+### 4. Visual Narrative & Anchor Preservation (Template Rule 3)
+The `query_optimizer` analyzes the template's high-fidelity slides (infographics, charts, hero cards) and suggests specific template slide indices for reuse via `reuse_template_slide_idx`, ensuring that only text and data are modified while the core visual style remains intact.
