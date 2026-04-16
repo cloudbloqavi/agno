@@ -249,7 +249,7 @@ from agno.run.agent import RunOutput  # type: ignore
 # and all _helper functions.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agno.agent import Agent  # type: ignore
-from agno.tools.python import PythonTools  # type: ignore
+from lib_patches.tools_python import PythonTools  # type: ignore
 from agno.workflow.step import Step  # type: ignore
 from agno.workflow.types import StepInput, StepOutput  # type: ignore
 from agno.workflow.workflow import Workflow  # type: ignore

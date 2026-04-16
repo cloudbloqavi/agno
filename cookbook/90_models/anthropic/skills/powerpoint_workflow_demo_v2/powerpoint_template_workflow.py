@@ -7798,6 +7798,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     # Create output from template
     shutil.copy2(template_path, output_path)
     output_prs = Presentation(output_path)
+    template_prs = Presentation(template_path)
     slide_width = output_prs.slide_width
     slide_height = output_prs.slide_height
 
