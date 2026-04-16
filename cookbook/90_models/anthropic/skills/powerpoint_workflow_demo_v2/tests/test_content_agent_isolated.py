@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(override=True)
 except ImportError:
     pass
@@ -51,9 +52,9 @@ def test_content_agent():
     # --- Import dependencies ---
     try:
         from agno.agent import Agent
-        from lib_patches.anthropic.claude import Claude
         from anthropic import Anthropic
         from file_download_helper import download_skill_files
+        from lib_patches.anthropic.claude import Claude
         from pptx import Presentation
 
         print("[OK] All dependencies imported successfully")
@@ -74,7 +75,10 @@ def test_content_agent():
     )
 
     estimated_tokens = len(test_prompt) // 4
-    print("\n[PROMPT] Length: %d chars (~%d tokens)" % (len(test_prompt), estimated_tokens))
+    print(
+        "\n[PROMPT] Length: %d chars (~%d tokens)"
+        % (len(test_prompt), estimated_tokens)
+    )
 
     # --- Create agent ---
     chunk_agent = Agent(
@@ -128,7 +132,9 @@ def test_content_agent():
         is_rate_limit = "rate_limit" in error_msg or "429" in error_msg
         if is_rate_limit:
             print("[DIAGNOSIS] Rate limit error detected.")
-            print("  - This confirms the API key works but you've hit the token/min cap.")
+            print(
+                "  - This confirms the API key works but you've hit the token/min cap."
+            )
             print("  - Wait 60s and try again, or check your Anthropic usage tier.")
         else:
             traceback.print_exc()
@@ -166,7 +172,11 @@ def test_content_agent():
                     print("  [WARNING] download_skill_files failed: %s" % e)
 
     # Fallback: try model_provider_data
-    if not generated_file and hasattr(response, "model_provider_data") and response.model_provider_data:
+    if (
+        not generated_file
+        and hasattr(response, "model_provider_data")
+        and response.model_provider_data
+    ):
         try:
             files = download_skill_files(
                 response.model_provider_data, client, output_dir=output_dir
@@ -201,7 +211,10 @@ def test_content_agent():
             print("  - Slides: %d" % slide_count)
             return True
         else:
-            print("\n[WARN] ⚠️  File produced but slide count is %d (expected 1)" % slide_count)
+            print(
+                "\n[WARN] ⚠️  File produced but slide count is %d (expected 1)"
+                % slide_count
+            )
             print("  The agent is functional but generated extra slides.")
             return True  # Still consider this a pass — agent works
 

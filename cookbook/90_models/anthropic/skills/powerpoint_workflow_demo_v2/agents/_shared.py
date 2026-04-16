@@ -9,7 +9,7 @@ is selected at runtime.
 
 import os
 import sys
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -105,7 +105,7 @@ class BrandStyleIntent(BaseModel):
         description=(
             "The autonomously selected or generated Theme metadata containing "
             "color palette (hex codes) and typography for Tier 2 extraction."
-        )
+        ),
     )
 
 
@@ -152,9 +152,7 @@ class ShapeIssue(BaseModel):
     severity: str = Field(
         description="Severity level: 'critical', 'moderate', or 'minor'"
     )
-    description: str = Field(
-        description="Detailed, specific description of the issue"
-    )
+    description: str = Field(description="Detailed, specific description of the issue")
     programmatic_fix: str = Field(
         default="none",
         description=(
@@ -180,9 +178,7 @@ class SlideQualityReport(BaseModel):
     """Design and quality assessment for a single rendered slide image."""
 
     slide_index: int = Field(description="Zero-based index of the slide")
-    design_score: int = Field(
-        description="Overall design quality score from 1-10"
-    )
+    design_score: int = Field(description="Overall design quality score from 1-10")
     is_visually_bland: bool = Field(
         default=False,
         description=(
@@ -206,6 +202,7 @@ class LayoutConstraints(BaseModel):
     content_zone_bottom_pct: int = Field(default=88)
     text_weight: str = Field(default="balanced")
 
+
 class SlideStoryboard(BaseModel):
     slide_number: int
     slide_title: str
@@ -217,6 +214,7 @@ class SlideStoryboard(BaseModel):
     key_metrics: List[str] = Field(default_factory=list)
     layout_constraints: Optional[LayoutConstraints] = Field(default=None)
     reuse_template_slide_idx: Optional[int] = Field(default=None)
+
 
 class StoryboardPlan(BaseModel):
     total_slides: int

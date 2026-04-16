@@ -46,8 +46,12 @@ else:
 # 2. Update callers that remove solidFill first
 # Pattern: rPr.remove(solidFill)\n {whitespace} _make_high_contrast_fill(rPr, bg_hex)
 # Sometimes it's cell_bg_hex instead of bg_hex
-pattern1 = r'rPr\.remove\(solidFill\)\n(\s+)_make_high_contrast_fill\(rPr, (bg_hex|cell_bg_hex)\)'
-content, count = re.subn(pattern1, r'_make_high_contrast_fill(rPr, \2, existing_solidFill=solidFill)', content)
+pattern1 = r"rPr\.remove\(solidFill\)\n(\s+)_make_high_contrast_fill\(rPr, (bg_hex|cell_bg_hex)\)"
+content, count = re.subn(
+    pattern1,
+    r"_make_high_contrast_fill(rPr, \2, existing_solidFill=solidFill)",
+    content,
+)
 print(f"Replaced {count} instances of rPr.remove(solidFill)")
 
 # 3. Update SubElement(run._r, ns_a + "rPr") to insert(0)
@@ -130,4 +134,3 @@ else:
 
 with open("powerpoint_template_workflow.py", "w") as f:
     f.write(content)
-

@@ -17,12 +17,11 @@ import json
 import os
 import sys
 import tempfile
+from dataclasses import asdict, dataclass, field
 
-from dataclasses import dataclass, field, asdict
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
 from pptx.enum.shapes import MSO_SHAPE
-
+from pptx.util import Emu, Inches, Pt
 
 # --- Copy of SlideLayoutProfile and TemplateVisualProfile dataclasses ---
 
@@ -146,7 +145,10 @@ def _analyze_template_visual_profile(template_path):
                 if content_ph_bottom is None or s_bottom > content_ph_bottom:
                     content_ph_bottom = s_bottom
             else:
-                if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                if (
+                    getattr(shape, "has_text_frame", False)
+                    and shape.text_frame.text.strip()
+                ):
                     sp.text_box_count += 1
                 elif hasattr(shape, "has_chart") and shape.has_chart:
                     profile.has_charts_in_template = True
@@ -172,12 +174,8 @@ def _analyze_template_visual_profile(template_path):
             )
             zone_w = content_ph_right - content_ph_left
             zone_h = content_ph_bottom - content_ph_top
-            sp.content_zone_width_pct = round(
-                zone_w / prs.slide_width * 100.0, 1
-            )
-            sp.content_zone_height_pct = round(
-                zone_h / prs.slide_height * 100.0, 1
-            )
+            sp.content_zone_width_pct = round(zone_w / prs.slide_width * 100.0, 1)
+            sp.content_zone_height_pct = round(zone_h / prs.slide_height * 100.0, 1)
             deco_reduction = min(sp.decorative_shape_count * 5.0, 25.0)
             sp.usable_width_pct = max(40.0, sp.content_zone_width_pct - deco_reduction)
             sp.usable_height_pct = max(40.0, sp.content_zone_height_pct)
@@ -261,16 +259,17 @@ def _format_visual_profile_for_prompt(profile):
     sections.append("- **Aspect Ratio:** %s" % profile.aspect_ratio)
     sections.append(
         "- **Layout Density:** %s (avg %.1f shapes/slide)"
-        % (profile.layout_density, profile.avg_placeholder_count + profile.avg_decorative_shapes)
+        % (
+            profile.layout_density,
+            profile.avg_placeholder_count + profile.avg_decorative_shapes,
+        )
     )
     sections.append(
         "- **Content Zone:** ~%.0f%% width, ~%.0f%% height"
         % (profile.avg_content_zone_width_pct, profile.avg_content_zone_height_pct)
     )
     if profile.dominant_layout_style != "full":
-        sections.append(
-            "  _(template uses %s layout)_" % profile.dominant_layout_style
-        )
+        sections.append("  _(template uses %s layout)_" % profile.dominant_layout_style)
     sections.append(
         "- **Max Comfortable Bullets:** %d per slide" % profile.max_comfortable_bullets
     )
@@ -289,7 +288,9 @@ def _format_visual_profile_for_prompt(profile):
         elements.append("SmartArt")
     deco_note = ""
     if profile.avg_decorative_shapes > 1:
-        deco_note = ", decorative shapes (avg %.0f/slide)" % profile.avg_decorative_shapes
+        deco_note = (
+            ", decorative shapes (avg %.0f/slide)" % profile.avg_decorative_shapes
+        )
     sections.append(
         "- **Template Contains:** %s%s"
         % (", ".join(elements) if elements else "text placeholders only", deco_note)
@@ -313,8 +314,12 @@ def test_slide_layout_profile_defaults():
     assert sp.slide_index == 0, "Default slide_index should be 0"
     assert sp.slide_type_hint == "content", "Default type hint should be 'content'"
     assert sp.placeholder_count == 0, "Default placeholder_count should be 0"
-    assert sp.content_zone_left_pct == 5.0, "Default content_zone_left_pct should be 5.0"
-    assert sp.content_zone_top_pct == 12.0, "Default content_zone_top_pct should be 12.0"
+    assert sp.content_zone_left_pct == 5.0, (
+        "Default content_zone_left_pct should be 5.0"
+    )
+    assert sp.content_zone_top_pct == 12.0, (
+        "Default content_zone_top_pct should be 12.0"
+    )
     assert sp.content_zone_width_pct == 90.0, "Default width should be 90.0"
     assert sp.content_zone_height_pct == 76.0, "Default height should be 76.0"
     assert sp.decorative_shape_count == 0, "Default decorative count should be 0"
@@ -334,7 +339,9 @@ def test_visual_profile_defaults():
     assert profile.has_charts_in_template is False, "No charts by default"
     assert profile.has_tables_in_template is False, "No tables by default"
     assert profile.max_comfortable_bullets == 5, "Default max bullets should be 5"
-    assert profile.recommended_text_weight == "balanced", "Default text weight should be 'balanced'"
+    assert profile.recommended_text_weight == "balanced", (
+        "Default text weight should be 'balanced'"
+    )
     assert profile.slide_profiles == [], "Default slide_profiles should be empty list"
     print("  PASS: test_visual_profile_defaults")
 
@@ -353,7 +360,9 @@ def test_analyze_minimal_template():
         assert profile.slide_count == 1, "Should detect 1 slide"
         assert profile.slide_width_emu > 0, "Should have positive slide width"
         assert profile.slide_height_emu > 0, "Should have positive slide height"
-        assert profile.aspect_ratio in ("16:9", "4:3"), "Should detect a standard aspect ratio"
+        assert profile.aspect_ratio in ("16:9", "4:3"), (
+            "Should detect a standard aspect ratio"
+        )
         assert len(profile.slide_profiles) == 1, "Should have 1 slide profile"
         print("  PASS: test_analyze_minimal_template")
     finally:
@@ -373,11 +382,17 @@ def test_analyze_multi_slide_template():
         prs.save(tmp_path)
 
         profile = _analyze_template_visual_profile(tmp_path)
-        assert profile.slide_count == 3, "Should detect 3 slides, got %d" % profile.slide_count
+        assert profile.slide_count == 3, (
+            "Should detect 3 slides, got %d" % profile.slide_count
+        )
         assert len(profile.slide_profiles) == 3, "Should have 3 slide profiles"
         # Averages should be computed
-        assert isinstance(profile.avg_placeholder_count, float), "avg_placeholder_count should be float"
-        assert isinstance(profile.avg_decorative_shapes, float), "avg_decorative_shapes should be float"
+        assert isinstance(profile.avg_placeholder_count, float), (
+            "avg_placeholder_count should be float"
+        )
+        assert isinstance(profile.avg_decorative_shapes, float), (
+            "avg_decorative_shapes should be float"
+        )
         print("  PASS: test_analyze_multi_slide_template")
     finally:
         os.unlink(tmp_path)
@@ -396,8 +411,12 @@ def test_content_zone_computation():
         profile = _analyze_template_visual_profile(tmp_path)
         sp = profile.slide_profiles[0]
         # Content zone should be derived from placeholder positions
-        assert sp.content_zone_width_pct > 0, "Width should be positive, got %.1f" % sp.content_zone_width_pct
-        assert sp.content_zone_height_pct > 0, "Height should be positive, got %.1f" % sp.content_zone_height_pct
+        assert sp.content_zone_width_pct > 0, (
+            "Width should be positive, got %.1f" % sp.content_zone_width_pct
+        )
+        assert sp.content_zone_height_pct > 0, (
+            "Height should be positive, got %.1f" % sp.content_zone_height_pct
+        )
         assert sp.content_zone_left_pct >= 0, "Left should be non-negative"
         assert sp.content_zone_top_pct >= 0, "Top should be non-negative"
         print("  PASS: test_content_zone_computation")
@@ -414,17 +433,26 @@ def test_decorative_shape_counting():
         prs = Presentation()
         slide = prs.slides.add_slide(prs.slide_layouts[5])  # Blank layout
         # Add decorative shapes
-        slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1))
-        slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(4), Inches(1), Inches(1), Inches(1))
-        slide.shapes.add_shape(MSO_SHAPE.PENTAGON, Inches(6), Inches(1), Inches(1), Inches(1))
+        slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(2), Inches(1)
+        )
+        slide.shapes.add_shape(
+            MSO_SHAPE.OVAL, Inches(4), Inches(1), Inches(1), Inches(1)
+        )
+        slide.shapes.add_shape(
+            MSO_SHAPE.PENTAGON, Inches(6), Inches(1), Inches(1), Inches(1)
+        )
         prs.save(tmp_path)
 
         profile = _analyze_template_visual_profile(tmp_path)
         sp = profile.slide_profiles[0]
-        assert sp.decorative_shape_count >= 3, \
-            "Should have at least 3 decorative shapes, got %d" % sp.decorative_shape_count
-        assert sp.total_shape_count >= 3, \
+        assert sp.decorative_shape_count >= 3, (
+            "Should have at least 3 decorative shapes, got %d"
+            % sp.decorative_shape_count
+        )
+        assert sp.total_shape_count >= 3, (
             "Total shapes should be at least 3, got %d" % sp.total_shape_count
+        )
         print("  PASS: test_decorative_shape_counting")
     finally:
         os.unlink(tmp_path)
@@ -447,8 +475,10 @@ def test_layout_density_classification():
         prs.save(tmp_path)
 
         profile = _analyze_template_visual_profile(tmp_path)
-        assert profile.layout_density in ("sparse", "balanced"), \
-            "Blank slide should be sparse or balanced, got '%s'" % profile.layout_density
+        assert profile.layout_density in ("sparse", "balanced"), (
+            "Blank slide should be sparse or balanced, got '%s'"
+            % profile.layout_density
+        )
         print("  PASS: test_layout_density_classification")
     finally:
         os.unlink(tmp_path)
@@ -534,14 +564,18 @@ def test_profile_json_roundtrip():
     assert restored.slide_count == 3, "slide_count should survive roundtrip"
     assert restored.aspect_ratio == "4:3", "aspect_ratio should survive roundtrip"
     assert restored.layout_density == "dense", "layout_density should survive roundtrip"
-    assert restored.has_charts_in_template is True, "has_charts should survive roundtrip"
+    assert restored.has_charts_in_template is True, (
+        "has_charts should survive roundtrip"
+    )
     assert restored.max_comfortable_bullets == 4, "max_bullets should survive roundtrip"
     print("  PASS: test_profile_json_roundtrip")
 
 
 def test_nonexistent_template():
     """Analysis should handle missing file gracefully."""
-    profile = _analyze_template_visual_profile("/tmp/nonexistent_visual_profile_test.pptx")
+    profile = _analyze_template_visual_profile(
+        "/tmp/nonexistent_visual_profile_test.pptx"
+    )
     assert profile.slide_count == 0, "Should have 0 slides for missing file"
     assert profile.slide_width_emu == 0, "Should have 0 width for missing file"
     print("  PASS: test_nonexistent_template")
@@ -577,6 +611,7 @@ def run_all_tests():
         except Exception as e:
             print("  FAIL: %s — %s" % (test_fn.__name__, e))
             import traceback
+
             traceback.print_exc()
             failed += 1
 

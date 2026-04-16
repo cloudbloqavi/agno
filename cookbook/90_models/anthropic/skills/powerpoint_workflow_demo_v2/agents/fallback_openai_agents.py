@@ -30,7 +30,7 @@ from agents._shared import (
 
 def get_openai_fallback_agents() -> Dict[str, Agent]:
     """Create and return the universal fallback agents using OpenAI models.
-    
+
     These agents mirror the required capabilities of the Tier 1 / Tier 2 fallback chains in
     the main orchestrator, offering high reliability during primary provider outages.
     """
@@ -60,7 +60,7 @@ def get_openai_fallback_agents() -> Dict[str, Agent]:
         ],
         markdown=False,
     )
-    
+
     # Pro model for robust web search and storyboard planning during Tier 1 outages
     fallback_query_optimizer = Agent(
         name="Universal Presentation Strategist (Fallback)",
@@ -75,9 +75,9 @@ def get_openai_fallback_agents() -> Dict[str, Agent]:
         ],
         markdown=False,
     )
-    
-    # Advanced logic: If Claude native PPTX generation (Tier 1) fails entirely due to limits, 
-    # the fallback content generator uses GPT-5.4 to output python-pptx manipulation scripts 
+
+    # Advanced logic: If Claude native PPTX generation (Tier 1) fails entirely due to limits,
+    # the fallback content generator uses GPT-5.4 to output python-pptx manipulation scripts
     # that achieve near-Tier 1 quality, prioritizing native charts and visual richness.
     fallback_content_generator = Agent(
         name="Universal PPTX Content Generator (Fallback)",
@@ -88,7 +88,7 @@ def get_openai_fallback_agents() -> Dict[str, Agent]:
             "visually stunning charts, tables, and layouts when the primary presentation "
             "engine is unavailable."
         ),
-        instructions=PPTX_CODE_GEN_INSTRUCTIONS, # Share the same robust code-gen instructions
+        instructions=PPTX_CODE_GEN_INSTRUCTIONS,  # Share the same robust code-gen instructions
         tools=[
             PythonTools(
                 base_dir=Path("."),

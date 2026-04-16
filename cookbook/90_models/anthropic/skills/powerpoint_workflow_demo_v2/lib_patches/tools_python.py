@@ -10,7 +10,9 @@ from agno.utils.log import log_debug, log_error, log_info, logger
 
 @functools.lru_cache(maxsize=None)
 def warn() -> None:
-    logger.warning("PythonTools can run arbitrary code, please provide human supervision.")
+    logger.warning(
+        "PythonTools can run arbitrary code, please provide human supervision."
+    )
 
 
 class PythonTools(Toolkit):
@@ -42,7 +44,11 @@ class PythonTools(Toolkit):
         super().__init__(name="python_tools", tools=tools, **kwargs)
 
     def save_to_file_and_run(
-        self, file_name: str, code: str, variable_to_return: Optional[str] = None, overwrite: bool = True
+        self,
+        file_name: str,
+        code: str,
+        variable_to_return: Optional[str] = None,
+        overwrite: bool = True,
     ) -> str:
         """This function saves Python code to a file called `file_name` and then runs it.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
@@ -58,9 +64,13 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            safe, file_path = self._check_path(
+                file_name, self.base_dir, self.restrict_to_base_dir
+            )
             if not safe:
-                return f"Error: Path '{file_name}' is outside the allowed base directory"
+                return (
+                    f"Error: Path '{file_name}' is outside the allowed base directory"
+                )
             log_debug(f"Saving code to {file_path}")
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,7 +79,9 @@ class PythonTools(Toolkit):
             file_path.write_text(code, encoding="utf-8")
             log_info(f"Saved: {file_path}")
             log_info(f"Running {file_path}")
-            globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
+            globals_after_run = runpy.run_path(
+                str(file_path), init_globals=self.safe_globals, run_name="__main__"
+            )
 
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
@@ -84,7 +96,9 @@ class PythonTools(Toolkit):
             logger.error(f"Error saving and running code: {e}\n{tb_str}")
             return f"Error saving and running code: {e}\nTraceback:\n{tb_str}"
 
-    def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
+    def run_python_file_return_variable(
+        self, file_name: str, variable_to_return: Optional[str] = None
+    ) -> str:
         """This function runs code in a Python file.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
         If failed, returns an error message.
@@ -95,11 +109,17 @@ class PythonTools(Toolkit):
         """
         try:
             warn()
-            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            safe, file_path = self._check_path(
+                file_name, self.base_dir, self.restrict_to_base_dir
+            )
             if not safe:
-                return f"Error: Path '{file_name}' is outside the allowed base directory"
+                return (
+                    f"Error: Path '{file_name}' is outside the allowed base directory"
+                )
             log_info(f"Running {file_path}")
-            globals_after_run = runpy.run_path(str(file_path), init_globals=self.safe_globals, run_name="__main__")
+            globals_after_run = runpy.run_path(
+                str(file_path), init_globals=self.safe_globals, run_name="__main__"
+            )
             if variable_to_return:
                 variable_value = globals_after_run.get(variable_to_return)
                 if variable_value is None:
@@ -120,7 +140,9 @@ class PythonTools(Toolkit):
         """
         try:
             log_info(f"Reading file: {file_name}")
-            safe, file_path = self._check_path(file_name, self.base_dir, self.restrict_to_base_dir)
+            safe, file_path = self._check_path(
+                file_name, self.base_dir, self.restrict_to_base_dir
+            )
             if not safe:
                 log_error(f"Attempted to read file outside base directory: {file_name}")
                 return "Error reading file: path outside allowed directory"
@@ -143,7 +165,9 @@ class PythonTools(Toolkit):
             logger.error(f"Error reading files: {e}")
             return f"Error reading files: {e}"
 
-    def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
+    def run_python_code(
+        self, code: str, variable_to_return: Optional[str] = None
+    ) -> str:
         """This function to runs Python code in the current environment.
         If successful, returns the value of `variable_to_return` if provided otherwise returns a success message.
         If failed, returns an error message.
@@ -187,7 +211,9 @@ class PythonTools(Toolkit):
             import subprocess
             import sys
 
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", package_name]
+            )
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")
@@ -208,7 +234,9 @@ class PythonTools(Toolkit):
             import subprocess
             import sys
 
-            subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
+            subprocess.check_call(
+                [sys.executable, "-m", "uv", "pip", "install", package_name]
+            )
             return f"successfully installed package {package_name}"
         except Exception as e:
             logger.error(f"Error installing package {package_name}: {e}")

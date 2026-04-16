@@ -222,19 +222,20 @@ import uuid
 try:
     # Ensure environment variables are loaded and override existing exported variables
     from dotenv import load_dotenv  # type: ignore
+
     load_dotenv(override=True)
 except ImportError:
     pass
 
+import random
 import shutil
 import sys
-import random
 import time
 import traceback
 import zipfile
 from dataclasses import dataclass, field
-from enum import Enum
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -248,25 +249,24 @@ from agno.run.agent import RunOutput  # type: ignore
 # and all _helper functions.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from agno.agent import Agent  # type: ignore
-from lib_patches.anthropic.claude import Claude  # type: ignore
 from agno.tools.python import PythonTools  # type: ignore
 from agno.workflow.step import Step  # type: ignore
 from agno.workflow.types import StepInput, StepOutput  # type: ignore
 from agno.workflow.workflow import Workflow  # type: ignore
 from anthropic import Anthropic  # type: ignore
 from file_download_helper import download_skill_files  # type: ignore
+from lib_patches.anthropic.claude import Claude  # type: ignore
 from powerpoint_template_workflow import *  # type: ignore # noqa: F401, F403, E402
 from powerpoint_template_workflow import (  # type: ignore
     clean_presentation_visual_noise_and_contrast,
-    sanitize_presentation,
-    sanitize_llm_shapes,
-    inject_template_footer_band,
     enforce_final_contrast,
-    step_generate_images,
+    inject_template_footer_band,
+    sanitize_llm_shapes,
+    sanitize_presentation,
     step_assemble_template,
+    step_generate_images,
     step_visual_quality_review,
 )
-
 from pptx import Presentation  # type: ignore
 from pptx.dml.color import RGBColor  # type: ignore
 from pptx.util import Inches, Pt  # type: ignore
@@ -275,9 +275,9 @@ from pydantic import BaseModel, Field  # type: ignore
 # Default inter-chunk delays in milliseconds based on Tier 2 / Pay-as-you-go rate limits
 # (End of imports)
 DEFAULT_INTER_CHUNK_DELAYS_MS = {
-    "claude": {"min": 2000, "max": 5000},   # 1K RPM, 450K TPM
-    "openai": {"min": 1000, "max": 2000},   # 5K RPM, 2M TPM
-    "gemini": {"min": 1000, "max": 2000},   # 1-2K RPM, multi-million TPM
+    "claude": {"min": 2000, "max": 5000},  # 1K RPM, 450K TPM
+    "openai": {"min": 1000, "max": 2000},  # 5K RPM, 2M TPM
+    "gemini": {"min": 1000, "max": 2000},  # 1-2K RPM, multi-million TPM
 }
 
 # Global verbose flag (overridden in main() or by session_state)
@@ -285,11 +285,14 @@ VERBOSE = False
 
 # === TELEMETRY SETUP (Langfuse via OpenInference) ===
 
+
 def setup_langfuse_telemetry():
     """Setup Langfuse telemetry via OpenInference and OpenTelemetry following best practices."""
     public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
     secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://cloud.langfuse.com/api/public/otel")
+    endpoint = os.getenv(
+        "OTEL_EXPORTER_OTLP_ENDPOINT", "https://cloud.langfuse.com/api/public/otel"
+    )
 
     if not public_key or not secret_key:
         if VERBOSE:
@@ -298,6 +301,7 @@ def setup_langfuse_telemetry():
 
     if not os.getenv("OTEL_EXPORTER_OTLP_HEADERS"):
         import base64
+
         auth = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {auth}"
 
@@ -308,27 +312,33 @@ def setup_langfuse_telemetry():
         if VERBOSE:
             import sys
         from openinference.instrumentation.agno import AgnoInstrumentor
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         # Best Practice: Define Service Resource
-        resource = Resource(attributes={
-            "service.name": "agno-pptx-workflow",
-            "environment": os.getenv("APP_ENV", "development"),
-        })
+        resource = Resource(
+            attributes={
+                "service.name": "agno-pptx-workflow",
+                "environment": os.getenv("APP_ENV", "development"),
+            }
+        )
 
         tracer_provider = TracerProvider(resource=resource)
         # Best Practice: BatchSpanProcessor for efficiency
         tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-        
+
         # Instrument Agno
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
-        
+
         if VERBOSE:
-            print(f"[TELEMETRY] Langfuse initialized (Service: agno-pptx-workflow, Endpoint: {os.environ['OTEL_EXPORTER_OTLP_ENDPOINT']})")
-        
+            print(
+                f"[TELEMETRY] Langfuse initialized (Service: agno-pptx-workflow, Endpoint: {os.environ['OTEL_EXPORTER_OTLP_ENDPOINT']})"
+            )
+
         return tracer_provider
     except ImportError as e:
         if VERBOSE:
@@ -354,12 +364,12 @@ def setup_langfuse_telemetry():
 
 # Per-model input-token-per-minute limits (Tier 1 defaults)
 _ANTHROPIC_TOKEN_LIMITS: Dict[str, int] = {
-    "claude-opus-4-6":    30_000,
-    "claude-sonnet-4-6":  30_000,
-    "claude-haiku-4-5":   50_000,
-    "claude-haiku-3-5":   50_000,
+    "claude-opus-4-6": 30_000,
+    "claude-sonnet-4-6": 30_000,
+    "claude-haiku-4-5": 50_000,
+    "claude-haiku-3-5": 50_000,
     # fallback for unknown Claude models
-    "default":            30_000,
+    "default": 30_000,
 }
 
 
@@ -376,7 +386,9 @@ class _RateLimitTracker:
     """
 
     def __init__(self) -> None:
-        self._calls: List[Dict] = []   # list of {"ts": float, "model": str, "tokens": int}
+        self._calls: List[
+            Dict
+        ] = []  # list of {"ts": float, "model": str, "tokens": int}
 
     def _prune(self) -> None:
         """Remove entries older than 60 seconds from the rolling window."""
@@ -416,7 +428,10 @@ class _RateLimitTracker:
 
         if window_used + estimated > limit:
             # Find oldest call within the window to determine when the window resets
-            oldest_ts = min((c["ts"] for c in self._calls if c["model"] == model), default=time.time())
+            oldest_ts = min(
+                (c["ts"] for c in self._calls if c["model"] == model),
+                default=time.time(),
+            )
             sleep_secs = max(1.0, 61.0 - (time.time() - oldest_ts))
             print(
                 "[RATE TRACKER] Estimated token budget would be exceeded (%d + %d > %d). "
@@ -474,7 +489,8 @@ def _countdown_sleep(seconds: float, label: str = "[GENERATE]") -> None:
         tick = min(15.0, remaining)
         if remaining > 15:
             print(
-                "%s Waiting... %.0fs remaining (%.0fs total)" % (label, remaining, seconds)
+                "%s Waiting... %.0fs remaining (%.0fs total)"
+                % (label, remaining, seconds)
             )
         else:
             print("%s Final %.0fs..." % (label, remaining))
@@ -543,7 +559,10 @@ def _inter_chunk_sleep(
         reason = "(max delay — rate limit hit)"
     else:
         delay = random.uniform(min_delay, max_delay)
-        reason = "(rate limit safety jitter: %.0f–%.0fms range)" % (min_delay, max_delay)
+        reason = "(rate limit safety jitter: %.0f–%.0fms range)" % (
+            min_delay,
+            max_delay,
+        )
 
     delay_sec = delay / 1000.0
 
@@ -558,8 +577,11 @@ def _inter_chunk_sleep(
     )
 
 
-from agents._shared import LayoutConstraints, SlideStoryboard, StoryboardPlan  # type: ignore
-
+from agents._shared import (  # type: ignore
+    LayoutConstraints,
+    SlideStoryboard,
+    StoryboardPlan,
+)
 
 # === TEMPLATE VISUAL PROFILE DATACLASSES ===
 # Programmatic analysis of template layout characteristics, computed before
@@ -648,9 +670,6 @@ class TemplateVisualProfile:
     accent_pattern: dict = field(default_factory=dict)
 
 
-
-
-
 # === BRAND/STYLE INTENT MODEL ===
 
 
@@ -737,7 +756,7 @@ class BrandStyleIntent(BaseModel):
         description=(
             "The autonomously selected or generated Theme metadata containing "
             "color palette (hex codes) and typography for Tier 2 extraction."
-        )
+        ),
     )
 
 
@@ -782,6 +801,7 @@ def _log_agent_banner(
         "│ 📋 STEP:  %s\n"
         "└%s" % (line, agent_name, model_id, provider, step_name, line)
     )
+
 
 # === TEMPLATE VISUAL REFERENCE (Concern 1+6) ===
 # Renders template slides to PNG and builds visual reference sections for
@@ -837,8 +857,18 @@ def _render_template_slides_to_png(
     try:
         # Step 1: PPTX → PDF
         pdf_result = subprocess.run(
-            [lo_cmd, "--headless", "--convert-to", "pdf", "--outdir", png_dir, template_path],
-            capture_output=True, text=True, timeout=120,
+            [
+                lo_cmd,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                png_dir,
+                template_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if pdf_result.returncode != 0:
             if VERBOSE:
@@ -855,11 +885,15 @@ def _render_template_slides_to_png(
 
         # Step 2: PDF → PNGs via pdftoppm (72 DPI for optimal context budget)
         if VERBOSE:
-            print("[VERBOSE] [PIPELINE] PPTX -> PDF -> PNG: Rendering per-slide placeholders at 72 DPI...")
+            print(
+                "[VERBOSE] [PIPELINE] PPTX -> PDF -> PNG: Rendering per-slide placeholders at 72 DPI..."
+            )
         png_prefix = os.path.join(png_dir, "tmpl")
         ppm_result = subprocess.run(
             [pdftoppm_cmd, "-png", "-r", "72", pdf_path, png_prefix],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
 
         # Cleanup PDF
@@ -934,7 +968,8 @@ def _match_storyboard_to_template_slide(
 
 
 def _build_visual_reference_section(
-    chunk_slides: List, template_pngs: Dict[int, str],
+    chunk_slides: List,
+    template_pngs: Dict[int, str],
     brand_style_intent: Optional["BrandStyleIntent"] = None,
 ) -> str:
     """Build a markdown prompt section with base64-encoded template slide references.
@@ -978,7 +1013,10 @@ def _build_visual_reference_section(
             used_refs.add(ref_path)
             try:
                 if VERBOSE:
-                    print("[VERBOSE] [IMAGE] Encoding base64 reference for slide: %s" % ref_path)
+                    print(
+                        "[VERBOSE] [IMAGE] Encoding base64 reference for slide: %s"
+                        % ref_path
+                    )
                 with open(ref_path, "rb") as f:
                     img_data = base64.b64encode(f.read()).decode("ascii")
                 sections.append(
@@ -1003,57 +1041,75 @@ def _build_visual_reference_section(
         meta_parts: list[str] = []
         if getattr(brand_style_intent, "color_palette", None):
             meta_parts.append(
-                "- **Theme Colors:** %s" % ", ".join(list(brand_style_intent.color_palette)) # type: ignore
+                "- **Theme Colors:** %s"
+                % ", ".join(list(brand_style_intent.color_palette))  # type: ignore
             )
         if getattr(brand_style_intent, "typography_hints", None):
             meta_parts.append(
-                "- **Theme Fonts:** %s" % ", ".join(list(brand_style_intent.typography_hints)) # type: ignore
+                "- **Theme Fonts:** %s"
+                % ", ".join(list(brand_style_intent.typography_hints))  # type: ignore
             )
         if getattr(brand_style_intent, "brand_name", None):
             meta_parts.append(
-                "- **Company/Brand:** %s" % str(brand_style_intent.brand_name) # type: ignore
+                "- **Company/Brand:** %s" % str(brand_style_intent.brand_name)  # type: ignore
             )
         if meta_parts:
             theme_metadata = (
                 "\n### Template Theme Metadata\n"
                 "Use these EXACT values when reproducing the template style:\n"
-                + "\n".join(meta_parts) + "\n"
+                + "\n".join(meta_parts)
+                + "\n"
             )
 
     return (
         "\n## VISUAL REFERENCE — Template Slides\n"
         "The following images show what the template slides look like. "
         "Use them as visual reference for layout, positioning, and styling.\n"
-        + theme_metadata + "\n"
+        + theme_metadata
+        + "\n"
         + "\n".join(sections)
     )
 
 
 # === BRAND/STYLE HELPER FUNCTIONS ===
 
-def _resolve_theme_with_factory(brand_intent: "BrandStyleIntent", agent_model) -> "BrandStyleIntent":
+
+def _resolve_theme_with_factory(
+    brand_intent: "BrandStyleIntent", agent_model
+) -> "BrandStyleIntent":
     """
     Uses the Agno Skills Architecture to either select an existing theme or dynamically generate
     a custom theme if a template wasn't provided but branding is required.
     """
     try:
         import os
-        from agno.agent import Agent # type: ignore
-        from agno.skills import Skills, LocalSkills # type: ignore
+
+        from agno.agent import Agent  # type: ignore
+        from agno.skills import LocalSkills, Skills  # type: ignore
         from pydantic import BaseModel, Field
-        
+
         class ThemeDefinition(BaseModel):
             name: str = Field(..., description="Name of the theme.")
-            source: str = Field(..., description="Must be exactly 'predefined' if citing a theme from the folder, or 'custom' if you generated it from scratch.")
+            source: str = Field(
+                ...,
+                description="Must be exactly 'predefined' if citing a theme from the folder, or 'custom' if you generated it from scratch.",
+            )
             description: str = Field(..., description="Description of the theme usage.")
-            palette: dict[str, str] = Field(..., description="Dictionary mapping color names (e.g., 'accent1', 'dk1', 'lt1', 'lt2') to hex codes.")
-            typography: dict[str, str] = Field(..., description="Dictionary with 'major' and 'minor' font names.")
-        
+            palette: dict[str, str] = Field(
+                ...,
+                description="Dictionary mapping color names (e.g., 'accent1', 'dk1', 'lt1', 'lt2') to hex codes.",
+            )
+            typography: dict[str, str] = Field(
+                ..., description="Dictionary with 'major' and 'minor' font names."
+            )
+
         # Point LocalSkills to the directory containing 'theme-factory/SKILL.md'
         skills_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        print(f"[BRAND] Activating Theme Factory to resolve presentation styling (fallback agent: {getattr(agent_model, 'id', 'unknown')})...")
-        
+
+        print(
+            f"[BRAND] Activating Theme Factory to resolve presentation styling (fallback agent: {getattr(agent_model, 'id', 'unknown')})..."
+        )
+
         theme_agent = Agent(
             name="Theme Selector Agent",
             model=agent_model,
@@ -1069,52 +1125,75 @@ def _resolve_theme_with_factory(brand_intent: "BrandStyleIntent", agent_model) -
                 "1. If the user explicitly asks for a specific preset theme OR if a preset matches the basic mood, output that strictly and set source='predefined'.",
                 "2. If the brand is highly specific (e.g., real-world distinct brand colors) AND no preset is a perfect match, you MUST generate a new custom theme and set source='custom'.",
                 "Your final output MUST be a valid JSON matching the ThemeDefinition schema.",
-                "Always output valid JSON."
+                "Always output valid JSON.",
             ],
             output_schema=ThemeDefinition,
             markdown=False,
         )
-        
-        response = theme_agent.run("Resolve the best theme for the given brand intent.", stream=False)
-        
-        if response and response.content and isinstance(response.content, ThemeDefinition):
+
+        response = theme_agent.run(
+            "Resolve the best theme for the given brand intent.", stream=False
+        )
+
+        if (
+            response
+            and response.content
+            and isinstance(response.content, ThemeDefinition)
+        ):
             brand_intent.theme_definition = response.content.model_dump()
-            
-            source_type = brand_intent.theme_definition.get('source', 'unknown').upper()
-            theme_name = brand_intent.theme_definition.get('name', 'Unknown')
-            print(f"[BRAND] Theme Factory successfully resolved a [{source_type}] theme: {theme_name}")
-            
+
+            source_type = brand_intent.theme_definition.get("source", "unknown").upper()
+            theme_name = brand_intent.theme_definition.get("name", "Unknown")
+            print(
+                f"[BRAND] Theme Factory successfully resolved a [{source_type}] theme: {theme_name}"
+            )
+
             # --- CRITICAL: Propagate theme palette back into brand_intent fields ---
             # This ensures _build_no_template_design_system and
             # _format_brand_context_for_prompt use the resolved theme hex codes
             # instead of the initial Brand Analyzer's generic color names.
-            theme_palette = brand_intent.theme_definition.get('palette', {})
+            theme_palette = brand_intent.theme_definition.get("palette", {})
             if theme_palette:
                 brand_intent.color_palette = list(theme_palette.values())
-                print("[BRAND] Propagated theme palette → brand_intent.color_palette: %s" % brand_intent.color_palette)
-            theme_typo = brand_intent.theme_definition.get('typography', {})
+                print(
+                    "[BRAND] Propagated theme palette → brand_intent.color_palette: %s"
+                    % brand_intent.color_palette
+                )
+            theme_typo = brand_intent.theme_definition.get("typography", {})
             if theme_typo:
                 brand_intent.typography_hints = list(theme_typo.values())
-                print("[BRAND] Propagated theme typography → brand_intent.typography_hints: %s" % brand_intent.typography_hints)
-            
+                print(
+                    "[BRAND] Propagated theme typography → brand_intent.typography_hints: %s"
+                    % brand_intent.typography_hints
+                )
+
             try:
                 import json
+
                 # Always show a high-level summary of the decision
-                print("[BRAND] Theme Palette Colors: %s" % str(list(theme_palette.values())))
+                print(
+                    "[BRAND] Theme Palette Colors: %s"
+                    % str(list(theme_palette.values()))
+                )
                 print("[BRAND] Theme Typography: %s" % str(list(theme_typo.values())))
-                
+
                 # If VERBOSE is enabled globally, dump the full structure
                 if "VERBOSE" in globals() and globals()["VERBOSE"]:
-                    print("[VERBOSE] [BRAND] Detailed Theme Metadata injected into layout prompt:")
-                    print("[VERBOSE]\n%s" % json.dumps(brand_intent.theme_definition, indent=2))
+                    print(
+                        "[VERBOSE] [BRAND] Detailed Theme Metadata injected into layout prompt:"
+                    )
+                    print(
+                        "[VERBOSE]\n%s"
+                        % json.dumps(brand_intent.theme_definition, indent=2)
+                    )
             except Exception:
                 pass
         else:
             print("[BRAND] Theme Factory did not return a valid ThemeDefinition.")
-            
+
     except Exception as e:
         print(f"[WARNING] Theme Factory resolution failed: {e}")
-        
+
     return brand_intent
 
 
@@ -1130,9 +1209,9 @@ def parse_brand_style_intent(
         This step logs whether explicit intent was found.
 
     Stage 2 — gpt-4o-mini classification and extraction (always runs):
-        Even if Stage 1 finds no explicit signals, the LLM is always invoked 
-        to catch implicit styling intent that keywords might have missed. 
-        Uses the brand_style_analyzer agent (configured as gpt-4o-mini) which 
+        Even if Stage 1 finds no explicit signals, the LLM is always invoked
+        to catch implicit styling intent that keywords might have missed.
+        Uses the brand_style_analyzer agent (configured as gpt-4o-mini) which
         runs on OpenAI's separate rate-limit pool and does NOT consume Anthropic
         input tokens. This preserves the claude-haiku-4-5 budget for chunk generation.
 
@@ -1196,10 +1275,10 @@ def parse_brand_style_intent(
 
     try:
         _log_agent_banner(
-            agent_name=getattr(brand_agent, 'name', 'Brand Style Analyzer'),
-            model_id=getattr(getattr(brand_agent, 'model', None), 'id', 'unknown'),
-            provider=getattr(getattr(brand_agent, 'model', None), 'provider', 'OpenAI'),
-            step_name='step_optimize_and_plan / Brand Parse',
+            agent_name=getattr(brand_agent, "name", "Brand Style Analyzer"),
+            model_id=getattr(getattr(brand_agent, "model", None), "id", "unknown"),
+            provider=getattr(getattr(brand_agent, "model", None), "provider", "OpenAI"),
+            step_name="step_optimize_and_plan / Brand Parse",
         )
         response = brand_agent.run(user_prompt, stream=False)
 
@@ -1244,13 +1323,21 @@ def parse_brand_style_intent(
             print("[BRAND] Attempting fallback brand style analysis...")
             try:
                 _log_agent_banner(
-                    agent_name=getattr(brand_agent_fallback, 'name', 'Brand Style Analyzer (Fallback)'),
-                    model_id=getattr(getattr(brand_agent_fallback, 'model', None), 'id', 'unknown'),
-                    provider=getattr(getattr(brand_agent_fallback, 'model', None), 'provider', 'Fallback'),
-                    step_name='step_optimize_and_plan / Brand Parse (Fallback)',
+                    agent_name=getattr(
+                        brand_agent_fallback, "name", "Brand Style Analyzer (Fallback)"
+                    ),
+                    model_id=getattr(
+                        getattr(brand_agent_fallback, "model", None), "id", "unknown"
+                    ),
+                    provider=getattr(
+                        getattr(brand_agent_fallback, "model", None),
+                        "provider",
+                        "Fallback",
+                    ),
+                    step_name="step_optimize_and_plan / Brand Parse (Fallback)",
                 )
                 response = brand_agent_fallback.run(user_prompt, stream=False)
-                
+
                 if response and response.content:
                     content = response.content
                     if isinstance(content, BrandStyleIntent):
@@ -1270,8 +1357,11 @@ def parse_brand_style_intent(
                         intent = BrandStyleIntent.model_validate_json(text)
                     return intent
             except Exception as fallback_e:
-                print("[WARNING] Fallback brand style analysis failed: %s" % str(fallback_e))
-        
+                print(
+                    "[WARNING] Fallback brand style analysis failed: %s"
+                    % str(fallback_e)
+                )
+
         if VERBOSE:  # noqa: F405
             traceback.print_exc()
 
@@ -1320,9 +1410,21 @@ def extract_style_from_template(template_path: str) -> "BrandStyleIntent":
                 # Search for clrScheme in the theme
                 for clr_scheme in theme_part.iter(ns_a + "clrScheme"):
                     for child in clr_scheme:
-                        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                        if tag in ("dk1", "dk2", "lt1", "lt2", "accent1", "accent2",
-                                   "accent3", "accent4", "accent5", "accent6"):
+                        tag = (
+                            child.tag.split("}")[-1] if "}" in child.tag else child.tag
+                        )
+                        if tag in (
+                            "dk1",
+                            "dk2",
+                            "lt1",
+                            "lt2",
+                            "accent1",
+                            "accent2",
+                            "accent3",
+                            "accent4",
+                            "accent5",
+                            "accent6",
+                        ):
                             for color_el in child:
                                 val = color_el.get("val", "")
                                 last_clr = color_el.get("lastClr", "")
@@ -1334,7 +1436,9 @@ def extract_style_from_template(template_path: str) -> "BrandStyleIntent":
                 print("[VERBOSE] Theme color extraction error: %s" % e)
 
         if colors:
-            intent.color_palette = list(dict.fromkeys(colors))[:8]  # dedupe, max 8  # type: ignore
+            intent.color_palette = list(dict.fromkeys(colors))[
+                :8
+            ]  # dedupe, max 8  # type: ignore
             print("[BRAND] Template colors: %s" % intent.color_palette)
 
         # --- Extract theme fonts ---
@@ -1371,8 +1475,11 @@ def extract_style_from_template(template_path: str) -> "BrandStyleIntent":
                         if 0 < len(text) < 60 and len(text.split()) <= 4:
                             lower = text.lower()
                             skip = {
-                                "click to add title", "click to add subtitle",
-                                "click to add text", "title", "subtitle",
+                                "click to add title",
+                                "click to add subtitle",
+                                "click to add text",
+                                "title",
+                                "subtitle",
                             }
                             if lower not in skip:
                                 intent.brand_name = text
@@ -1387,7 +1494,9 @@ def extract_style_from_template(template_path: str) -> "BrandStyleIntent":
 
     except Exception as e:
         print("[WARNING] Template style extraction failed: %s" % str(e))
-        return BrandStyleIntent(source="template", source_detail=str(os.path.basename(template_path))) # type: ignore
+        return BrandStyleIntent(
+            source="template", source_detail=str(os.path.basename(template_path))
+        )  # type: ignore
 
     return intent
 
@@ -1428,7 +1537,9 @@ def _analyze_template_visual_profile(
         Returns a default profile on any read error (graceful degradation).
     """
     if VERBOSE:
-        print("[VERBOSE] [VISUAL PROFILE] Starting template analysis: %s" % template_path)
+        print(
+            "[VERBOSE] [VISUAL PROFILE] Starting template analysis: %s" % template_path
+        )
 
     profile = TemplateVisualProfile()
 
@@ -1464,7 +1575,9 @@ def _analyze_template_visual_profile(
     profile.slide_count = len(slides)
     if not slides:
         if VERBOSE:
-            print("[VERBOSE] [VISUAL PROFILE] Template has no slides — returning defaults.")
+            print(
+                "[VERBOSE] [VISUAL PROFILE] Template has no slides — returning defaults."
+            )
         return profile
 
     # Footer/utility placeholder indices to exclude from content zone
@@ -1513,7 +1626,10 @@ def _analyze_template_visual_profile(
                     content_ph_bottom = s_bottom
             else:
                 # Non-placeholder shape classification
-                if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                if (
+                    getattr(shape, "has_text_frame", False)
+                    and shape.text_frame.text.strip()
+                ):
                     sp.text_box_count += 1
                 elif shape.has_chart:
                     profile.has_charts_in_template = True
@@ -1533,20 +1649,29 @@ def _analyze_template_visual_profile(
                     sp.decorative_shape_count += 1
 
         # --- Content zone percentages ---
-        if content_ph_left is not None and content_ph_top is not None and content_ph_right is not None and content_ph_bottom is not None:
+        if (
+            content_ph_left is not None
+            and content_ph_top is not None
+            and content_ph_right is not None
+            and content_ph_bottom is not None
+        ):
             sp.content_zone_left_pct = round(  # type: ignore
-                float(content_ph_left) / float(prs.slide_width) * 100.0, 1  # type: ignore
+                float(content_ph_left) / float(prs.slide_width) * 100.0,
+                1,  # type: ignore
             )
             sp.content_zone_top_pct = round(  # type: ignore
-                float(content_ph_top) / float(prs.slide_height) * 100.0, 1  # type: ignore
+                float(content_ph_top) / float(prs.slide_height) * 100.0,
+                1,  # type: ignore
             )
             zone_w = content_ph_right - content_ph_left
             zone_h = content_ph_bottom - content_ph_top
             sp.content_zone_width_pct = round(  # type: ignore
-                float(zone_w) / float(prs.slide_width) * 100.0, 1  # type: ignore
+                float(zone_w) / float(prs.slide_width) * 100.0,
+                1,  # type: ignore
             )
             sp.content_zone_height_pct = round(  # type: ignore
-                float(zone_h) / float(prs.slide_height) * 100.0, 1  # type: ignore
+                float(zone_h) / float(prs.slide_height) * 100.0,
+                1,  # type: ignore
             )
             # Effective usable area (reduced by decorative shapes heuristically)
             deco_reduction = min(float(sp.decorative_shape_count) * 5.0, 25.0)
@@ -1597,10 +1722,15 @@ def _analyze_template_visual_profile(
                 if not (is_horizontal_bar or is_vertical_bar):
                     continue
                 # Skip shapes with text (likely labels, not accents)
-                if getattr(shape, "has_text_frame", False) and shape.text_frame.text.strip():
+                if (
+                    getattr(shape, "has_text_frame", False)
+                    and shape.text_frame.text.strip()
+                ):
                     continue
                 # Skip pictures and charts
-                if getattr(shape, "has_chart", False) or getattr(shape, "has_table", False):
+                if getattr(shape, "has_chart", False) or getattr(
+                    shape, "has_table", False
+                ):
                     continue
                 shape_type_val = int(shape.shape_type) if shape.shape_type else 0
                 if shape_type_val in (13, 11):  # picture types
@@ -1636,15 +1766,17 @@ def _analyze_template_visual_profile(
                 else:
                     region = "middle"
 
-                sp.accent_shapes.append({
-                    "orientation": orientation,
-                    "region": region,
-                    "top_pct": top_pct,
-                    "left_pct": left_pct,
-                    "width_pct": width_pct,
-                    "height_pct": height_pct,
-                    "color": accent_color,
-                })
+                sp.accent_shapes.append(
+                    {
+                        "orientation": orientation,
+                        "region": region,
+                        "top_pct": top_pct,
+                        "left_pct": left_pct,
+                        "width_pct": width_pct,
+                        "height_pct": height_pct,
+                        "color": accent_color,
+                    }
+                )
             except Exception:
                 pass  # Accent detection is best-effort
 
@@ -1672,10 +1804,12 @@ def _analyze_template_visual_profile(
     # --- Aggregate metrics ---
     n = float(len(slide_profiles))
     profile.avg_placeholder_count = round(  # type: ignore
-        float(sum(sp.placeholder_count for sp in slide_profiles)) / n, 1  # type: ignore
+        float(sum(sp.placeholder_count for sp in slide_profiles)) / n,
+        1,  # type: ignore
     )
     profile.avg_decorative_shapes = round(  # type: ignore
-        float(sum(sp.decorative_shape_count for sp in slide_profiles)) / n, 1  # type: ignore
+        float(sum(sp.decorative_shape_count for sp in slide_profiles)) / n,
+        1,  # type: ignore
     )
     profile.avg_content_zone_width_pct = round(float(sum(content_w_pcts)) / n, 1)  # type: ignore
     profile.avg_content_zone_height_pct = round(float(sum(content_h_pcts)) / n, 1)  # type: ignore
@@ -1750,17 +1884,44 @@ def _analyze_template_visual_profile(
         colors = [a["color"] for a in all_accents if a.get("color")]
 
         from collections import Counter
-        dominant_orientation = Counter(orientations).most_common(1)[0][0] if orientations else "horizontal"
+
+        dominant_orientation = (
+            Counter(orientations).most_common(1)[0][0] if orientations else "horizontal"
+        )
         dominant_region = Counter(regions).most_common(1)[0][0] if regions else "top"
         dominant_color = Counter(colors).most_common(1)[0][0] if colors else None
 
         # Average geometry for the dominant pattern
-        matching = [a for a in all_accents
-                    if a["orientation"] == dominant_orientation and a["region"] == dominant_region]
-        avg_top = round(float(sum(a["top_pct"] for a in matching)) / float(len(matching)), 1) if matching else 0  # type: ignore
-        avg_left = round(float(sum(a["left_pct"] for a in matching)) / float(len(matching)), 1) if matching else 0  # type: ignore
-        avg_width = round(float(sum(a["width_pct"] for a in matching)) / float(len(matching)), 1) if matching else 0  # type: ignore
-        avg_height = round(float(sum(a["height_pct"] for a in matching)) / float(len(matching)), 1) if matching else 0  # type: ignore
+        matching = [
+            a
+            for a in all_accents
+            if a["orientation"] == dominant_orientation
+            and a["region"] == dominant_region
+        ]
+        avg_top = (
+            round(float(sum(a["top_pct"] for a in matching)) / float(len(matching)), 1)
+            if matching
+            else 0
+        )  # type: ignore
+        avg_left = (
+            round(float(sum(a["left_pct"] for a in matching)) / float(len(matching)), 1)
+            if matching
+            else 0
+        )  # type: ignore
+        avg_width = (
+            round(
+                float(sum(a["width_pct"] for a in matching)) / float(len(matching)), 1
+            )
+            if matching
+            else 0
+        )  # type: ignore
+        avg_height = (
+            round(
+                float(sum(a["height_pct"] for a in matching)) / float(len(matching)), 1
+            )
+            if matching
+            else 0
+        )  # type: ignore
 
         profile.accent_pattern = {
             "orientation": dominant_orientation,
@@ -1770,7 +1931,9 @@ def _analyze_template_visual_profile(
             "avg_left_pct": avg_left,
             "avg_width_pct": avg_width,
             "avg_height_pct": avg_height,
-            "slide_coverage_pct": round(float(slides_with_accents) / float(len(slide_profiles)) * 100.0, 0), # type: ignore
+            "slide_coverage_pct": round(
+                float(slides_with_accents) / float(len(slide_profiles)) * 100.0, 0
+            ),  # type: ignore
             "total_accent_count": len(all_accents),
         }
 
@@ -1900,23 +2063,19 @@ def _format_brand_context_for_prompt(brand_intent: "BrandStyleIntent") -> str:
         )
 
     # Include resolved Theme Factory definition if available
-    theme_def = getattr(brand_intent, 'theme_definition', None)
+    theme_def = getattr(brand_intent, "theme_definition", None)
     if theme_def and isinstance(theme_def, dict):
         sections.append("")
         sections.append("### Resolved Theme Definition (from Theme Factory)")
-        sections.append("**Theme Name:** %s" % theme_def.get('name', 'Unknown'))
-        sections.append("**Theme Source:** %s" % theme_def.get('source', 'unknown'))
-        palette = theme_def.get('palette', {})
+        sections.append("**Theme Name:** %s" % theme_def.get("name", "Unknown"))
+        sections.append("**Theme Source:** %s" % theme_def.get("source", "unknown"))
+        palette = theme_def.get("palette", {})
         if palette:
-            palette_str = ", ".join(
-                "%s: %s" % (k, v) for k, v in palette.items()
-            )
+            palette_str = ", ".join("%s: %s" % (k, v) for k, v in palette.items())
             sections.append("**Theme Palette (hex):** %s" % palette_str)
-        typo = theme_def.get('typography', {})
+        typo = theme_def.get("typography", {})
         if typo:
-            typo_str = ", ".join(
-                "%s: %s" % (k, v) for k, v in typo.items()
-            )
+            typo_str = ", ".join("%s: %s" % (k, v) for k, v in typo.items())
             sections.append("**Theme Typography:** %s" % typo_str)
         sections.append(
             "\nYou MUST use the Theme Palette hex codes above for ALL slide backgrounds, "
@@ -1956,7 +2115,10 @@ def _format_visual_profile_for_prompt(
     sections.append("- **Aspect Ratio:** %s" % profile.aspect_ratio)
     sections.append(
         "- **Layout Density:** %s (avg %.1f shapes/slide)"
-        % (profile.layout_density, profile.avg_placeholder_count + profile.avg_decorative_shapes)
+        % (
+            profile.layout_density,
+            profile.avg_placeholder_count + profile.avg_decorative_shapes,
+        )
     )
     sections.append(
         "- **Content Zone:** ~%.0f%% width, ~%.0f%% height"
@@ -1986,7 +2148,9 @@ def _format_visual_profile_for_prompt(
         elements.append("SmartArt")
     deco_note = ""
     if profile.avg_decorative_shapes > 1:
-        deco_note = ", decorative shapes (avg %.0f/slide)" % profile.avg_decorative_shapes
+        deco_note = (
+            ", decorative shapes (avg %.0f/slide)" % profile.avg_decorative_shapes
+        )
     sections.append(
         "- **Template Contains:** %s%s"
         % (", ".join(elements) if elements else "text placeholders only", deco_note)
@@ -2002,7 +2166,12 @@ def _format_visual_profile_for_prompt(
         "- Prefer visual_suggestions that complement existing template decorations.\n"
         % (
             profile.max_comfortable_bullets,
-            max(8, 100 - profile.avg_content_zone_height_pct - (100 - profile.avg_content_zone_width_pct) / 2),  # type: ignore
+            max(
+                8,
+                100
+                - profile.avg_content_zone_height_pct
+                - (100 - profile.avg_content_zone_width_pct) / 2,
+            ),  # type: ignore
             min(92, profile.avg_content_zone_height_pct + 12),  # type: ignore
             profile.recommended_text_weight,
         )
@@ -2018,9 +2187,7 @@ def _format_visual_profile_for_prompt(
     # Tier 2 code-gen can reproduce them without relying solely on visual PNGs.
     if profile.has_accent_lines and profile.accent_pattern:
         ap = profile.accent_pattern
-        color_note = (
-            " in color #%s" % ap["color"] if ap.get("color") else ""
-        )
+        color_note = " in color #%s" % ap["color"] if ap.get("color") else ""
         sections.append(
             "\nACCENT LINE PATTERN (MUST REPLICATE ON EVERY CONTENT SLIDE):\n"
             "The template uses a consistent **%s accent bar** in the **%s** region%s.\n"
@@ -2071,7 +2238,7 @@ def _format_slide_markdown(slide: SlideStoryboard) -> str:
     ]
     if getattr(slide, "key_metrics", []):
         lines.append("**Key Metrics:** %s" % ", ".join(slide.key_metrics))
-        
+
     lines.append("**Key Points:**")
     for point in slide.key_points:
         lines.append("- %s" % point)
@@ -2151,28 +2318,34 @@ def _build_no_template_design_system(
     # Factory provides the concrete hex codes. If theme_definition is absent AND
     # visual_style is template_driven, fall back to clean_minimal.
     if visual_style == "template_driven":
-        if brand_intent and getattr(brand_intent, 'theme_definition', None):
+        if brand_intent and getattr(brand_intent, "theme_definition", None):
             # Theme Factory resolved a theme — build design system from it
             td = brand_intent.theme_definition
-            palette = td.get('palette', {})
-            typo = td.get('typography', {})
+            palette = td.get("palette", {})
+            typo = td.get("typography", {})
             # Map theme palette keys to design tokens
-            dk1 = palette.get('dk1', '1A1A2E').lstrip('#')
-            accent1 = palette.get('accent1', '00D4AA').lstrip('#')
-            lt1 = palette.get('lt1', 'CCCCCC').lstrip('#')
-            lt2 = palette.get('lt2', 'FFFFFF').lstrip('#')
-            major_font = typo.get('major', 'Segoe UI')
-            minor_font = typo.get('minor', 'Calibri')
+            dk1 = palette.get("dk1", "1A1A2E").lstrip("#")
+            accent1 = palette.get("accent1", "00D4AA").lstrip("#")
+            lt1 = palette.get("lt1", "CCCCCC").lstrip("#")
+            lt2 = palette.get("lt2", "FFFFFF").lstrip("#")
+            major_font = typo.get("major", "Segoe UI")
+            minor_font = typo.get("minor", "Calibri")
 
             # Determine if dark or light background
             try:
-                lum = (int(dk1[:2], 16) * 0.299 + int(dk1[2:4], 16) * 0.587 + int(dk1[4:6], 16) * 0.114) / 255
+                lum = (
+                    int(dk1[:2], 16) * 0.299
+                    + int(dk1[2:4], 16) * 0.587
+                    + int(dk1[4:6], 16) * 0.114
+                ) / 255
             except Exception:
                 lum = 0.1
-            text_hex = lt2 if lum < 0.4 else '333333'
-            text_label = 'light/white' if lum < 0.4 else 'dark'
+            text_hex = lt2 if lum < 0.4 else "333333"
+            text_label = "light/white" if lum < 0.4 else "dark"
 
-            brand_name_text = brand_intent.brand_name.upper() if brand_intent.brand_name else 'LOGO'
+            brand_name_text = (
+                brand_intent.brand_name.upper() if brand_intent.brand_name else "LOGO"
+            )
 
             if VERBOSE:
                 print(
@@ -2214,17 +2387,29 @@ def _build_no_template_design_system(
                 "  - For charts: use theme accent colors for data series, NOT default Office colors.\n"
                 "  - For tables: header row fill=#%s with text=#%s; body rows alternate #%s and background.\n"
             ) % (
-                td.get('name', 'Custom Theme'),
-                dk1, dk1[:2], dk1[2:4], dk1[4:6],
-                text_hex, text_label,
-                lt2, major_font,
+                td.get("name", "Custom Theme"),
+                dk1,
+                dk1[:2],
+                dk1[2:4],
+                dk1[4:6],
+                text_hex,
+                text_label,
+                lt2,
+                major_font,
                 minor_font,
-                accent1, lt1,
+                accent1,
+                lt1,
                 brand_name_text,
-                accent1[:2], accent1[2:4], accent1[4:6],
-                dk1, dk1,
-                accent1, lt1,
-                accent1, lt2, lt1,
+                accent1[:2],
+                accent1[2:4],
+                accent1[4:6],
+                dk1,
+                dk1,
+                accent1,
+                lt1,
+                accent1,
+                lt2,
+                lt1,
             )
         else:
             # No theme definition and no template — fall back to clean_minimal
@@ -2300,52 +2485,59 @@ def _build_no_template_design_system(
     brand_section = ""
     if brand_intent and brand_intent.has_branding:
         tokens = dict(tokens)  # copy
-        
+
         # --- Theme Factory full override (highest priority) ---
         # When a theme_definition is present, it contains the authoritative
         # palette (dk1=background, accent1=accent, lt1=soft, lt2=text).
         # Override ALL design tokens from the theme definition.
-        theme_def = getattr(brand_intent, 'theme_definition', None)
+        theme_def = getattr(brand_intent, "theme_definition", None)
         if theme_def and isinstance(theme_def, dict):
-            td_palette = theme_def.get('palette', {})
-            td_typo = theme_def.get('typography', {})
-            
+            td_palette = theme_def.get("palette", {})
+            td_typo = theme_def.get("typography", {})
+
             # Background: dk1
-            dk1 = td_palette.get('dk1', '').lstrip('#')
+            dk1 = td_palette.get("dk1", "").lstrip("#")
             if len(dk1) == 6:
                 tokens["bg_hex"] = dk1
-                tokens["bg_label"] = "theme background (%s)" % theme_def.get('name', 'custom')
-            
+                tokens["bg_label"] = "theme background (%s)" % theme_def.get(
+                    "name", "custom"
+                )
+
             # Text color: lt1 (or lt2 as fallback)
-            lt1 = td_palette.get('lt1', '').lstrip('#')
-            lt2 = td_palette.get('lt2', '').lstrip('#')
-            text_hex = lt1 if len(lt1) == 6 else (lt2 if len(lt2) == 6 else '')
+            lt1 = td_palette.get("lt1", "").lstrip("#")
+            lt2 = td_palette.get("lt2", "").lstrip("#")
+            text_hex = lt1 if len(lt1) == 6 else (lt2 if len(lt2) == 6 else "")
             if len(text_hex) == 6:
                 tokens["text_color"] = text_hex
                 tokens["text_label"] = "theme text"
-            
+
             # Accent: accent1
-            accent1 = td_palette.get('accent1', '').lstrip('#')
+            accent1 = td_palette.get("accent1", "").lstrip("#")
             if len(accent1) == 6:
                 tokens["accent_hex"] = accent1
                 tokens["accent_label"] = "theme accent"
-            
+
             # Secondary: lt2 (or lt1 as fallback for soft accent)
-            soft = lt2 if len(lt2) == 6 else (lt1 if len(lt1) == 6 else '')
+            soft = lt2 if len(lt2) == 6 else (lt1 if len(lt1) == 6 else "")
             if len(soft) == 6:
                 tokens["secondary_hex"] = soft
-            
+
             # Typography from theme
-            if td_typo.get('major'):
-                tokens["font_family"] = td_typo['major']
-            
+            if td_typo.get("major"):
+                tokens["font_family"] = td_typo["major"]
+
             if VERBOSE:
                 print(
                     "[VERBOSE] [DESIGN SYSTEM] Theme Factory FULL override: "
                     "bg=#%s, text=#%s, accent=#%s, secondary=#%s, font=%s (theme: %s)"
-                    % (tokens["bg_hex"], tokens["text_color"], tokens["accent_hex"],
-                       tokens["secondary_hex"], tokens["font_family"],
-                       theme_def.get('name', 'unknown'))
+                    % (
+                        tokens["bg_hex"],
+                        tokens["text_color"],
+                        tokens["accent_hex"],
+                        tokens["secondary_hex"],
+                        tokens["font_family"],
+                        theme_def.get("name", "unknown"),
+                    )
                 )
         elif brand_intent.color_palette:
             # Fallback: no theme_definition, use raw brand colors for accent/secondary only
@@ -2362,23 +2554,29 @@ def _build_no_template_design_system(
                 print(
                     "[VERBOSE] [DESIGN SYSTEM] Brand palette override (no theme): "
                     "accent=#%s, secondary=#%s (from brand: %s)"
-                    % (tokens["accent_hex"], tokens["secondary_hex"], brand_intent.brand_name)
+                    % (
+                        tokens["accent_hex"],
+                        tokens["secondary_hex"],
+                        brand_intent.brand_name,
+                    )
                 )
-                    
+
         # Apply brand typography if available (only if not already set by theme)
-        if brand_intent.typography_hints and not (theme_def and isinstance(theme_def, dict)):
+        if brand_intent.typography_hints and not (
+            theme_def and isinstance(theme_def, dict)
+        ):
             tokens["font_family"] = brand_intent.typography_hints[0]
             if VERBOSE:
                 print(
                     "[VERBOSE] [DESIGN SYSTEM] Brand font override: '%s' (from brand: %s)"
                     % (tokens["font_family"], brand_intent.brand_name)
                 )
-            
+
         # Build robust branding contextual string for the LLM
         brand_name = brand_intent.brand_name
         tone = brand_intent.tone_override or "optimistic"
         style_kw = ", ".join(brand_intent.style_keywords)
-        
+
         brand_section = (
             f"BRANDING & TONE (CRITICAL):\n"
             f"  Brand Name: {brand_name}\n"
@@ -2395,7 +2593,11 @@ def _build_no_template_design_system(
     acc_r, acc_g, acc_b = acc_hex[:2], acc_hex[2:4], acc_hex[4:6]
     sec_hex = str(tokens["secondary_hex"])
 
-    brand_name_text = brand_intent.brand_name.upper() if brand_intent and brand_intent.brand_name else "LOGO"
+    brand_name_text = (
+        brand_intent.brand_name.upper()
+        if brand_intent and brand_intent.brand_name
+        else "LOGO"
+    )
 
     return (
         "\nVISUAL DESIGN SYSTEM (MANDATORY — follow these styling rules for every slide):\n"
@@ -2457,20 +2659,37 @@ def _build_no_template_design_system(
     ) % (
         tokens["description"],
         brand_section,
-        bg_hex, tokens["bg_label"],
-        bg_r, bg_g, bg_b,
-        txt_hex, tokens["text_label"],
-        txt_hex, tokens["text_label"], tokens["title_size"],
+        bg_hex,
+        tokens["bg_label"],
+        bg_r,
+        bg_g,
+        bg_b,
+        txt_hex,
+        tokens["text_label"],
+        txt_hex,
+        tokens["text_label"],
+        tokens["title_size"],
         tokens["body_size"],
         tokens["font_family"],
         brand_name_text,
-        txt_r, txt_g, txt_b,
-        float(tokens["accent_bar_top_pct"]) / 100.0 * 7.5,  # Convert pct to inches (7.5" slide)
+        txt_r,
+        txt_g,
+        txt_b,
+        float(tokens["accent_bar_top_pct"])
+        / 100.0
+        * 7.5,  # Convert pct to inches (7.5" slide)
         float(tokens["accent_bar_height_pct"]) / 100.0 * 7.5,
-        acc_r, acc_g, acc_b,
-        txt_r, txt_g, txt_b,  # footer text color = body text color
-        acc_r, acc_g, acc_b,  # title banner = accent color
-        acc_hex, sec_hex,
+        acc_r,
+        acc_g,
+        acc_b,
+        txt_r,
+        txt_g,
+        txt_b,  # footer text color = body text color
+        acc_r,
+        acc_g,
+        acc_b,  # title banner = accent color
+        acc_hex,
+        sec_hex,
     )
 
 
@@ -2556,14 +2775,14 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     Substeps:
       0. Brand/Style Parsing — calls the brand_style_analyzer agent
          to detect branding directives in the user prompt (e.g. "using Nike branding").
-         The agent uses tools (built-in search or DuckDuckGo) to look up brand colors, 
+         The agent uses tools (built-in search or DuckDuckGo) to look up brand colors,
          tone, and typography if needed.
          If a template file is provided, extracts styling from the template's theme XML
          and overrides any query-level branding with a [BRAND OVERRIDE] log.
          Stores the effective BrandStyleIntent in session_state["brand_style_intent"].
       1. Query Optimization — calls the query_optimizer agent with the
          user prompt enriched with brand context and brand-aware search guidance.
-         This agent uses web search tools (e.g., DuckDuckGo) to gather current facts 
+         This agent uses web search tools (e.g., DuckDuckGo) to gather current facts
          before producing a grounded StoryboardPlan.
          Produces a StoryboardPlan with optimal slide count, global context, per-slide
          storyboard, tone, and brand voice.
@@ -2614,9 +2833,9 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     _provider = session_state.get("llm_provider", "claude")
     agents = _get_agents(_provider)
     query_brand_intent = parse_brand_style_intent(
-        user_prompt, 
+        user_prompt,
         brand_agent=agents.get("brand_style_analyzer"),
-        brand_agent_fallback=agents.get("brand_style_analyzer_fallback")
+        brand_agent_fallback=agents.get("brand_style_analyzer_fallback"),
     )
     brand_intent = query_brand_intent  # default: use query-derived intent
 
@@ -2624,13 +2843,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         template_intent = extract_style_from_template(template_path)
         if query_brand_intent.has_branding and query_brand_intent.brand_name:
             # Template overrides query-level branding — log the decision
-            override_log = _build_brand_override_log(query_brand_intent, template_intent)
+            override_log = _build_brand_override_log(
+                query_brand_intent, template_intent
+            )
             print(override_log)
         brand_intent = template_intent
     else:
         # No template provided. If there is branding intent or default theme requested, use Theme Factory.
         # Haiku 4.5 is extremely fast and effective for theme resolution
-        model = agents.get("fallback_code_agent_lite").model if agents.get("fallback_code_agent_lite") else None
+        model = (
+            agents.get("fallback_code_agent_lite").model
+            if agents.get("fallback_code_agent_lite")
+            else None
+        )
         if model:
             brand_intent = _resolve_theme_with_factory(brand_intent, model)
 
@@ -2643,7 +2868,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         # Always invoke rendering so 'template_pngs' folder is created for the session
         print("[STEP 1] Rendering template slides to PNG...")
         template_pngs = _render_template_slides_to_png(template_path, output_dir)
-        
+
         # Only store in session_state for prompt injection if flag is set
         if session_state.get("template_visuals"):
             session_state["template_slide_pngs"] = template_pngs
@@ -2831,14 +3056,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
         '        "content_zone_top_pct": <integer 8-15>,\n'
         '        "content_zone_bottom_pct": <integer 82-92>,\n'
         '        "text_weight": "<light|balanced|dense>"\n'
-        '      },\n'
+        "      },\n"
         '      "reuse_template_slide_idx": <integer or null>,\n'
-      '      "transition_note": "<string>"\n'
+        '      "transition_note": "<string>"\n'
         "    },\n"
         "    ...\n"
         "  ]\n"
         "}\n"
-    ) % (user_prompt, brand_context_section, visual_profile_section, brand_search_guidance)
+    ) % (
+        user_prompt,
+        brand_context_section,
+        visual_profile_section,
+        brand_search_guidance,
+    )
 
     # Strongly enforce valid JSON output and completion for all models (especially Gemini)
     optimizer_prompt += (
@@ -2856,18 +3086,33 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     try:
         response = None
         from agents import get_agents as _get_agents  # type: ignore
-        _query_optimizer = _get_agents(session_state.get("llm_provider", "claude")).get("query_optimizer")
-        provider = getattr(getattr(_query_optimizer, 'model', None), 'provider', session_state.get('llm_provider', 'claude'))
+
+        _query_optimizer = _get_agents(session_state.get("llm_provider", "claude")).get(
+            "query_optimizer"
+        )
+        provider = getattr(
+            getattr(_query_optimizer, "model", None),
+            "provider",
+            session_state.get("llm_provider", "claude"),
+        )
         if provider == "Anthropic":
             # Fallback to claude-haiku-4-5 if attribute is missing
-            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
+            actual_model_id = getattr(
+                getattr(_query_optimizer, "model", None), "id", "claude-haiku-4-5"
+            )
         else:
-            actual_model_id = getattr(getattr(_query_optimizer, 'model', None), 'id', 'claude-haiku-4-5')
+            actual_model_id = getattr(
+                getattr(_query_optimizer, "model", None), "id", "claude-haiku-4-5"
+            )
         _log_agent_banner(
-            agent_name=getattr(_query_optimizer, 'name', 'Presentation Strategist'),
+            agent_name=getattr(_query_optimizer, "name", "Presentation Strategist"),
             model_id=actual_model_id,
-            provider=getattr(getattr(_query_optimizer, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-            step_name='step_optimize_and_plan / Storyboard Generation',
+            provider=getattr(
+                getattr(_query_optimizer, "model", None),
+                "provider",
+                session_state.get("llm_provider", "claude"),
+            ),  # type: ignore
+            step_name="step_optimize_and_plan / Storyboard Generation",
         )
         # Check rate limits before calling
         _get_rate_tracker().check_and_wait(
@@ -2875,52 +3120,73 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             prompt=optimizer_prompt,
             caller="step_optimize_and_plan/query_optimizer",
         )
-        response = _query_optimizer.run(
-            optimizer_prompt, stream=False
-        )
+        response = _query_optimizer.run(optimizer_prompt, stream=False)
     except Exception as e:
         error_msg = str(e)
         status_code = getattr(getattr(e, "response", None), "status_code", None)
-        
+
         # Check for API capacity, credit limits, or rate limits
         is_capacity_error = (
-            status_code in (400, 429, 529, 500, 503) 
-            or "credit" in error_msg.lower() 
-            or "rate limit" in error_msg.lower() 
+            status_code in (400, 429, 529, 500, 503)
+            or "credit" in error_msg.lower()
+            or "rate limit" in error_msg.lower()
             or "overloaded" in error_msg.lower()
             or "429" in error_msg
             or "529" in error_msg
             or "status 400" in error_msg.lower()
         )
-        
+
         if is_capacity_error:
             provider = session_state.get("llm_provider", "claude")
-            print("\n[FALLBACK AGENT ENGAGED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer." % (provider, status_code or "Unknown"))
-            print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
+            print(
+                "\n[FALLBACK AGENT ENGAGED] Primary provider (%s) hit capacity/credit error (%s) on query_optimizer."
+                % (provider, status_code or "Unknown")
+            )
+            print(
+                "[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation..."
+            )
             try:
                 from agents import get_agents as _get_agents  # type: ignore
-                _fallback_query_optimizer = _get_agents(provider).get("query_optimizer_fallback")
-                
+
+                _fallback_query_optimizer = _get_agents(provider).get(
+                    "query_optimizer_fallback"
+                )
+
                 if not _fallback_query_optimizer:
                     raise ValueError("No fallback defined for query_optimizer")
 
                 _log_agent_banner(
-                    agent_name=getattr(_fallback_query_optimizer, 'name', 'Presentation Strategist (Fallback)'),
-                    model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'unknown'),
-                    provider=getattr(getattr(_fallback_query_optimizer, 'model', None), 'provider', 'Fallback'),
-                    step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
+                    agent_name=getattr(
+                        _fallback_query_optimizer,
+                        "name",
+                        "Presentation Strategist (Fallback)",
+                    ),
+                    model_id=getattr(
+                        getattr(_fallback_query_optimizer, "model", None),
+                        "id",
+                        "unknown",
+                    ),
+                    provider=getattr(
+                        getattr(_fallback_query_optimizer, "model", None),
+                        "provider",
+                        "Fallback",
+                    ),
+                    step_name="step_optimize_and_plan / Storyboard Generation (Fallback)",
                 )
-                
-                response = _fallback_query_optimizer.run(
-                    optimizer_prompt, stream=False
-                )
-                        
+
+                response = _fallback_query_optimizer.run(optimizer_prompt, stream=False)
+
             except Exception as fallback_e:
-                print("[ERROR] Fallback query optimizer failed during exception fallback: %s" % str(fallback_e))
+                print(
+                    "[ERROR] Fallback query optimizer failed during exception fallback: %s"
+                    % str(fallback_e)
+                )
                 if VERBOSE:  # noqa: F405
                     traceback.print_exc()
                 return StepOutput(
-                    content="Query optimization failed on both primary and fallback: %s" % str(fallback_e), success=False
+                    content="Query optimization failed on both primary and fallback: %s"
+                    % str(fallback_e),
+                    success=False,
                 )
         else:
             print("[ERROR] Query optimizer failed: %s" % str(e))
@@ -2934,34 +3200,53 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # Therefore, we must also apply the fallback logic if response is None after execution.
     if response is None:
         provider = session_state.get("llm_provider", "claude")
-        print("\n[FALLBACK AGENT ENGAGED] Primary provider (%s) produced no output (likely hit capacity/credit error)." % provider)
-        print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
+        print(
+            "\n[FALLBACK AGENT ENGAGED] Primary provider (%s) produced no output (likely hit capacity/credit error)."
+            % provider
+        )
+        print(
+            "[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation..."
+        )
         try:
             from agents import get_agents as _get_agents  # type: ignore
-            _fallback_query_optimizer = _get_agents(provider).get("query_optimizer_fallback")
-            
+
+            _fallback_query_optimizer = _get_agents(provider).get(
+                "query_optimizer_fallback"
+            )
+
             if not _fallback_query_optimizer:
                 raise ValueError("No fallback defined for query_optimizer")
-            
+
                 _log_agent_banner(
-                    agent_name=getattr(_fallback_query_optimizer, 'name', 'Presentation Strategist (Fallback)'),
-                    model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'unknown'),
-                    provider=getattr(getattr(_fallback_query_optimizer, 'model', None), 'provider', 'Fallback'),
-                    step_name='step_optimize_and_plan / Storyboard Generation (Fallback)',
+                    agent_name=getattr(
+                        _fallback_query_optimizer,
+                        "name",
+                        "Presentation Strategist (Fallback)",
+                    ),
+                    model_id=getattr(
+                        getattr(_fallback_query_optimizer, "model", None),
+                        "id",
+                        "unknown",
+                    ),
+                    provider=getattr(
+                        getattr(_fallback_query_optimizer, "model", None),
+                        "provider",
+                        "Fallback",
+                    ),
+                    step_name="step_optimize_and_plan / Storyboard Generation (Fallback)",
                 )
-            
-            response = _fallback_query_optimizer.run(
-                optimizer_prompt, stream=False
-            )
-                    
+
+            response = _fallback_query_optimizer.run(optimizer_prompt, stream=False)
+
         except Exception as fallback_e:
             print("[ERROR] Fallback query optimizer failed: %s" % str(fallback_e))
             if VERBOSE:  # noqa: F405
                 traceback.print_exc()
             return StepOutput(
-                content="Query optimization failed on both primary and fallback: %s" % str(fallback_e), success=False
+                content="Query optimization failed on both primary and fallback: %s"
+                % str(fallback_e),
+                success=False,
             )
-
 
     # Parse the StoryboardPlan from response.
     # Without output_schema the agent returns plain text; extract JSON from it.
@@ -2995,7 +3280,9 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             try:
                 plan = StoryboardPlan.model_validate_json(json_text)
             except Exception as e:
-                print(f"[WARN] Failed to parse StoryboardPlan from JSON string. Initiating fallback... ({e})")
+                print(
+                    f"[WARN] Failed to parse StoryboardPlan from JSON string. Initiating fallback... ({e})"
+                )
                 if VERBOSE:  # noqa: F405
                     print(
                         "[VERBOSE] Raw optimizer response (first 2000 chars):\n%s"
@@ -3004,25 +3291,41 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
 
     if not plan:
         provider = session_state.get("llm_provider", "claude")
-        print("\n[FALLBACK TRIGGERED] Primary provider (%s) produced invalid or truncated JSON." % provider)
-        print("[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation...")
+        print(
+            "\n[FALLBACK TRIGGERED] Primary provider (%s) produced invalid or truncated JSON."
+            % provider
+        )
+        print(
+            "[FALLBACK TRIGGERED] Engaging fallback agent for storyboard generation..."
+        )
         try:
             from agents import get_agents as _get_agents  # type: ignore
-            _fallback_query_optimizer = _get_agents(provider).get("query_optimizer_fallback")
-            
+
+            _fallback_query_optimizer = _get_agents(provider).get(
+                "query_optimizer_fallback"
+            )
+
             if not _fallback_query_optimizer:
                 raise ValueError("No fallback defined for query_optimizer")
-            
+
             _log_agent_banner(
-                agent_name=getattr(_fallback_query_optimizer, 'name', 'Presentation Strategist (Fallback)'),
-                model_id=getattr(getattr(_fallback_query_optimizer, 'model', None), 'id', 'unknown'),
-                provider=getattr(getattr(_fallback_query_optimizer, 'model', None), 'provider', 'Fallback'),
-                step_name='step_optimize_and_plan / Storyboard Generation (JSON Fallback)',
+                agent_name=getattr(
+                    _fallback_query_optimizer,
+                    "name",
+                    "Presentation Strategist (Fallback)",
+                ),
+                model_id=getattr(
+                    getattr(_fallback_query_optimizer, "model", None), "id", "unknown"
+                ),
+                provider=getattr(
+                    getattr(_fallback_query_optimizer, "model", None),
+                    "provider",
+                    "Fallback",
+                ),
+                step_name="step_optimize_and_plan / Storyboard Generation (JSON Fallback)",
             )
-            
-            fb_resp = _fallback_query_optimizer.run(
-                optimizer_prompt, stream=False
-            )
+
+            fb_resp = _fallback_query_optimizer.run(optimizer_prompt, stream=False)
             if fb_resp and fb_resp.content:
                 fb_content = fb_resp.content
                 if isinstance(fb_content, StoryboardPlan):
@@ -3033,6 +3336,7 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
                     plan = StoryboardPlan(**fb_content)
                 elif isinstance(fb_content, str):
                     import re as _re
+
                     json_text = fb_content.strip()
                     fence_match = _re.search(r"```(?:json)?\s*([\s\S]+?)```", json_text)
                     if fence_match:
@@ -3061,8 +3365,19 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
     # with profile-derived values for slides whose constraints are still generic.
     if visual_profile and visual_profile.slide_count > 0:
         enriched_count = 0
-        profile_top_pct = int(max(8.0, float(100.0 - visual_profile.avg_content_zone_height_pct - (100.0 - visual_profile.avg_content_zone_width_pct) / 2.0)))
-        profile_bottom_pct = int(min(92.0, float(visual_profile.avg_content_zone_height_pct + 12.0)))
+        profile_top_pct = int(
+            max(
+                8.0,
+                float(
+                    100.0
+                    - visual_profile.avg_content_zone_height_pct
+                    - (100.0 - visual_profile.avg_content_zone_width_pct) / 2.0
+                ),
+            )
+        )
+        profile_bottom_pct = int(
+            min(92.0, float(visual_profile.avg_content_zone_height_pct + 12.0))
+        )
         profile_max_blocks = min(6, visual_profile.max_comfortable_bullets)
         profile_text_w = visual_profile.recommended_text_weight
 
@@ -3098,16 +3413,28 @@ def step_optimize_and_plan(step_input: StepInput, session_state: Dict) -> StepOu
             print(
                 "[VISUAL PROFILE] Enriched layout_constraints for %d/%d slides "
                 "(top=%d%%, bottom=%d%%, max_blocks=%d, text_weight=%s)"
-                % (enriched_count, len(plan.slides), profile_top_pct,
-                   profile_bottom_pct, profile_max_blocks, profile_text_w)
+                % (
+                    enriched_count,
+                    len(plan.slides),
+                    profile_top_pct,
+                    profile_bottom_pct,
+                    profile_max_blocks,
+                    profile_text_w,
+                )
             )
         if VERBOSE:  # noqa: F405
             print(
                 "[VERBOSE] [VISUAL PROFILE] Layout enrichment details: "
                 "profile_top=%d, profile_bottom=%d, profile_max_blocks=%d, "
                 "profile_text_weight=%s, slides_enriched=%d/%d"
-                % (profile_top_pct, profile_bottom_pct, profile_max_blocks,
-                   profile_text_w, enriched_count, len(plan.slides))
+                % (
+                    profile_top_pct,
+                    profile_bottom_pct,
+                    profile_max_blocks,
+                    profile_text_w,
+                    enriched_count,
+                    len(plan.slides),
+                )
             )
 
     # Save global context markdown
@@ -3331,7 +3658,9 @@ def generate_chunk_pptx(
         _build_no_template_design_system(
             storyboard.visual_style if storyboard else "clean_minimal",
             session_state.get("brand_style_intent"),
-        ) if not session_state.get("template_path") else "",
+        )
+        if not session_state.get("template_path")
+        else "",
         len(chunk_slides),
         first_slide,
         last_slide,
@@ -3342,7 +3671,8 @@ def generate_chunk_pptx(
     template_pngs = session_state.get("template_slide_pngs", {})
     if template_pngs and session_state.get("template_visuals"):
         visual_ref = _build_visual_reference_section(
-            chunk_slides, template_pngs,
+            chunk_slides,
+            template_pngs,
             brand_style_intent=session_state.get("brand_style_intent"),
         )
         if visual_ref:
@@ -3399,7 +3729,9 @@ def generate_chunk_pptx(
         attempt_start = time.time()
 
         if attempt > 0:
-            delay_secs = 60.0 + random.uniform(0, 30.0)  # 60-90s jitter to respect 30K tokens/min window
+            delay_secs = 60.0 + random.uniform(
+                0, 30.0
+            )  # 60-90s jitter to respect 30K tokens/min window
             print(
                 f"[CHUNK {chunk_idx}] Retry {attempt}/{max_retries} — cooling down for {delay_secs:.0f}s (rate limit window reset)..."
             )
@@ -3411,8 +3743,10 @@ def generate_chunk_pptx(
 
         _log_agent_banner(
             agent_name=f"Chunk Generator {chunk_idx}",  # type: ignore
-            model_id='claude-haiku-4-5',
-            provider=str(getattr(getattr(chunk_agent, 'model', None), 'provider', 'Anthropic')),  # type: ignore
+            model_id="claude-haiku-4-5",
+            provider=str(
+                getattr(getattr(chunk_agent, "model", None), "provider", "Anthropic")
+            ),  # type: ignore
             step_name=f"step_generate_chunks / Tier 1 PPTX Skill (attempt {attempt + 1}/{max_retries + 1})",
         )
 
@@ -3492,7 +3826,9 @@ def generate_chunk_pptx(
             print(
                 "[TIMING] Chunk %d attempt %d/%d: %.1fs (%s)"
                 % (
-                    chunk_idx, attempt + 1, max_retries + 1,
+                    chunk_idx,
+                    attempt + 1,
+                    max_retries + 1,
                     attempt_elapsed,
                     "rate/capacity limit" if is_throttling else "error",
                 )
@@ -3511,8 +3847,7 @@ def generate_chunk_pptx(
             if is_throttling:
                 print(
                     "[CHUNK %d] Throttling detected. Engaging progressive "  # type: ignore
-                    "fallback chain (Sonnet → Gemini → OpenAI)..."
-                    % chunk_idx
+                    "fallback chain (Sonnet → Gemini → OpenAI)..." % chunk_idx
                 )
 
                 # --- Fallback 1: Sonnet PPTX Skill (same capability, smaller model) ---
@@ -3556,13 +3891,13 @@ def generate_chunk_pptx(
                         max_workers=1
                     ) as sonnet_executor:
                         sonnet_future = sonnet_executor.submit(
-                            _run_chunk_agent, chunk_agent_sonnet, chunk_prompt  # type: ignore
+                            _run_chunk_agent,
+                            chunk_agent_sonnet,
+                            chunk_prompt,  # type: ignore
                         )
                         try:
-                            sonnet_response, sonnet_events = (
-                                sonnet_future.result(
-                                    timeout=CHUNK_TIMEOUT_SECONDS
-                                )
+                            sonnet_response, sonnet_events = sonnet_future.result(
+                                timeout=CHUNK_TIMEOUT_SECONDS
                             )
                         except concurrent.futures.TimeoutError:
                             print(
@@ -3574,10 +3909,7 @@ def generate_chunk_pptx(
                     if sonnet_response and sonnet_response.messages:  # type: ignore
                         sonnet_file = None
                         for msg in sonnet_response.messages:  # type: ignore
-                            if (
-                                hasattr(msg, "provider_data")
-                                and msg.provider_data
-                            ):
+                            if hasattr(msg, "provider_data") and msg.provider_data:
                                 try:
                                     files = download_skill_files(
                                         msg.provider_data,
@@ -3601,9 +3933,7 @@ def generate_chunk_pptx(
                         # Also try response-level model_provider_data
                         if (
                             not sonnet_file
-                            and hasattr(
-                                sonnet_response, "model_provider_data"
-                            )
+                            and hasattr(sonnet_response, "model_provider_data")
                             and sonnet_response.model_provider_data  # type: ignore
                         ):
                             try:
@@ -3630,9 +3960,7 @@ def generate_chunk_pptx(
                                 shutil.copy2(sonnet_file, chunk_output_path)
                             try:
                                 prs = Presentation(chunk_output_path)
-                                clean_presentation_visual_noise_and_contrast(
-                                    prs
-                                )
+                                clean_presentation_visual_noise_and_contrast(prs)
                                 sanitize_presentation(prs)  # noqa: F405
                                 prs.save(chunk_output_path)
                             except Exception as clnp_e:
@@ -3647,8 +3975,7 @@ def generate_chunk_pptx(
                             )
                             print(
                                 "[CHUNK %d SONNET-FALLBACK] Successfully "
-                                "generated: %s"
-                                % (chunk_idx, chunk_output_path)
+                                "generated: %s" % (chunk_idx, chunk_output_path)
                             )
                             return chunk_output_path
 
@@ -3673,9 +4000,7 @@ def generate_chunk_pptx(
                     _all_agents = _get_agents(
                         session_state.get("llm_provider", "claude")
                     )
-                    _gemini_agent = _all_agents.get(
-                        "fallback_code_agent_fallback"
-                    )
+                    _gemini_agent = _all_agents.get("fallback_code_agent_fallback")
                     if _gemini_agent is not None:
                         # Build a code-gen prompt (reuse Tier 2 approach)
                         _gemini_prompt = (
@@ -3689,29 +4014,27 @@ def generate_chunk_pptx(
                         ) % (chunk_output_path, chunk_prompt[:8000])  # type: ignore
                         _log_agent_banner(
                             agent_name=getattr(
-                                _gemini_agent, "name",
+                                _gemini_agent,
+                                "name",
                                 "PPTX Code Generator (Gemini Fallback)",
                             ),
                             model_id=getattr(
                                 getattr(_gemini_agent, "model", None),
-                                "id", "gemini-3.1-pro-preview",
+                                "id",
+                                "gemini-3.1-pro-preview",
                             ),
                             provider="Google",
                             step_name="step_generate_chunks / Tier 1 "
                             "Gemini Fallback (chunk %d)" % chunk_idx,
                         )
                         t1_gemini_start = time.time()
-                        for _ in _gemini_agent.run(
-                            _gemini_prompt, stream=True
-                        ):
+                        for _ in _gemini_agent.run(_gemini_prompt, stream=True):
                             pass
 
                         if os.path.exists(chunk_output_path):
                             try:
                                 prs = Presentation(chunk_output_path)
-                                clean_presentation_visual_noise_and_contrast(
-                                    prs
-                                )
+                                clean_presentation_visual_noise_and_contrast(prs)
                                 sanitize_presentation(prs)  # noqa: F405
                                 prs.save(chunk_output_path)
                             except Exception as clnp_e:
@@ -3721,13 +4044,11 @@ def generate_chunk_pptx(
                                 )
                             print(
                                 "[TIMING] Chunk %d Gemini fallback: %.1fs "
-                                "(success)"
-                                % (chunk_idx, time.time() - t1_gemini_start)
+                                "(success)" % (chunk_idx, time.time() - t1_gemini_start)
                             )
                             print(
                                 "[CHUNK %d GEMINI-FALLBACK] Successfully "
-                                "generated: %s"
-                                % (chunk_idx, chunk_output_path)
+                                "generated: %s" % (chunk_idx, chunk_output_path)
                             )
                             return chunk_output_path
                         else:
@@ -3771,16 +4092,13 @@ def generate_chunk_pptx(
                         step_name="step_generate_chunks / Tier 1 Universal "
                         "Fallback (chunk %d)" % chunk_idx,
                     )
-                    for _ in _universal_generator.run(
-                        chunk_prompt, stream=True
-                    ):
+                    for _ in _universal_generator.run(chunk_prompt, stream=True):
                         pass
 
                     if os.path.exists(chunk_output_path):
                         print(
                             "[TIMING] Chunk %d Universal Tier 1 fallback: "
-                            "%.1fs"
-                            % (chunk_idx, time.time() - t1_univ_start)
+                            "%.1fs" % (chunk_idx, time.time() - t1_univ_start)
                         )
                         try:
                             prs = Presentation(chunk_output_path)
@@ -3802,8 +4120,7 @@ def generate_chunk_pptx(
                 except Exception as e_univ:
                     print(
                         "[CHUNK %d TIER1-FALLBACK] Universal OpenAI "
-                        "Fallback failed: %s"
-                        % (chunk_idx, str(e_univ))
+                        "Fallback failed: %s" % (chunk_idx, str(e_univ))
                     )
 
                 # All fallbacks exhausted for this throttling error.
@@ -3845,16 +4162,13 @@ def generate_chunk_pptx(
                         step_name="step_generate_chunks / Tier 1 Universal "
                         "Fallback (chunk %d)" % chunk_idx,
                     )
-                    for _ in _universal_generator.run(
-                        chunk_prompt, stream=True
-                    ):
+                    for _ in _universal_generator.run(chunk_prompt, stream=True):
                         pass
 
                     if os.path.exists(chunk_output_path):
                         print(
                             "[TIMING] Chunk %d Universal Tier 1 fallback: "
-                            "%.1fs"
-                            % (chunk_idx, time.time() - t1_univ_start)
+                            "%.1fs" % (chunk_idx, time.time() - t1_univ_start)
                         )
                         try:
                             prs = Presentation(chunk_output_path)
@@ -3876,8 +4190,7 @@ def generate_chunk_pptx(
                 except Exception as e_univ:
                     print(
                         "[CHUNK %d TIER1-FALLBACK] Universal OpenAI "
-                        "Fallback failed: %s"
-                        % (chunk_idx, str(e_univ))
+                        "Fallback failed: %s" % (chunk_idx, str(e_univ))
                     )
 
             continue
@@ -3936,7 +4249,9 @@ def generate_chunk_pptx(
                 )
             try:
                 files = download_skill_files(
-                    response.model_provider_data, client, output_dir=output_dir  # type: ignore
+                    response.model_provider_data,
+                    client,
+                    output_dir=output_dir,  # type: ignore
                 )
                 if VERBOSE:  # noqa: F405
                     print(
@@ -3965,7 +4280,7 @@ def generate_chunk_pptx(
             if generated_file != chunk_output_path:
                 shutil.copy2(generated_file, chunk_output_path)
                 generated_file = chunk_output_path
-            
+
             # Clean up empty placeholders and hardcoded contrast issues
             try:
                 prs = Presentation(generated_file)
@@ -4055,7 +4370,7 @@ def generate_chunk_pptx_fallback(
 
     This is the last tier in the fallback hierarchy:
       Tier 1: Primary provider PPTX skill (generate_chunk_pptx)
-      Tier 2: Primary provider LLM code gen (generate_chunk_pptx_v2) 
+      Tier 2: Primary provider LLM code gen (generate_chunk_pptx_v2)
               -> Universal 4-step OpenAI fallback on failure
       Tier 3: This function — python-pptx direct, <100ms
 
@@ -4205,7 +4520,9 @@ def generate_chunk_pptx_fallback(
                         # Insert labeled rectangle shapes to approximate an infographic/diagram.
                         # Uses native python-pptx shapes — no images inserted.
                         try:
-                            from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE  # type: ignore
+                            from pptx.enum.shapes import (
+                                MSO_AUTO_SHAPE_TYPE,  # type: ignore
+                            )
 
                             labels = ["Step 1", "Step 2", "Step 3"]
                             box_w = Inches(2.2)
@@ -4458,6 +4775,7 @@ def generate_chunk_pptx_v2(
                 _hex_to_rgb,
                 _relative_luminance,
             )
+
             _tmpl_prs = Presentation(template_path_t2)
             _tmpl_style = _extract_template_styles(_tmpl_prs)
 
@@ -4498,9 +4816,7 @@ def generate_chunk_pptx_v2(
                 "(bg_dark=%s, bg_hex=#%s)." % (bg_is_dark, bg_hex)
             )
         except Exception as e:
-            print(
-                "  [TEMPLATE CTX WARNING] Could not extract template context: %s" % e
-            )
+            print("  [TEMPLATE CTX WARNING] Could not extract template context: %s" % e)
 
         # --- Accent line pattern for Tier 2 code-gen ---
         # Inject structured accent bar instructions so the code-gen LLM can
@@ -4514,7 +4830,8 @@ def generate_chunk_pptx_v2(
             if ap and ap.get("avg_width_pct", 0) > 20:
                 color_code = ap.get("color", "")
                 color_instruction = (
-                    "RGBColor(0x%s, 0x%s, 0x%s)" % (color_code[:2], color_code[2:4], color_code[4:6])
+                    "RGBColor(0x%s, 0x%s, 0x%s)"
+                    % (color_code[:2], color_code[2:4], color_code[4:6])
                     if color_code and len(color_code) == 6
                     else "the template's primary accent color from the theme"
                 )
@@ -4532,8 +4849,12 @@ def generate_chunk_pptx_v2(
                 ) % (
                     ap.get("orientation", "horizontal"),
                     ap.get("region", "top"),
-                    ap.get("avg_left_pct", 0) / 100.0 * 10.0,  # Convert pct to approx inches (10" slide)
-                    ap.get("avg_top_pct", 0) / 100.0 * 7.5,    # Convert pct to approx inches (7.5" slide)
+                    ap.get("avg_left_pct", 0)
+                    / 100.0
+                    * 10.0,  # Convert pct to approx inches (10" slide)
+                    ap.get("avg_top_pct", 0)
+                    / 100.0
+                    * 7.5,  # Convert pct to approx inches (7.5" slide)
                     ap.get("avg_width_pct", 0) / 100.0 * 10.0,
                     ap.get("avg_height_pct", 0) / 100.0 * 7.5,
                     color_instruction,
@@ -4543,7 +4864,11 @@ def generate_chunk_pptx_v2(
                     print(
                         "  [TEMPLATE CTX] Accent pattern injected into Tier 2 prompt "
                         "(orientation=%s, region=%s, color=%s)."
-                        % (ap.get("orientation"), ap.get("region"), color_code or "auto")
+                        % (
+                            ap.get("orientation"),
+                            ap.get("region"),
+                            color_code or "auto",
+                        )
                     )
     else:
         # No template: inject design system from optimizer's visual_style
@@ -4620,7 +4945,8 @@ def generate_chunk_pptx_v2(
     template_pngs = session_state.get("template_slide_pngs", {})
     if template_pngs and session_state.get("template_visuals"):
         visual_ref = _build_visual_reference_section(
-            chunk_slides, template_pngs,
+            chunk_slides,
+            template_pngs,
             brand_style_intent=session_state.get("brand_style_intent"),
         )
         if visual_ref:
@@ -4638,6 +4964,7 @@ def generate_chunk_pptx_v2(
     # content, so we iterate through the stream and discard events.
     t2_start = time.time()
     from agents import get_agents as _get_agents  # type: ignore
+
     _all_agents = _get_agents(session_state.get("llm_provider", "claude"))
     _fallback_agent = _all_agents.get("fallback_code_agent")
     _fallback_agent_lite = _all_agents.get("fallback_code_agent_lite")
@@ -4645,12 +4972,18 @@ def generate_chunk_pptx_v2(
     tier2_success = False
 
     # --- Stage 1: Primary agent (Sonnet) ---
-    actual_model_id = getattr(getattr(_fallback_agent, 'model', None), 'id', 'claude-haiku-4-5')
+    actual_model_id = getattr(
+        getattr(_fallback_agent, "model", None), "id", "claude-haiku-4-5"
+    )
     _log_agent_banner(
-        agent_name=getattr(_fallback_agent, 'name', 'PPTX Code Generator'),
+        agent_name=getattr(_fallback_agent, "name", "PPTX Code Generator"),
         model_id=actual_model_id,
-        provider=getattr(getattr(_fallback_agent, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-        step_name='step_generate_chunks / Tier 2 Primary (chunk %d)' % chunk_idx,
+        provider=getattr(
+            getattr(_fallback_agent, "model", None),
+            "provider",
+            session_state.get("llm_provider", "claude"),
+        ),  # type: ignore
+        step_name="step_generate_chunks / Tier 2 Primary (chunk %d)" % chunk_idx,
     )
     _get_rate_tracker().check_and_wait(
         model=actual_model_id,
@@ -4662,7 +4995,8 @@ def generate_chunk_pptx_v2(
             pass
         t2_elapsed = time.time() - t2_start
         print(
-            "[TIMING] Chunk %d Tier 2 primary code generation: %.1fs" % (chunk_idx, t2_elapsed)
+            "[TIMING] Chunk %d Tier 2 primary code generation: %.1fs"
+            % (chunk_idx, t2_elapsed)
         )
         tier2_success = True
     except (Exception, SystemExit) as e:
@@ -4683,17 +5017,26 @@ def generate_chunk_pptx_v2(
     # --- Stage 2: Lite agent (Haiku/GPT-5-mini) — only if primary failed ---
     if not tier2_success and _fallback_agent_lite is not None:
         print(
-            "[CHUNK %d TIER2] Retrying with lite agent (%s)..." 
-            % (chunk_idx, getattr(_fallback_agent_lite, 'name', 'Fallback Lite'))
+            "[CHUNK %d TIER2] Retrying with lite agent (%s)..."
+            % (chunk_idx, getattr(_fallback_agent_lite, "name", "Fallback Lite"))
         )
         t2_lite_start = time.time()
         _log_agent_banner(
-            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
-            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'unknown-lite'),
-            provider=getattr(getattr(_fallback_agent_lite, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-            step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
+            agent_name=getattr(
+                _fallback_agent_lite, "name", "PPTX Code Generator (Lite)"
+            ),
+            model_id=getattr(
+                getattr(_fallback_agent_lite, "model", None), "id", "unknown-lite"
+            ),
+            provider=getattr(
+                getattr(_fallback_agent_lite, "model", None),
+                "provider",
+                session_state.get("llm_provider", "claude"),
+            ),  # type: ignore
+            step_name="step_generate_chunks / Tier 2 Lite Fallback (chunk %d)"
+            % chunk_idx,
         )
-        
+
         # Rate tracking only for Anthropic models
         if session_state.get("llm_provider", "claude") == "claude":
             _get_rate_tracker().check_and_wait(
@@ -4701,7 +5044,7 @@ def generate_chunk_pptx_v2(
                 prompt=code_gen_prompt,
                 caller="generate_chunk_pptx_v2/Tier2-lite",
             )
-            
+
         try:
             for _ in _fallback_agent_lite.run(code_gen_prompt, stream=True):
                 pass
@@ -4720,10 +5063,7 @@ def generate_chunk_pptx_v2(
 
     # If Lite also produced no file
     if tier2_success and not os.path.exists(chunk_output_path):
-        print(
-            "[CHUNK %d TIER2] Lite agent ran but produced no file."
-            % chunk_idx
-        )
+        print("[CHUNK %d TIER2] Lite agent ran but produced no file." % chunk_idx)
         tier2_success = False
 
     # --- Stage 2.5: Gemini Fallback (Pro → Flash) ---
@@ -4740,12 +5080,14 @@ def generate_chunk_pptx_v2(
             t2_gemini_start = time.time()
             _log_agent_banner(
                 agent_name=getattr(
-                    _gemini_pro, "name",
+                    _gemini_pro,
+                    "name",
                     "PPTX Code Generator (Gemini Fallback)",
                 ),
                 model_id=getattr(
                     getattr(_gemini_pro, "model", None),
-                    "id", "gemini-3.1-pro-preview",
+                    "id",
+                    "gemini-3.1-pro-preview",
                 ),
                 provider="Google",
                 step_name="step_generate_chunks / Tier 2 Gemini Pro "
@@ -4783,12 +5125,14 @@ def generate_chunk_pptx_v2(
             t2_gflash_start = time.time()
             _log_agent_banner(
                 agent_name=getattr(
-                    _gemini_flash, "name",
+                    _gemini_flash,
+                    "name",
                     "PPTX Code Generator (Gemini Flash Fallback)",
                 ),
                 model_id=getattr(
                     getattr(_gemini_flash, "model", None),
-                    "id", "gemini-2.5-flash",
+                    "id",
+                    "gemini-2.5-flash",
                 ),
                 provider="Google",
                 step_name="step_generate_chunks / Tier 2 Gemini Flash "
@@ -4813,8 +5157,7 @@ def generate_chunk_pptx_v2(
                 t2_gflash_elapsed = time.time() - t2_gflash_start
                 print(
                     "[CHUNK %d TIER2] Gemini Flash failed after %.1fs: "
-                    "%s"
-                    % (chunk_idx, t2_gflash_elapsed, str(e_gflash)[:200])  # type: ignore
+                    "%s" % (chunk_idx, t2_gflash_elapsed, str(e_gflash)[:200])  # type: ignore
                 )
 
     # --- Stage 3: Universal OpenAI Fallback (GPT-5.4 -> o3-mini) ---
@@ -4824,104 +5167,169 @@ def generate_chunk_pptx_v2(
             % chunk_idx
         )
         try:
-            from agents.fallback_openai_agents import get_openai_fallback_agents  # type: ignore
+            from agents.fallback_openai_agents import (
+                get_openai_fallback_agents,  # type: ignore
+            )
+
             _fallback_agents = get_openai_fallback_agents()
             _universal_pro = _fallback_agents["fallback_code_agent"]
             _universal_lite = _fallback_agents["fallback_code_agent_lite"]
 
             # 1. Try Universal Pro (GPT-5.4) WITH images
-            print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (with visual context)..." % chunk_idx)
+            print(
+                "[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (with visual context)..."
+                % chunk_idx
+            )
             t2_univ_start = time.time()
             _log_agent_banner(
                 agent_name=_universal_pro.name,
                 model_id=_universal_pro.model.id,
-                provider=getattr(_universal_pro.model, 'provider', 'openai'),
-                step_name='step_generate_chunks / Universal Pro Fallback (chunk %d)' % chunk_idx,
+                provider=getattr(_universal_pro.model, "provider", "openai"),
+                step_name="step_generate_chunks / Universal Pro Fallback (chunk %d)"
+                % chunk_idx,
             )
             try:
                 for _ in _universal_pro.run(code_gen_prompt, stream=True):
                     pass
             except Exception as e_pro:
-                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro failed with visual context: %s" % (chunk_idx, str(e_pro)))
-            
+                print(
+                    "[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro failed with visual context: %s"
+                    % (chunk_idx, str(e_pro))
+                )
+
             if os.path.exists(chunk_output_path):
-                print("[TIMING] Chunk %d Universal Pro fallback: %.1fs" % (chunk_idx, time.time() - t2_univ_start))
+                print(
+                    "[TIMING] Chunk %d Universal Pro fallback: %.1fs"
+                    % (chunk_idx, time.time() - t2_univ_start)
+                )
                 tier2_success = True
             else:
                 # 2. Try Universal Lite (o3-mini) WITH images
-                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro produced no file. Attempting o3-mini Lite Fallback (with visual context)..." % chunk_idx)
+                print(
+                    "[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro produced no file. Attempting o3-mini Lite Fallback (with visual context)..."
+                    % chunk_idx
+                )
                 t2_univ_lite_start = time.time()
                 _log_agent_banner(
                     agent_name=_universal_lite.name,
                     model_id=_universal_lite.model.id,
-                    provider=getattr(_universal_lite.model, 'provider', 'openai'),
-                    step_name='step_generate_chunks / Universal Lite Fallback (chunk %d)' % chunk_idx,
+                    provider=getattr(_universal_lite.model, "provider", "openai"),
+                    step_name="step_generate_chunks / Universal Lite Fallback (chunk %d)"
+                    % chunk_idx,
                 )
                 try:
                     for _ in _universal_lite.run(code_gen_prompt, stream=True):
                         pass
                 except Exception as e_lite:
-                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite failed with visual context: %s" % (chunk_idx, str(e_lite)))
-                
+                    print(
+                        "[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite failed with visual context: %s"
+                        % (chunk_idx, str(e_lite))
+                    )
+
                 if os.path.exists(chunk_output_path):
-                    print("[TIMING] Chunk %d Universal Lite fallback: %.1fs" % (chunk_idx, time.time() - t2_univ_lite_start))
+                    print(
+                        "[TIMING] Chunk %d Universal Lite fallback: %.1fs"
+                        % (chunk_idx, time.time() - t2_univ_lite_start)
+                    )
                     tier2_success = True
-                    
+
             # If both failed with images, strip images and try again
             if not tier2_success and template_pngs and visual_ref:
-                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Fallbacks failed with visual context. Retrying without images..." % chunk_idx)
-                openai_fallback_code_gen_prompt_stripped = code_gen_prompt.replace("\n" + visual_ref, "")
-                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Stripped %d chars of base-64 visual reference to limit payload." % (chunk_idx, len(visual_ref)))
+                print(
+                    "[OPENAI FALLBACK TRIGGERED] Chunk %d: Fallbacks failed with visual context. Retrying without images..."
+                    % chunk_idx
+                )
+                openai_fallback_code_gen_prompt_stripped = code_gen_prompt.replace(
+                    "\n" + visual_ref, ""
+                )
+                print(
+                    "[OPENAI FALLBACK TRIGGERED] Chunk %d: Stripped %d chars of base-64 visual reference to limit payload."
+                    % (chunk_idx, len(visual_ref))
+                )
 
                 # 3. Try Universal Pro (GPT-5.4) WITHOUT images
-                print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (stripped context)..." % chunk_idx)
+                print(
+                    "[OPENAI FALLBACK TRIGGERED] Chunk %d: Attempting GPT-5.4 Pro Fallback (stripped context)..."
+                    % chunk_idx
+                )
                 t2_univ_stripped_start = time.time()
                 _log_agent_banner(
                     agent_name=_universal_pro.name,
                     model_id=_universal_pro.model.id,
-                    provider=getattr(_universal_pro.model, 'provider', 'openai'),
-                    step_name='step_generate_chunks / Universal Pro Fallback Stripped (chunk %d)' % chunk_idx,
+                    provider=getattr(_universal_pro.model, "provider", "openai"),
+                    step_name="step_generate_chunks / Universal Pro Fallback Stripped (chunk %d)"
+                    % chunk_idx,
                 )
                 try:
-                    for _ in _universal_pro.run(openai_fallback_code_gen_prompt_stripped, stream=True):
+                    for _ in _universal_pro.run(
+                        openai_fallback_code_gen_prompt_stripped, stream=True
+                    ):
                         pass
                 except Exception as e_pro_stripped:
-                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped failed: %s" % (chunk_idx, str(e_pro_stripped)))
-                
+                    print(
+                        "[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped failed: %s"
+                        % (chunk_idx, str(e_pro_stripped))
+                    )
+
                 if os.path.exists(chunk_output_path):
-                    print("[TIMING] Chunk %d Universal Pro fallback stripped: %.1fs" % (chunk_idx, time.time() - t2_univ_stripped_start))
+                    print(
+                        "[TIMING] Chunk %d Universal Pro fallback stripped: %.1fs"
+                        % (chunk_idx, time.time() - t2_univ_stripped_start)
+                    )
                     tier2_success = True
                 else:
                     # 4. Try Universal Lite (o3-mini) WITHOUT images
-                    print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped produced no file. Attempting o3-mini Lite Fallback (stripped context)..." % chunk_idx)
+                    print(
+                        "[OPENAI FALLBACK TRIGGERED] Chunk %d: Pro stripped produced no file. Attempting o3-mini Lite Fallback (stripped context)..."
+                        % chunk_idx
+                    )
                     t2_univ_lite_stripped_start = time.time()
                     _log_agent_banner(
                         agent_name=_universal_lite.name,
                         model_id=_universal_lite.model.id,
-                        provider=getattr(_universal_lite.model, 'provider', 'openai'),
-                        step_name='step_generate_chunks / Universal Lite Fallback Stripped (chunk %d)' % chunk_idx,
+                        provider=getattr(_universal_lite.model, "provider", "openai"),
+                        step_name="step_generate_chunks / Universal Lite Fallback Stripped (chunk %d)"
+                        % chunk_idx,
                     )
                     try:
-                        for _ in _universal_lite.run(openai_fallback_code_gen_prompt_stripped, stream=True):
+                        for _ in _universal_lite.run(
+                            openai_fallback_code_gen_prompt_stripped, stream=True
+                        ):
                             pass
                     except Exception as e_lite_stripped:
-                        print("[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite stripped failed: %s" % (chunk_idx, str(e_lite_stripped)))
-                    
+                        print(
+                            "[OPENAI FALLBACK TRIGGERED] Chunk %d: Lite stripped failed: %s"
+                            % (chunk_idx, str(e_lite_stripped))
+                        )
+
                     if os.path.exists(chunk_output_path):
-                        print("[TIMING] Chunk %d Universal Lite fallback stripped: %.1fs" % (chunk_idx, time.time() - t2_univ_lite_stripped_start))
+                        print(
+                            "[TIMING] Chunk %d Universal Lite fallback stripped: %.1fs"
+                            % (chunk_idx, time.time() - t2_univ_lite_stripped_start)
+                        )
                         tier2_success = True
 
         except Exception as e_univ:
-            print("[CHUNK %d TIER2] Universal OpenAI Fallback failed entirely: %s" % (chunk_idx, str(e_univ)))
-        print(
-            "[CHUNK %d TIER2] Retrying with lite agent (Haiku)..." % chunk_idx
-        )
+            print(
+                "[CHUNK %d TIER2] Universal OpenAI Fallback failed entirely: %s"
+                % (chunk_idx, str(e_univ))
+            )
+        print("[CHUNK %d TIER2] Retrying with lite agent (Haiku)..." % chunk_idx)
         t2_lite_start = time.time()
         _log_agent_banner(
-            agent_name=getattr(_fallback_agent_lite, 'name', 'PPTX Code Generator (Lite)'),
-            model_id=getattr(getattr(_fallback_agent_lite, 'model', None), 'id', 'claude-haiku-4-5'),
-            provider=getattr(getattr(_fallback_agent_lite, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-            step_name='step_generate_chunks / Tier 2 Lite Fallback (chunk %d)' % chunk_idx,
+            agent_name=getattr(
+                _fallback_agent_lite, "name", "PPTX Code Generator (Lite)"
+            ),
+            model_id=getattr(
+                getattr(_fallback_agent_lite, "model", None), "id", "claude-haiku-4-5"
+            ),
+            provider=getattr(
+                getattr(_fallback_agent_lite, "model", None),
+                "provider",
+                session_state.get("llm_provider", "claude"),
+            ),  # type: ignore
+            step_name="step_generate_chunks / Tier 2 Lite Fallback (chunk %d)"
+            % chunk_idx,
         )
         _get_rate_tracker().check_and_wait(
             model="claude-haiku-4-5",
@@ -4945,7 +5353,10 @@ def generate_chunk_pptx_v2(
             )
 
     if not tier2_success:
-        print("[CHUNK %d TIER2] Both agents failed. Falling back to Tier 3 (text-only)." % chunk_idx)
+        print(
+            "[CHUNK %d TIER2] Both agents failed. Falling back to Tier 3 (text-only)."
+            % chunk_idx
+        )
         return None
 
     # Verify the file was actually written by the executed code
@@ -5069,7 +5480,9 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
         elif effective_tier == 2:
             if session_state.get("use_fallback_generator") and start_tier == 1:
                 if VERBOSE:  # noqa: F405
-                    print(f"    [FALLBACK AGENT ENGAGED] Switching Tier 1 chunk generation to Tier 2 (LLM code generation) due to prior provider capacity restrictions.")
+                    print(
+                        f"    [FALLBACK AGENT ENGAGED] Switching Tier 1 chunk generation to Tier 2 (LLM code generation) due to prior provider capacity restrictions."
+                    )
             # Start with Tier 2: LLM code generation, fallback to Tier 3
             print(
                 "[GENERATE] Chunk %d/%d: Starting at Tier 2 (LLM code generation)."
@@ -5155,15 +5568,15 @@ def step_generate_chunks(step_input: StepInput, session_state: Dict) -> StepOutp
                     % (chunk_idx + 1, total_chunks, delay_sec)
                 )
                 await asyncio.sleep(delay_sec)
-            
+
             # Execute the heavy synchronous chunk generation in a background thread
             tasks.append(asyncio.to_thread(_process_chunk, chunk_idx, chunk_slides))  # type: ignore
-            
+
         return await asyncio.gather(*tasks)
 
     # Run the async chunk generation process concurrently
     results = asyncio.run(_generate_all_chunks_async())
-    
+
     # Reassemble results ensuring original order
     results.sort(key=lambda x: x[0])  # type: ignore
     chunk_files = [res[1] for res in results]  # type: ignore
@@ -5280,7 +5693,9 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
         chunk_session = dict(session_state)
         chunk_session["generated_file"] = chunk_file
         chunk_session["total_slides"] = total_chunk_slides
-        chunk_session["global_total_slides"] = session_state.get("total_slides", total_chunk_slides)
+        chunk_session["global_total_slides"] = session_state.get(
+            "total_slides", total_chunk_slides
+        )
         chunk_session["slides_data"] = slides_data
         chunk_session["output_path"] = assembled_path
         chunk_session["generated_images"] = {}
@@ -5323,12 +5738,24 @@ def step_process_chunks(step_input: StepInput, session_state: Dict) -> StepOutpu
                 ) % (user_prompt, slides_json)
 
                 from agents import get_agents as _get_agents  # type: ignore
-                _image_planner = _get_agents(session_state.get("llm_provider", "claude")).get("image_planner")
+
+                _image_planner = _get_agents(
+                    session_state.get("llm_provider", "claude")
+                ).get("image_planner")
                 _log_agent_banner(
-                    agent_name=getattr(_image_planner, 'name', 'Image Planner'),
-                    model_id=getattr(getattr(_image_planner, 'model', None), 'id', 'gemini-3-flash-preview'),
-                    provider=getattr(getattr(_image_planner, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-                    step_name='step_process_chunks / Image Planning (chunk %d)' % chunk_idx,
+                    agent_name=getattr(_image_planner, "name", "Image Planner"),
+                    model_id=getattr(
+                        getattr(_image_planner, "model", None),
+                        "id",
+                        "gemini-3-flash-preview",
+                    ),
+                    provider=getattr(
+                        getattr(_image_planner, "model", None),
+                        "provider",
+                        session_state.get("llm_provider", "claude"),
+                    ),  # type: ignore
+                    step_name="step_process_chunks / Image Planning (chunk %d)"
+                    % chunk_idx,
                 )
                 img_plan_response = _image_planner.run(combined_message, stream=False)
 
@@ -5492,12 +5919,23 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
             % (chunk_idx, assembled_path)
         )
         from agents import get_agents as _get_agents_vr  # type: ignore
-        _vr_reviewer = _get_agents_vr(session_state.get("llm_provider", "claude")).get("slide_quality_reviewer")
+
+        _vr_reviewer = _get_agents_vr(session_state.get("llm_provider", "claude")).get(
+            "slide_quality_reviewer"
+        )
         _log_agent_banner(
-            agent_name=getattr(_vr_reviewer, 'name', 'Senior UI/UX Presentation Designer'),
-            model_id=getattr(getattr(_vr_reviewer, 'model', None), 'id', 'gemini-2.5-flash'),
-            provider=getattr(getattr(_vr_reviewer, 'model', None), 'provider', session_state.get('llm_provider', 'claude')),  # type: ignore
-            step_name='step_visual_review_chunks / Visual QA (chunk %d)' % chunk_idx,
+            agent_name=getattr(
+                _vr_reviewer, "name", "Senior UI/UX Presentation Designer"
+            ),
+            model_id=getattr(
+                getattr(_vr_reviewer, "model", None), "id", "gemini-2.5-flash"
+            ),
+            provider=getattr(
+                getattr(_vr_reviewer, "model", None),
+                "provider",
+                session_state.get("llm_provider", "claude"),
+            ),  # type: ignore
+            step_name="step_visual_review_chunks / Visual QA (chunk %d)" % chunk_idx,
         )
 
         # Build a per-chunk session_state for the visual review step
@@ -5605,10 +6043,7 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
         print(
             "[TIMING] Chunk %d total review: %.1fs" % (chunk_idx, chunk_review_elapsed)
         )
-        print(
-            "[VISUAL REVIEW] Chunk %d: reviewed -> %s"
-            % (chunk_idx, reviewed_path)
-        )
+        print("[VISUAL REVIEW] Chunk %d: reviewed -> %s" % (chunk_idx, reviewed_path))
         return chunk_idx, reviewed_path
 
     async def _review_all_chunks_async():
@@ -5618,7 +6053,7 @@ def step_visual_review_chunks(step_input: StepInput, session_state: Dict) -> Ste
         return await asyncio.gather(*tasks)
 
     results = asyncio.run(_review_all_chunks_async())
-    
+
     for c_idx, r_path in results:  # type: ignore
         reviewed_chunks[c_idx] = r_path
 
@@ -6309,8 +6744,8 @@ def main() -> None:
         type=int,
         default=1,
         help="Number of slides per LLM API chunk call (default: 1). "
-             "Using 1 ensures each chunk sends only the single best-matching "
-             "template slide image, keeping prompts within all model context windows.",
+        "Using 1 ensures each chunk sends only the single best-matching "
+        "template slide image, keeping prompts within all model context windows.",
     )
     parser.add_argument(
         "--max-retries",
@@ -6358,7 +6793,6 @@ def main() -> None:
         ),
     )
 
-
     args = parser.parse_args()
 
     # Update module-level VERBOSE (imported from powerpoint_template_workflow via *)
@@ -6375,8 +6809,8 @@ def main() -> None:
                 print("[TELEMETRY] Flushing and shutting down tracer...")
             tracer_provider.shutdown()
 
-def _run_main_workflow(args):
 
+def _run_main_workflow(args):
     # Validate API keys
     # ANTHROPIC_API_KEY is always required (Content Generator is locked to Claude).
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -6386,13 +6820,21 @@ def _run_main_workflow(args):
     # OPENAI_API_KEY is always required: brand_style_analyzer uses gpt-4o-mini (OpenAI)
     # regardless of --llm-provider, to avoid consuming Anthropic token budget.
     if not os.getenv("OPENAI_API_KEY"):
-        print("[WARNING] OPENAI_API_KEY not set — brand style analysis (gpt-4o-mini) will be skipped.")
-        print("[WARNING] Two-stage brand parsing will fall through to keyword-only detection.")
+        print(
+            "[WARNING] OPENAI_API_KEY not set — brand style analysis (gpt-4o-mini) will be skipped."
+        )
+        print(
+            "[WARNING] Two-stage brand parsing will fall through to keyword-only detection."
+        )
     if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY environment variable not set (required for --llm-provider openai).")
+        print(
+            "Error: OPENAI_API_KEY environment variable not set (required for --llm-provider openai)."
+        )
         sys.exit(1)
     if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
-        print("Error: GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini).")
+        print(
+            "Error: GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)."
+        )
         sys.exit(1)
 
     # Validate template if provided
@@ -6426,7 +6868,9 @@ def _run_main_workflow(args):
         "Claude model limits: sonnet=30K, opus=30K, haiku=50K input tokens/min."
     )
     # Apply provider-specific millisecond defaults if not set
-    provider_delays = DEFAULT_INTER_CHUNK_DELAYS_MS.get(args.llm_provider, DEFAULT_INTER_CHUNK_DELAYS_MS["claude"])
+    provider_delays = DEFAULT_INTER_CHUNK_DELAYS_MS.get(
+        args.llm_provider, DEFAULT_INTER_CHUNK_DELAYS_MS["claude"]
+    )
     if getattr(args, "inter_chunk_delay_min", None) is None:
         setattr(args, "inter_chunk_delay_min", provider_delays["min"])
     if getattr(args, "inter_chunk_delay_max", None) is None:
@@ -6435,7 +6879,10 @@ def _run_main_workflow(args):
     print(
         "[RATE TRACKER] Inter-chunk logic set to: random %.0f–%.0f ms "
         "(override with --inter-chunk-delay-min / --inter-chunk-delay-max)."
-        % (getattr(args, "inter_chunk_delay_min", 2000), getattr(args, "inter_chunk_delay_max", 5000))
+        % (
+            getattr(args, "inter_chunk_delay_min", 2000),
+            getattr(args, "inter_chunk_delay_max", 5000),
+        )
     )
 
     # Setup output directory with unique session ID + timestamp per run
@@ -6465,8 +6912,9 @@ def _run_main_workflow(args):
     session_log_path = os.path.join(session_dir, "log.md")
     if hasattr(sys.stdout, "add_file"):
         sys.stdout.add_file(session_log_path)  # type: ignore
-        
+
     import logging
+
     _session_handler = logging.FileHandler(session_log_path, mode="a", encoding="utf-8")
     _session_handler.setLevel(logging.DEBUG)
     logging.root.addHandler(_session_handler)
@@ -6543,7 +6991,10 @@ def _run_main_workflow(args):
     else:
         print("Mode:       raw generation (no template)")
         if effective_visual_review:
-            print("Visual review: enabled, template-independent (%d passes max)" % args.visual_passes)
+            print(
+                "Visual review: enabled, template-independent (%d passes max)"
+                % args.visual_passes
+            )
         else:
             print("Visual review: disabled")
     print("Chunk size: %d slides per API call" % args.chunk_size)
@@ -6587,14 +7038,14 @@ def _run_main_workflow(args):
     print("[TIMING] Total workflow: %.1fs" % elapsed)
     print("Output: %s" % output_path)
     print("=" * 60)
-    
+
     # GLOBAL_TOKEN_TRACKER replaced by Langfuse/OpenInference telemetry.
 
 
 if __name__ == "__main__":
-    import logging
     import glob
-    
+    import logging
+
     # Snapshot current python files in the directory for generic cleanup later
     _cwd_py_files_start = set(glob.glob("*.py"))
 
@@ -6609,13 +7060,14 @@ if __name__ == "__main__":
 
         Writes go exclusively to the file — nothing is printed to the console.
         The file is opened in append mode so both stdout and stderr can share it.
-        This handles dual-logging to a primary script-level OUTPUT.md and an 
+        This handles dual-logging to a primary script-level OUTPUT.md and an
         optional session-specific log.md.
         """
 
         def __init__(self, filepath: str):
             self._file = open(filepath, "a", encoding="utf-8")
             import typing
+
             self._file2: typing.Optional[typing.TextIO] = None
 
         def add_file(self, filepath: str) -> None:
@@ -6676,6 +7128,7 @@ if __name__ == "__main__":
 
         # Generic Cleanup: Identify and remove .py files created during this run
         import glob
+
         _is_verbose = any(arg in sys.argv for arg in ("--verbose", "-v"))
         _cwd_py_files_end = set(glob.glob("*.py"))
         _new_py_files = _cwd_py_files_end - _cwd_py_files_start
@@ -6691,4 +7144,3 @@ if __name__ == "__main__":
                 except Exception as e:
                     if _is_verbose:
                         print("  [ERROR] Failed to remove %s: %s" % (tmp_file, e))
-

@@ -16,16 +16,18 @@ Usage:
 import os
 import sys
 import tempfile
+from typing import List
 
 from pptx import Presentation
 from pptx.util import Pt
 from pydantic import BaseModel, Field
-from typing import List
 
 # --- Copy of BrandStyleIntent model (to avoid importing the full module chain) ---
 
+
 class BrandStyleIntent(BaseModel):
     """Parsed branding/styling intent extracted from a user query or template file."""
+
     has_branding: bool = Field(False)
     brand_name: str = Field("")
     style_keywords: List[str] = Field(default_factory=list)
@@ -51,11 +53,15 @@ def _format_brand_context_for_prompt(brand_intent):
     if brand_intent.style_keywords:
         sections.append("**Style:** %s" % ", ".join(brand_intent.style_keywords[:5]))
     if brand_intent.color_palette:
-        sections.append("**Color Palette:** %s" % ", ".join(brand_intent.color_palette[:6]))
+        sections.append(
+            "**Color Palette:** %s" % ", ".join(brand_intent.color_palette[:6])
+        )
     if brand_intent.tone_override:
         sections.append("**Tone:** %s" % brand_intent.tone_override)
     if brand_intent.typography_hints:
-        sections.append("**Typography:** %s" % ", ".join(brand_intent.typography_hints[:3]))
+        sections.append(
+            "**Typography:** %s" % ", ".join(brand_intent.typography_hints[:3])
+        )
     sections.append(
         "\nUse these brand guidelines to inform visual direction, tone, terminology, "
         "and content framing throughout the presentation. Reflect the brand's identity "
@@ -76,11 +82,13 @@ def _build_brand_override_log(query_intent, template_intent):
     ]
     if template_intent.color_palette:
         lines.append(
-            "[BRAND OVERRIDE] Template colors: %s" % ", ".join(template_intent.color_palette[:6])
+            "[BRAND OVERRIDE] Template colors: %s"
+            % ", ".join(template_intent.color_palette[:6])
         )
     if template_intent.typography_hints:
         lines.append(
-            "[BRAND OVERRIDE] Template fonts: %s" % ", ".join(template_intent.typography_hints)
+            "[BRAND OVERRIDE] Template fonts: %s"
+            % ", ".join(template_intent.typography_hints)
         )
     return "\n".join(lines)
 
@@ -100,8 +108,18 @@ def extract_style_from_template(template_path):
             for clr_scheme in theme_part.iter(ns_a + "clrScheme"):
                 for child in clr_scheme:
                     tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
-                    if tag in ("dk1", "dk2", "lt1", "lt2", "accent1", "accent2",
-                               "accent3", "accent4", "accent5", "accent6"):
+                    if tag in (
+                        "dk1",
+                        "dk2",
+                        "lt1",
+                        "lt2",
+                        "accent1",
+                        "accent2",
+                        "accent3",
+                        "accent4",
+                        "accent5",
+                        "accent6",
+                    ):
                         for color_el in child:
                             val = color_el.get("val", "")
                             last_clr = color_el.get("lastClr", "")
@@ -140,8 +158,11 @@ def extract_style_from_template(template_path):
                         if 0 < len(text) < 60 and len(text.split()) <= 4:
                             lower = text.lower()
                             skip = {
-                                "click to add title", "click to add subtitle",
-                                "click to add text", "title", "subtitle",
+                                "click to add title",
+                                "click to add subtitle",
+                                "click to add text",
+                                "title",
+                                "subtitle",
                             }
                             if lower not in skip:
                                 intent.brand_name = text
@@ -151,7 +172,9 @@ def extract_style_from_template(template_path):
 
     except Exception as e:
         print("[WARNING] Template style extraction failed: %s" % str(e))
-        return BrandStyleIntent(source="template", source_detail=os.path.basename(template_path))
+        return BrandStyleIntent(
+            source="template", source_detail=os.path.basename(template_path)
+        )
 
     return intent
 
@@ -167,7 +190,9 @@ def test_brand_style_intent_defaults():
     assert intent.style_keywords == [], "Default style_keywords should be empty list"
     assert intent.color_palette == [], "Default color_palette should be empty list"
     assert intent.tone_override == "", "Default tone_override should be empty"
-    assert intent.typography_hints == [], "Default typography_hints should be empty list"
+    assert intent.typography_hints == [], (
+        "Default typography_hints should be empty list"
+    )
     assert intent.content_query == "", "Default content_query should be empty"
     assert intent.source == "query", "Default source should be 'query'"
     assert intent.source_detail == "", "Default source_detail should be empty"
@@ -287,8 +312,9 @@ def test_extract_style_from_template_basic():
         intent = extract_style_from_template(tmp_path)
         assert intent.source == "template", "Source should be 'template'"
         assert intent.has_branding is True, "Should have branding from template"
-        assert intent.source_detail == os.path.basename(tmp_path), \
+        assert intent.source_detail == os.path.basename(tmp_path), (
             "source_detail should be the filename"
+        )
         # Should extract theme fonts and colors from the default template
         print("  PASS: test_extract_style_from_template_basic")
     finally:
@@ -308,8 +334,9 @@ def test_extract_style_from_template_company_name():
         prs.save(tmp_path)
 
         intent = extract_style_from_template(tmp_path)
-        assert intent.brand_name == "TechCo", \
+        assert intent.brand_name == "TechCo", (
             "Should detect 'TechCo' as company name, got: '%s'" % intent.brand_name
+        )
         print("  PASS: test_extract_style_from_template_company_name")
     finally:
         os.unlink(tmp_path)
@@ -396,6 +423,7 @@ def run_all_tests():
         except Exception as e:
             print("  FAIL: %s — %s" % (test_fn.__name__, e))
             import traceback
+
             traceback.print_exc()
             failed += 1
 

@@ -136,11 +136,10 @@ import traceback
 from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from agno.agent import Agent
 from agno.media import Image as AgnoImage
-from lib_patches.anthropic.claude import Claude
 from agno.models.google import Gemini
 from agno.run.agent import RunOutput
 from agno.tools.nano_banana import NanoBananaTools
@@ -149,13 +148,13 @@ from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 from anthropic import Anthropic
 from file_download_helper import download_skill_files
+from lib_patches.anthropic.claude import Claude
 from lxml import etree
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
 from pydantic import BaseModel, Field, model_validator
-from typing import Optional
 
 # Module-level verbose flag (set from CLI args)
 VERBOSE = False
@@ -203,7 +202,7 @@ def _is_backdrop(shape) -> bool:
 
 def _mark_as_backdrop(shape) -> None:
     """Mark a shape as a protected backdrop that should never be reflowed.
-    
+
     Adds a persistent [BACKDROP] prefix to the shape name.
     """
     try:
@@ -228,8 +227,8 @@ def _shape_has_any_text(shape) -> bool:
     Group shapes because they don't expose a direct text_frame.
     """
     try:
-        ns_a = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-        for t_node in shape._element.findall('.//{%s}t' % ns_a):
+        ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        for t_node in shape._element.findall(".//{%s}t" % ns_a):
             if t_node.text and t_node.text.strip():
                 return True
     except Exception:
@@ -248,13 +247,27 @@ def _shape_has_any_text(shape) -> bool:
 # ---------------------------------------------------------------------------
 
 _TEMPLATE_PLACEHOLDER_PATTERNS = (
-    "xxx", "enter ", "lorem ", "click to ", "type ", "insert ",
-    "your text", "sample text", "add text", "placeholder",
-    "project goal", "description here",
+    "xxx",
+    "enter ",
+    "lorem ",
+    "click to ",
+    "type ",
+    "insert ",
+    "your text",
+    "sample text",
+    "add text",
+    "placeholder",
+    "project goal",
+    "description here",
 )
 
 _BRANDING_PATTERNS = (
-    "www.", "http", ".com", ".org", ".net", ".io",
+    "www.",
+    "http",
+    ".com",
+    ".org",
+    ".net",
+    ".io",
 )
 
 # Footer text markers that indicate branding (should be preserved as-is).
@@ -347,14 +360,22 @@ def _classify_template_shape(
     # --- Early check: LINE geometry shapes are always disposable ---
     # Template LINE connectors render as diagonal slanting lines.
     try:
-        xml_str = shape._element.xml if hasattr(shape, '_element') else ""
+        xml_str = shape._element.xml if hasattr(shape, "_element") else ""
     except Exception:
         xml_str = ""
     is_line = 'prstGeom prst="line"' in xml_str
     if is_line:
         # Fix: Detect and discard dotted/dashed template guides (Rule 1).
         # These appear as distracting grey lines in the output.
-        is_dotted = any(dash in xml_str for dash in ['prstDash val="dot"', 'prstDash val="dash"', 'prstDash val="sysDot"', 'prstDash val="lgDash"'])
+        is_dotted = any(
+            dash in xml_str
+            for dash in [
+                'prstDash val="dot"',
+                'prstDash val="dash"',
+                'prstDash val="sysDot"',
+                'prstDash val="lgDash"',
+            ]
+        )
         if is_dotted:
             return "disposable"
 
@@ -362,7 +383,7 @@ def _classify_template_shape(
         w = max(shape_w, 1)
         h = max(shape_h, 1)
         ratio = w / h
-        
+
         # If the line is at least 10x longer than it is thick, it's an orthogonal accent line.
         if ratio > 10 or ratio < 0.1:
             return "structural"
@@ -396,7 +417,12 @@ def _classify_template_shape(
     # content, not structural design. Strip via content_carrier.
     # Must run BEFORE ALL-CAPS branding check (which would match "88%" as branded).
     import re
-    if has_text and text_len <= 15 and re.match(r'^[\d.,$/₹€£¥+\-\s%]+$', shape_text.strip()):
+
+    if (
+        has_text
+        and text_len <= 15
+        and re.match(r"^[\d.,$/₹€£¥+\-\s%]+$", shape_text.strip())
+    ):
         return "content_carrier"
 
     # Check branding text patterns anywhere on the slide
@@ -425,15 +451,12 @@ def _classify_template_shape(
     if not has_text and has_accent_fill:
         return "structural"
 
-
     if has_accent_fill and text_len <= 15:
         return "structural"
 
     # --- Heuristic 4: GroupShapes with uniform children ---
     shape_name = getattr(shape, "name", "") or ""
-    is_group = "group" in shape_name.lower() or "Group" in str(
-        type(shape).__name__
-    )
+    is_group = "group" in shape_name.lower() or "Group" in str(type(shape).__name__)
     if is_group:
         try:
             children = list(shape.shapes)
@@ -444,8 +467,8 @@ def _classify_template_shape(
                 _any_child_text = False
                 for _child in children:
                     try:
-                        _ct = ''
-                        if hasattr(_child, 'text_frame'):
+                        _ct = ""
+                        if hasattr(_child, "text_frame"):
                             _ct = _child.text_frame.text.strip()
                         if _ct and len(_ct) > 2:
                             _any_child_text = True
@@ -557,7 +580,7 @@ def _extract_header_style_from_preserved_shapes(
     extracts the dominant font family, color (RGB hex), and size. If found,
     these values are patched into ``template_style`` so that
     ``_populate_placeholder_with_format`` automatically applies the branded
-    header styling to new slide titles, ensuring perfect brand alignment 
+    header styling to new slide titles, ensuring perfect brand alignment
     even if standard placeholders are missing.
 
     This is especially important for templates where the visual identity
@@ -626,6 +649,7 @@ def _extract_header_style_from_preserved_shapes(
     if _fonts and not template_style.title_font_family:
         # Pick most common font
         from collections import Counter
+
         font_counter = Counter(_fonts)
         template_style.title_font_family = font_counter.most_common(1)[0][0]
         if VERBOSE:
@@ -636,6 +660,7 @@ def _extract_header_style_from_preserved_shapes(
 
     if _colors and not template_style.title_font_color_rgb:
         from collections import Counter
+
         color_counter = Counter(_colors)
         template_style.title_font_color_rgb = color_counter.most_common(1)[0][0]
         if VERBOSE:
@@ -647,6 +672,7 @@ def _extract_header_style_from_preserved_shapes(
     if _sizes and template_style.title_font_size_pt == 28:
         # Only override the default 28pt if we found explicit sizes
         from collections import Counter
+
         size_counter = Counter(_sizes)
         best_sz = size_counter.most_common(1)[0][0]
         if best_sz >= 14:  # Sanity: don't adopt tiny sizes
@@ -656,9 +682,6 @@ def _extract_header_style_from_preserved_shapes(
                     "[VERBOSE] Phase 4: inherited header font size %dpt "
                     "from preserved template shapes" % best_sz
                 )
-
-
-
 
 
 def _inject_content_into_carriers(
@@ -733,11 +756,13 @@ def _inject_content_into_carriers(
                                 font.name = template_style.body_font_family
                             if template_style.body_font_size_pt:
                                 from pptx.util import Pt
+
                                 font.size = Pt(
                                     min(template_style.body_font_size_pt, 14)
                                 )
                             if template_style.body_font_color_rgb:
                                 from pptx.dml.color import RGBColor
+
                                 font.color.rgb = RGBColor.from_string(
                                     template_style.body_font_color_rgb
                                 )
@@ -1404,7 +1429,9 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
                                     text_rgb = _hex_to_rgb(text_hex)
                                     ratio = _contrast_ratio(text_rgb, bg_rgb)
                                     if ratio < 3.0:
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                                        _make_high_contrast_fill(
+                                            rPr, bg_hex, existing_solidFill=solidFill
+                                        )
                             else:
                                 # Check default (black) against background
                                 ratio = _contrast_ratio((0, 0, 0), bg_rgb)
@@ -1460,7 +1487,9 @@ def _ensure_text_contrast(slide, template_style: "TemplateStyle | None" = None) 
                     # No explicit color — assume inherited default is dk1 (typically black).
                     # On dark backgrounds this creates invisible text. Fix it.
                     inherited_color = theme.dk1 or "000000"
-                    ratio = _contrast_ratio(_hex_to_rgb(inherited_color), _hex_to_rgb(bg_color))
+                    ratio = _contrast_ratio(
+                        _hex_to_rgb(inherited_color), _hex_to_rgb(bg_color)
+                    )
                     if ratio < CONTRAST_THRESHOLD:
                         # Inherited color has poor contrast — set explicit high-contrast color
                         if rPr is None:
@@ -2024,8 +2053,7 @@ def _extract_template_styles(template_prs) -> TemplateStyle:
                         ts.title_font_color_rgb = _ft_color
                         if VERBOSE:
                             print(
-                                "[VERBOSE] Free text scan: accent color #%s"
-                                % _ft_color
+                                "[VERBOSE] Free text scan: accent color #%s" % _ft_color
                             )
                         break
     except Exception as e:
@@ -3900,7 +3928,9 @@ def _populate_placeholder_with_format(
                         # Ensure latin element exists and has typeface set
                         latin = rPr.find(ns_a + "latin")
                         if latin is None:
-                            latin = __import__("lxml.etree", fromlist=["Element"]).Element(ns_a + "latin")
+                            latin = __import__(
+                                "lxml.etree", fromlist=["Element"]
+                            ).Element(ns_a + "latin")
                             rPr.insert(0, latin)
                         latin.set("typeface", target_font)
                 for run in para.runs:
@@ -4007,7 +4037,7 @@ def _transfer_charts(
     template_style: "TemplateStyle | None" = None,
 ):
     """Transfer extracted chart data to a slide, sized to fill the content area.
-    
+
     Pie charts are constrained to a perfect square within the bounds to prevent
     oval distortions and overlapping text bounds.
 
@@ -4058,7 +4088,7 @@ def _transfer_charts(
             else:
                 chart_width = content_area.width
                 chart_left = content_area.left
-                
+
             chart_graphic_frame = slide.shapes.add_chart(
                 cd.chart_type,
                 chart_left,
@@ -4180,7 +4210,10 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
             is_bd = _is_backdrop(shape)
             if is_bd:
                 if VERBOSE:
-                    print("  [DEBUG OVERLAP] Skipping backdrop: %s" % getattr(shape, "name", ""))
+                    print(
+                        "  [DEBUG OVERLAP] Skipping backdrop: %s"
+                        % getattr(shape, "name", "")
+                    )
                 continue
 
             # Only process shapes that have meaningful dimensions
@@ -4189,7 +4222,10 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
 
             if shape.is_placeholder:
                 # Include placeholders with visible text as anchors
-                if getattr(shape, "has_text_frame", False) and getattr(shape, "text", "").strip():
+                if (
+                    getattr(shape, "has_text_frame", False)
+                    and getattr(shape, "text", "").strip()
+                ):
                     anchor_shapes.append(shape)
             else:
                 movable_shapes.append(shape)
@@ -4203,7 +4239,7 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
     modified = False
 
     # --- Phase 1: Enforce minimum shape dimensions ---
-    min_width = int(slide_width * 0.08)   # 8% of slide width
+    min_width = int(slide_width * 0.08)  # 8% of slide width
     min_height = int(slide_height * 0.04)  # 4% of slide height
 
     for shape in movable_shapes:
@@ -4247,9 +4283,13 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
             # Check for vertical overlap (shapes on similar x-axis range)
             # Fix 12B: Lower horizontal overlap threshold from 30% to 15%
             # to catch near-miss overlaps between text boxes.
-            x_overlap_amount = min(upper.left + upper.width, lower.left + lower.width) - max(upper.left, lower.left)
+            x_overlap_amount = min(
+                upper.left + upper.width, lower.left + lower.width
+            ) - max(upper.left, lower.left)
             min_width = min(upper.width, lower.width)
-            x_overlap = x_overlap_amount > 0 and (min_width <= 0 or x_overlap_amount / min_width > 0.15)
+            x_overlap = x_overlap_amount > 0 and (
+                min_width <= 0 or x_overlap_amount / min_width > 0.15
+            )
 
             if x_overlap and lower.top < upper_bottom + MARGIN:
                 # Only move the lower shape if it's a movable (non-placeholder) shape
@@ -4258,7 +4298,9 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
                     # Fix 19A: Clamp reflow target — don't push below footer zone
                     _safe_bottom = int(slide_height * 0.87)
                     if new_top + lower.height > _safe_bottom:
-                        new_top = max(upper_bottom + MARGIN, _safe_bottom - lower.height)
+                        new_top = max(
+                            upper_bottom + MARGIN, _safe_bottom - lower.height
+                        )
                     if VERBOSE:
                         print(
                             "  [OVERLAP FIX] Reflowing shape from top=%d to top=%d "
@@ -4275,7 +4317,8 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
     if modified:
         try:
             max_bottom = max(
-                s.top + s.height for s in movable_shapes
+                s.top + s.height
+                for s in movable_shapes
                 if hasattr(s, "top") and hasattr(s, "height")
             )
             # Fix 12D: Align safe bottom with the 87% safe content zone
@@ -4283,7 +4326,9 @@ def _fix_overlapping_shapes(slide, slide_width: int, slide_height: int) -> bool:
             safe_bottom = int(slide_height * 0.87)  # 13% bottom margin
             if max_bottom > safe_bottom and max_bottom > 0:
                 scale = safe_bottom / max_bottom
-                if scale < 1.0 and scale > 0.60:  # Fix 19B: Allow up to 40% shrink for dense slides
+                if (
+                    scale < 1.0 and scale > 0.60
+                ):  # Fix 19B: Allow up to 40% shrink for dense slides
                     for shape in movable_shapes:
                         try:
                             shape.top = int(shape.top * scale)
@@ -4414,7 +4459,7 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
     Simply calling tf.clear() is insufficient for picture placeholders and
     content placeholders with embedded icons. Removing the XML element
     from the shape tree is the nuclear option that works for every case.
-    
+
     Note: Preserves semantic footer placeholders (slide numbers, dates)
     by detecting them via type/name heuristics before removal (Fix 13).
 
@@ -4454,7 +4499,11 @@ def _clear_unused_placeholders(slide, populated_indices: set) -> None:
         # Fix 13: Preserve semantic footer placeholders (slide numbers, dates, footers)
         # to ensure page numbering and branding elements are NOT purged.
         try:
-            if shape.placeholder_format.type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
+            if shape.placeholder_format.type in (
+                PP_PLACEHOLDER.SLIDE_NUMBER,
+                PP_PLACEHOLDER.FOOTER,
+                PP_PLACEHOLDER.DATE,
+            ):
                 continue
         except Exception:
             pass
@@ -4503,7 +4552,11 @@ def _remove_empty_textboxes(slide) -> None:
         try:
             if _is_backdrop(shape):
                 continue
-            if shape.placeholder_format.type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
+            if shape.placeholder_format.type in (
+                PP_PLACEHOLDER.SLIDE_NUMBER,
+                PP_PLACEHOLDER.FOOTER,
+                PP_PLACEHOLDER.DATE,
+            ):
                 continue
             text = shape.text
             if text is None or text.strip() == "":
@@ -4532,11 +4585,11 @@ import re as _re
 class SlideSemanticType(str, Enum):
     """Semantic layout category for a slide's content."""
 
-    SEQUENTIAL = "sequential"    # Phase/Step/Year progression → Timeline or Chevron
+    SEQUENTIAL = "sequential"  # Phase/Step/Year progression → Timeline or Chevron
     COMPARATIVE = "comparative"  # 2-4 parallel peer categories → Card Grid
-    METRICS = "metrics"          # KPI-heavy slide → KPI Dashboard
-    HERO = "hero"                # < 15 words total → Full-bleed Hero
-    DEFAULT = "default"          # Fallback — standard bulleted layout
+    METRICS = "metrics"  # KPI-heavy slide → KPI Dashboard
+    HERO = "hero"  # < 15 words total → Full-bleed Hero
+    DEFAULT = "default"  # Fallback — standard bulleted layout
 
 
 @dataclass
@@ -4545,9 +4598,9 @@ class SemanticSlideContext:
 
     semantic_type: SlideSemanticType = SlideSemanticType.DEFAULT
     confidence: float = 0.0
-    extracted_metrics: list = field(default_factory=list)   # [{value, label, raw}]
+    extracted_metrics: list = field(default_factory=list)  # [{value, label, raw}]
     group_count: int = 0
-    sequential_labels: list = field(default_factory=list)   # ["Phase 1", "Phase 2"…]
+    sequential_labels: list = field(default_factory=list)  # ["Phase 1", "Phase 2"…]
     sequential_descriptions: list = field(default_factory=list)
     storyboard_hint: str = "default"
 
@@ -4556,28 +4609,31 @@ class SemanticSlideContext:
 
 _METRIC_PATTERNS = [
     # Currency ranges: $169.2B → $395B  |  $6.9B → $41B
-    (r'\$[\d,]+(?:\.\d+)?[BbMmKk]?\s*(?:→|->|to)\s*\$[\d,]+(?:\.\d+)?[BbMmKk]?', 0.95),
+    (r"\$[\d,]+(?:\.\d+)?[BbMmKk]?\s*(?:→|->|to)\s*\$[\d,]+(?:\.\d+)?[BbMmKk]?", 0.95),
     # Single currency: $41B  |  $6.9M  |  $300K
-    (r'\$[\d,]+(?:\.\d+)?[BbMmKk]', 0.90),
+    (r"\$[\d,]+(?:\.\d+)?[BbMmKk]", 0.90),
     # Percentage + optional label: 42.8% CAGR  |  18.4%  |  >100%
-    (r'>?\s*[\d,]+(?:\.\d+)?%(?:\s+[A-Z]{2,8})?', 0.90),
+    (r">?\s*[\d,]+(?:\.\d+)?%(?:\s+[A-Z]{2,8})?", 0.90),
     # X-multiples: 5x  |  3X  |  10×
-    (r'\b[\d]+[xX×]\b', 0.85),
+    (r"\b[\d]+[xX×]\b", 0.85),
     # Time-bounded: 90-day  |  18-month  |  3 years
-    (r'\b\d+[\-–\s]?\d*\s*(?:day|month|year)s?\b', 0.80),
+    (r"\b\d+[\-–\s]?\d*\s*(?:day|month|year)s?\b", 0.80),
     # Count + noun: 300+ deals  |  75K+ users  |  3-5 pilots
-    (r'\b\d+[KkMmBb]?\+?\s+(?:deals?|users?|districts?|schools?|pilots?|customers?)', 0.80),
+    (
+        r"\b\d+[KkMmBb]?\+?\s+(?:deals?|users?|districts?|schools?|pilots?|customers?)",
+        0.80,
+    ),
     # Financial acronyms with attached value
-    (r'\b(?:NRR|ARR|MRR|CAGR|CAC|LTV|ROI|ACV)\b[^\n]{0,30}[\d,]+%?', 0.85),
+    (r"\b(?:NRR|ARR|MRR|CAGR|CAC|LTV|ROI|ACV)\b[^\n]{0,30}[\d,]+%?", 0.85),
     # Standalone large numbers: 75K, 300+
-    (r'\b\d{1,3}(?:,\d{3})*[KkMmBb]?\+?\b', 0.65),
+    (r"\b\d{1,3}(?:,\d{3})*[KkMmBb]?\+?\b", 0.65),
 ]
 
 _SEQUENTIAL_PATTERN = _re.compile(
-    r'^(?:Phase|Step|Stage|Year|Month|Quarter|Q|Wave|Round|Milestone|Sprint)\s*[\d]+',
+    r"^(?:Phase|Step|Stage|Year|Month|Quarter|Q|Wave|Round|Milestone|Sprint)\s*[\d]+",
     _re.IGNORECASE,
 )
-_SEQUENTIAL_ORDINAL = _re.compile(r'\b(?:1st|2nd|3rd|\d+th)\b', _re.IGNORECASE)
+_SEQUENTIAL_ORDINAL = _re.compile(r"\b(?:1st|2nd|3rd|\d+th)\b", _re.IGNORECASE)
 
 
 def _extract_kpi_metrics(body_paragraphs: list) -> list:
@@ -4594,8 +4650,10 @@ def _extract_kpi_metrics(body_paragraphs: list) -> list:
         results = []
         seen_values: set = set()
 
-        lines = [para[0] if isinstance(para, tuple) else str(para)
-                 for para in body_paragraphs]
+        lines = [
+            para[0] if isinstance(para, tuple) else str(para)
+            for para in body_paragraphs
+        ]
 
         for line_idx, line in enumerate(lines):
             if not line.strip():
@@ -4609,7 +4667,9 @@ def _extract_kpi_metrics(body_paragraphs: list) -> list:
                     seen_values.add(match_str)
 
                     # Derive a label: check same line remainder or previous line
-                    remainder = line.replace(match_str, "").strip().strip("|:–-—").strip()
+                    remainder = (
+                        line.replace(match_str, "").strip().strip("|:–-—").strip()
+                    )
                     if len(remainder) > 3 and len(remainder) < 80:
                         label = remainder
                     elif line_idx > 0 and lines[line_idx - 1].strip():
@@ -4617,12 +4677,14 @@ def _extract_kpi_metrics(body_paragraphs: list) -> list:
                     else:
                         label = "Key Metric"
 
-                    results.append({
-                        "value": match_str,
-                        "label": label,
-                        "raw_line": line,
-                        "confidence": base_confidence,
-                    })
+                    results.append(
+                        {
+                            "value": match_str,
+                            "label": label,
+                            "raw_line": line,
+                            "confidence": base_confidence,
+                        }
+                    )
                     break  # first matching pattern wins per line
 
         # De-duplicate and return only if we have at least 2
@@ -4653,12 +4715,15 @@ def _classify_slide_semantics(
     ctx = SemanticSlideContext(storyboard_hint=storyboard_hint)
     try:
         # --- Fix: Prevent Semantic Router from hijacking LLM custom geometry ---
-        # If the LLM successfully wrote code to draw custom non-placeholder shapes 
+        # If the LLM successfully wrote code to draw custom non-placeholder shapes
         # (like bounding cards, grids, ribbons), they will be extracted into shapes_xml.
         # We MUST return DEFAULT immediately to avoid overwriting them with generic semantic layouts.
         if content.shapes_xml and len(content.shapes_xml) > 0:
             if VERBOSE:
-                print("[SEMANTIC] Detected %d custom LLM structural shapes. Bypassing semantic router to preserve custom geometry." % len(content.shapes_xml))
+                print(
+                    "[SEMANTIC] Detected %d custom LLM structural shapes. Bypassing semantic router to preserve custom geometry."
+                    % len(content.shapes_xml)
+                )
             return ctx  # DEFAULT
 
         paragraphs = list(content.body_paragraphs) if content.body_paragraphs else []
@@ -4706,7 +4771,9 @@ def _classify_slide_semantics(
         # ── SEQUENTIAL check ────────────────────────────────────────────────
         seq_labels = []
         seq_descs = []
-        level0_paras = [p for p in paragraphs if (p[1] if isinstance(p, tuple) else 0) == 0]
+        level0_paras = [
+            p for p in paragraphs if (p[1] if isinstance(p, tuple) else 0) == 0
+        ]
         for i, para in enumerate(level0_paras):
             text = para[0] if isinstance(para, tuple) else str(para)
             if _SEQUENTIAL_PATTERN.match(text) or _SEQUENTIAL_ORDINAL.search(text):
@@ -4726,7 +4793,10 @@ def _classify_slide_semantics(
                 seq_confidence = min(seq_confidence + 0.20, 0.95)
             # Visual suggestion keywords as secondary signal
             visual = getattr(content, "visual_suggestion", "") or ""
-            if any(k in visual.lower() for k in ("timeline", "chevron", "process", "roadmap")):
+            if any(
+                k in visual.lower()
+                for k in ("timeline", "chevron", "process", "roadmap")
+            ):
                 seq_confidence = min(seq_confidence + 0.10, 0.95)
             if seq_confidence >= 0.60:
                 ctx.semantic_type = SlideSemanticType.SEQUENTIAL
@@ -4773,13 +4843,19 @@ def _classify_slide_semantics(
 
     except Exception as e:
         if VERBOSE:
-            print("[SEMANTIC] _classify_slide_semantics error: %s — returning DEFAULT" % str(e))
+            print(
+                "[SEMANTIC] _classify_slide_semantics error: %s — returning DEFAULT"
+                % str(e)
+            )
         return SemanticSlideContext(storyboard_hint=storyboard_hint)
 
 
 # ── Helper: resolve accent color safely ────────────────────────────────────
 
-def _safe_accent(template_style: "TemplateStyle | None", idx: int = 0, fallback: str = "2E4057") -> str:
+
+def _safe_accent(
+    template_style: "TemplateStyle | None", idx: int = 0, fallback: str = "2E4057"
+) -> str:
     """Return hex accent color by index; fall back to a professional dark blue."""
     try:
         if template_style and template_style.theme.accent_colors:
@@ -4795,7 +4871,11 @@ def _safe_accent(template_style: "TemplateStyle | None", idx: int = 0, fallback:
 def _safe_font(template_style: "TemplateStyle | None", major: bool = True) -> str:
     try:
         if template_style:
-            return template_style.theme.major_font if major else template_style.theme.minor_font
+            return (
+                template_style.theme.major_font
+                if major
+                else template_style.theme.minor_font
+            )
     except Exception:
         pass
     return "Calibri"
@@ -4804,6 +4884,7 @@ def _safe_font(template_style: "TemplateStyle | None", major: bool = True) -> st
 def _rgb_from_hex(hex_str: str):
     """Return pptx RGBColor from hex string, or RGBColor(0,0,0) on error."""
     from pptx.dml.color import RGBColor
+
     try:
         h = hex_str.strip().lstrip("#")
         if len(h) == 6:
@@ -4815,13 +4896,18 @@ def _rgb_from_hex(hex_str: str):
 
 def _add_filled_rect(slide, left, top, width, height, hex_color: str):
     """Add a filled rectangle shape to a slide. Returns the shape or None."""
-    from pptx.util import Emu
     from pptx.dml.color import RGBColor
+    from pptx.util import Emu
+
     try:
         from pptx.enum.shapes import MSO_SHAPE_TYPE
+
         shape = slide.shapes.add_shape(
             1,  # MSO_SHAPE.RECTANGLE
-            left, top, width, height
+            left,
+            top,
+            width,
+            height,
         )
         fill = shape.fill
         fill.solid()
@@ -4837,7 +4923,10 @@ def _add_filled_rect(slide, left, top, width, height, hex_color: str):
 
 def _add_textbox_styled(
     slide,
-    left, top, width, height,
+    left,
+    top,
+    width,
+    height,
     text: str,
     font_size_pt: int = 14,
     bold: bool = False,
@@ -4848,9 +4937,11 @@ def _add_textbox_styled(
     align_center: bool = False,
 ):
     """Add a styled text box. Returns shape or None on error."""
-    from pptx.util import Pt as _Pt, Emu
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
+    from pptx.util import Emu
+    from pptx.util import Pt as _Pt
+
     try:
         txBox = slide.shapes.add_textbox(left, top, width, height)
         tf = txBox.text_frame
@@ -4875,6 +4966,7 @@ def _add_textbox_styled(
 
 # ── Layout Builder 1: Horizontal Timeline ──────────────────────────────────
 
+
 def _build_horizontal_timeline(
     slide,
     labels: list,
@@ -4890,8 +4982,9 @@ def _build_horizontal_timeline(
     Returns True on success, False on failure (caller uses DEFAULT path).
     """
     try:
-        from pptx.util import Emu, Pt as _Pt
         from pptx.dml.color import RGBColor
+        from pptx.util import Emu
+        from pptx.util import Pt as _Pt
 
         n = min(len(labels), 5)
         if n < 2:
@@ -4923,21 +5016,34 @@ def _build_horizontal_timeline(
             # Label inside box
             label_text = str(labels[i])[:22]
             _add_textbox_styled(
-                slide, x + int(Inches(0.05)), box_top + int(Inches(0.08)),
-                box_w - int(Inches(0.10)), box_h - int(Inches(0.15)),
+                slide,
+                x + int(Inches(0.05)),
+                box_top + int(Inches(0.08)),
+                box_w - int(Inches(0.10)),
+                box_h - int(Inches(0.15)),
                 label_text,
-                font_size_pt=12, bold=True, hex_color="FFFFFF",
-                font_name=font_name, align_center=True,
+                font_size_pt=12,
+                bold=True,
+                hex_color="FFFFFF",
+                font_name=font_name,
+                align_center=True,
             )
 
             # Description below the box
             desc = str(descriptions[i])[:120] if descriptions[i] else ""
             if desc:
                 _add_textbox_styled(
-                    slide, x, desc_top, box_w, desc_h,
+                    slide,
+                    x,
+                    desc_top,
+                    box_w,
+                    desc_h,
                     desc,
-                    font_size_pt=9, bold=False, hex_color="333333",
-                    font_name=body_font, align_center=True,
+                    font_size_pt=9,
+                    bold=False,
+                    hex_color="333333",
+                    font_name=body_font,
+                    align_center=True,
                 )
 
             # Arrow connector between boxes (not after last box)
@@ -4964,11 +5070,14 @@ def _build_horizontal_timeline(
         return True
 
     except Exception as e:
-        print("[SEMANTIC] _build_horizontal_timeline failed: %s — falling back" % str(e))
+        print(
+            "[SEMANTIC] _build_horizontal_timeline failed: %s — falling back" % str(e)
+        )
         return False
 
 
 # ── Layout Builder 2: Chevron Process ─────────────────────────────────────
+
 
 def _build_chevron_process(
     slide,
@@ -4985,7 +5094,8 @@ def _build_chevron_process(
     Returns True on success, False on failure.
     """
     try:
-        from pptx.util import Emu, Pt as _Pt
+        from pptx.util import Emu
+        from pptx.util import Pt as _Pt
 
         n = min(len(labels), 4)
         if n < 2:
@@ -5000,7 +5110,9 @@ def _build_chevron_process(
         shape_h = int(area.height * 0.50)
         shape_top = area.top + int(area.height * 0.08)
         desc_top = shape_top + shape_h + int(Inches(0.12))
-        desc_h = max(area.top + area.height - desc_top - int(Inches(0.05)), int(Inches(0.3)))
+        desc_h = max(
+            area.top + area.height - desc_top - int(Inches(0.05)), int(Inches(0.3))
+        )
 
         font_name = _safe_font(template_style, major=True)
         body_font = _safe_font(template_style, major=False)
@@ -5017,36 +5129,56 @@ def _build_chevron_process(
                 _mark_as_backdrop(chev)
             except Exception:
                 # Pentagon not available — fall through to rectangle timeline
-                return _build_horizontal_timeline(slide, labels, descriptions, area, template_style)
+                return _build_horizontal_timeline(
+                    slide, labels, descriptions, area, template_style
+                )
 
             label_text = str(labels[i])[:20]
             _add_textbox_styled(
                 slide,
-                x + int(Inches(0.06)), shape_top + int(shape_h * 0.25),
-                shape_w - int(Inches(0.12)), int(shape_h * 0.5),
+                x + int(Inches(0.06)),
+                shape_top + int(shape_h * 0.25),
+                shape_w - int(Inches(0.12)),
+                int(shape_h * 0.5),
                 label_text,
-                font_size_pt=11, bold=True, hex_color="FFFFFF",
-                font_name=font_name, align_center=True,
+                font_size_pt=11,
+                bold=True,
+                hex_color="FFFFFF",
+                font_name=font_name,
+                align_center=True,
             )
 
             desc = str(descriptions[i])[:100] if descriptions[i] else ""
             if desc:
                 _add_textbox_styled(
-                    slide, x, desc_top, shape_w - overlap, desc_h,
+                    slide,
+                    x,
+                    desc_top,
+                    shape_w - overlap,
+                    desc_h,
                     desc,
-                    font_size_pt=9, bold=False, hex_color="333333",
-                    font_name=body_font, align_center=True,
+                    font_size_pt=9,
+                    bold=False,
+                    hex_color="333333",
+                    font_name=body_font,
+                    align_center=True,
                 )
 
         print("[SEMANTIC] Built CHEVRON PROCESS: %d items" % n)
         return True
 
     except Exception as e:
-        print("[SEMANTIC] _build_chevron_process failed: %s — trying timeline fallback" % str(e))
-        return _build_horizontal_timeline(slide, labels, descriptions, area, template_style)
+        print(
+            "[SEMANTIC] _build_chevron_process failed: %s — trying timeline fallback"
+            % str(e)
+        )
+        return _build_horizontal_timeline(
+            slide, labels, descriptions, area, template_style
+        )
 
 
 # ── Layout Builder 3: Multi-Column Card Grid ──────────────────────────────
+
 
 def _build_card_grid(
     slide,
@@ -5063,7 +5195,8 @@ def _build_card_grid(
     Returns True on success, False on failure.
     """
     try:
-        from pptx.util import Emu, Pt as _Pt
+        from pptx.util import Emu
+        from pptx.util import Pt as _Pt
 
         n = max(2, min(len(labels), 4))
         labels = (list(labels) + [""] * n)[:n]
@@ -5097,11 +5230,16 @@ def _build_card_grid(
             header_text = str(labels[i])[:30]
             _add_textbox_styled(
                 slide,
-                x + int(Inches(0.05)), card_top + int(Inches(0.04)),
-                card_w - int(Inches(0.10)), HEADER_H - int(Inches(0.08)),
+                x + int(Inches(0.05)),
+                card_top + int(Inches(0.04)),
+                card_w - int(Inches(0.10)),
+                HEADER_H - int(Inches(0.08)),
                 header_text,
-                font_size_pt=12, bold=True, hex_color=dk_color,
-                font_name=font_name, align_center=False,
+                font_size_pt=12,
+                bold=True,
+                hex_color=dk_color,
+                font_name=font_name,
+                align_center=False,
             )
 
             # Body description
@@ -5114,8 +5252,11 @@ def _build_card_grid(
                     card_w - int(Inches(0.10)),
                     body_h,
                     body_text,
-                    font_size_pt=10, bold=False, hex_color="222222",
-                    font_name=body_font, align_center=False,
+                    font_size_pt=10,
+                    bold=False,
+                    hex_color="222222",
+                    font_name=body_font,
+                    align_center=False,
                 )
 
         print("[SEMANTIC] Built CARD GRID: %d columns" % n)
@@ -5127,6 +5268,7 @@ def _build_card_grid(
 
 
 # ── Layout Builder 4: Hero Layout ─────────────────────────────────────────
+
 
 def _build_hero_layout(
     slide,
@@ -5143,8 +5285,9 @@ def _build_hero_layout(
     Returns True on success, False on failure.
     """
     try:
-        from pptx.util import Emu, Pt as _Pt
         from pptx.enum.text import PP_ALIGN
+        from pptx.util import Emu
+        from pptx.util import Pt as _Pt
 
         MIN_HEIGHT = int(Inches(1.5))
         if area.height < MIN_HEIGHT:
@@ -5152,15 +5295,24 @@ def _build_hero_layout(
             return bool(
                 _add_textbox_styled(
                     slide,
-                    area.left, area.top, area.width, area.height,
-                    title, font_size_pt=32, bold=True, hex_color="111111",
-                    font_name=_safe_font(template_style, major=True), align_center=True,
+                    area.left,
+                    area.top,
+                    area.width,
+                    area.height,
+                    title,
+                    font_size_pt=32,
+                    bold=True,
+                    hex_color="111111",
+                    font_name=_safe_font(template_style, major=True),
+                    align_center=True,
                 )
             )
 
         # Background accent rectangle (subtle tint at ~25% of area height)
         accent_hex = _safe_accent(template_style, 0)
-        _add_filled_rect(slide, area.left, area.top, area.width, area.height, accent_hex)
+        _add_filled_rect(
+            slide, area.left, area.top, area.width, area.height, accent_hex
+        )
 
         # Title — oversized, centered
         title_h = int(area.height * 0.55)
@@ -5171,8 +5323,11 @@ def _build_hero_layout(
             area.width - int(Inches(0.30)),
             title_h,
             title,
-            font_size_pt=40, bold=True, hex_color="FFFFFF",
-            font_name=_safe_font(template_style, major=True), align_center=True,
+            font_size_pt=40,
+            bold=True,
+            hex_color="FFFFFF",
+            font_name=_safe_font(template_style, major=True),
+            align_center=True,
         )
 
         # Subtitle — italic, smaller
@@ -5187,8 +5342,12 @@ def _build_hero_layout(
                 area.width - int(Inches(0.30)),
                 sub_h,
                 subtitle,
-                font_size_pt=18, bold=False, italic=True, hex_color="F0F0F0",
-                font_name=_safe_font(template_style, major=False), align_center=True,
+                font_size_pt=18,
+                bold=False,
+                italic=True,
+                hex_color="F0F0F0",
+                font_name=_safe_font(template_style, major=False),
+                align_center=True,
             )
 
         print("[SEMANTIC] Built HERO LAYOUT")
@@ -5200,6 +5359,7 @@ def _build_hero_layout(
 
 
 # ── Layout Builder 5: KPI Dashboard ───────────────────────────────────────
+
 
 def _build_kpi_dashboard(
     slide,
@@ -5220,7 +5380,8 @@ def _build_kpi_dashboard(
     Returns True on success, False on failure.
     """
     try:
-        from pptx.util import Emu, Pt as _Pt
+        from pptx.util import Emu
+        from pptx.util import Pt as _Pt
 
         if not metrics:
             return False
@@ -5241,7 +5402,9 @@ def _build_kpi_dashboard(
         body_font = _safe_font(template_style, major=False)
 
         # Determine value font size: target ~36pt, floor 24pt
-        value_font_pt = max(24, min(36, int(36 * (area.width / (n * int(Inches(2.0)))))))
+        value_font_pt = max(
+            24, min(36, int(36 * (area.width / (n * int(Inches(2.0))))))
+        )
 
         for i, metric in enumerate(metrics):
             accent_hex = _safe_accent(template_style, i)
@@ -5262,8 +5425,11 @@ def _build_kpi_dashboard(
                 kpi_w - BORDER_W - int(Inches(0.08)),
                 VALUE_H,
                 value_str,
-                font_size_pt=value_font_pt, bold=True, hex_color=accent_hex,
-                font_name=font_name, align_center=False,
+                font_size_pt=value_font_pt,
+                bold=True,
+                hex_color=accent_hex,
+                font_name=font_name,
+                align_center=False,
             )
 
             # Sub-label (small, muted)
@@ -5276,8 +5442,11 @@ def _build_kpi_dashboard(
                     kpi_w - BORDER_W - int(Inches(0.08)),
                     LABEL_H,
                     label_str,
-                    font_size_pt=9, bold=False, hex_color="666666",
-                    font_name=body_font, align_center=False,
+                    font_size_pt=9,
+                    bold=False,
+                    hex_color="666666",
+                    font_name=body_font,
+                    align_center=False,
                 )
 
         # Context narrative below the KPI row
@@ -5287,10 +5456,17 @@ def _build_kpi_dashboard(
             ctx_h = max(ctx_h, int(Inches(0.3)))
             _add_textbox_styled(
                 slide,
-                area.left, ctx_top, area.width, ctx_h,
+                area.left,
+                ctx_top,
+                area.width,
+                ctx_h,
                 context_text[:400],
-                font_size_pt=10, bold=False, italic=True, hex_color="444444",
-                font_name=body_font, align_center=False,
+                font_size_pt=10,
+                bold=False,
+                italic=True,
+                hex_color="444444",
+                font_name=body_font,
+                align_center=False,
             )
 
         print("[SEMANTIC] Built KPI DASHBOARD: %d metric(s)" % n)
@@ -5302,6 +5478,7 @@ def _build_kpi_dashboard(
 
 
 # ── Density Reduction (medium-confidence path) ────────────────────────────
+
 
 def _apply_density_reduction(
     slide,
@@ -5342,8 +5519,8 @@ def _apply_density_reduction(
             print("[SEMANTIC] _apply_density_reduction error: %s" % str(e))
 
 
-
 # ── Template Native Layout Matching ───────────────────────────────────────
+
 
 def _find_matching_template_layout(
     semantic_type: "SlideSemanticType",
@@ -5376,17 +5553,37 @@ def _find_matching_template_layout(
         # Check for native PowerPoint SmartArt or comparison layouts
         _LAYOUT_KEYWORDS = {
             "sequential": ("process", "timeline", "chevron", "step"),
-            "comparative": ("comparison", "two content", "content with",),
-            "metrics": ("dashboard", "kpi", "metric",),
-            "hero": ("title only", "blank", "section header",),
+            "comparative": (
+                "comparison",
+                "two content",
+                "content with",
+            ),
+            "metrics": (
+                "dashboard",
+                "kpi",
+                "metric",
+            ),
+            "hero": (
+                "title only",
+                "blank",
+                "section header",
+            ),
         }
 
-        stype_str = semantic_type.value if hasattr(semantic_type, "value") else str(semantic_type)
+        stype_str = (
+            semantic_type.value
+            if hasattr(semantic_type, "value")
+            else str(semantic_type)
+        )
         keywords = _LAYOUT_KEYWORDS.get(stype_str, ())
 
         for kw in keywords:
             if kw in layout_name:
-                return {"type": "native_layout", "layout_name": layout_name, "keyword": kw}
+                return {
+                    "type": "native_layout",
+                    "layout_name": layout_name,
+                    "keyword": kw,
+                }
 
         return None
     except Exception:
@@ -5394,6 +5591,7 @@ def _find_matching_template_layout(
 
 
 # ── Semantic Router ────────────────────────────────────────────────────────
+
 
 def _route_to_semantic_builder(
     slide,
@@ -5416,15 +5614,27 @@ def _route_to_semantic_builder(
             # Try chevron first (≤4 items), fall back to timeline
             if len(ctx.sequential_labels) <= 4:
                 return _build_chevron_process(
-                    slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
+                    slide,
+                    ctx.sequential_labels,
+                    ctx.sequential_descriptions,
+                    area,
+                    template_style,
                 )
             return _build_horizontal_timeline(
-                slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
+                slide,
+                ctx.sequential_labels,
+                ctx.sequential_descriptions,
+                area,
+                template_style,
             )
 
         elif stype == SlideSemanticType.COMPARATIVE:
             return _build_card_grid(
-                slide, ctx.sequential_labels, ctx.sequential_descriptions, area, template_style
+                slide,
+                ctx.sequential_labels,
+                ctx.sequential_descriptions,
+                area,
+                template_style,
             )
 
         elif stype == SlideSemanticType.METRICS:
@@ -5503,12 +5713,13 @@ def _populate_footer_placeholders(
         except Exception:
             continue
 
+
 ICON_KEYWORD_MAP = {
     ("growth", "increase", "scale", "expand"): "UP_ARROW",
-    ("revenue", "money", "cost", "price"):     "FLOWCHART_CURRENCY",
+    ("revenue", "money", "cost", "price"): "FLOWCHART_CURRENCY",
     ("user", "customer", "student", "person"): "OVAL",
-    ("target", "goal", "milestone"):           "PENTAGON",
-    ("data", "analytics", "metrics"):          "CHART",
+    ("target", "goal", "milestone"): "PENTAGON",
+    ("data", "analytics", "metrics"): "CHART",
 }
 
 
@@ -5592,30 +5803,38 @@ def _populate_slide(
     # This prevents overwriting rich visual layouts (like "Signal stack")
     # with generic card grids or dashboards.
     has_custom_shapes = bool(content.shapes_xml or content.text_shapes_xml)
-    
-    semantic_ctx = _classify_slide_semantics(content, getattr(content, "visual_suggestion", "default"))
-    
+
+    semantic_ctx = _classify_slide_semantics(
+        content, getattr(content, "visual_suggestion", "default")
+    )
+
     handled_by_semantic = False
     if semantic_ctx.confidence >= 0.60 and not has_custom_shapes:
         if VERBOSE:
-            print("[SEMANTIC] Routing to %s builder (confidence: %.2f)" % (
-                semantic_ctx.semantic_type, semantic_ctx.confidence
-            ))
+            print(
+                "[SEMANTIC] Routing to %s builder (confidence: %.2f)"
+                % (semantic_ctx.semantic_type, semantic_ctx.confidence)
+            )
         handled_by_semantic = _route_to_semantic_builder(
             new_slide, content, semantic_ctx, region_map.text_region, template_style
         )
     elif 0.40 <= semantic_ctx.confidence < 0.60:
         if VERBOSE:
-            print("[SEMANTIC] Applying density reduction (confidence: %.2f)" % semantic_ctx.confidence)
-        _apply_density_reduction(new_slide, content, region_map.text_region, template_style)
+            print(
+                "[SEMANTIC] Applying density reduction (confidence: %.2f)"
+                % semantic_ctx.confidence
+            )
+        _apply_density_reduction(
+            new_slide, content, region_map.text_region, template_style
+        )
 
-    # If the semantic builder successfully handled the body content, suppress the 
-    # default body text population to prevent messy overlaps. 
+    # If the semantic builder successfully handled the body content, suppress the
+    # default body text population to prevent messy overlaps.
     # Titles/subtitles are still populated into their native placeholders.
     if handled_by_semantic:
         content.body_paragraphs = []
         content.text_box_paragraphs = []
-        
+
         # --- Fix: Prevent Duplicate Titles on HERO ---
         # If semantic builder chose HERO, it draws its own big title.
         # Clear native titles so the native placeholders don't double-draw them.
@@ -5683,7 +5902,7 @@ def _populate_slide(
             for s in new_slide.shapes:
                 if _is_backdrop(s) and s.top < header_threshold:
                     max_header_bottom = max(max_header_bottom, s.top + s.height)
-            
+
             if max_header_bottom > 0 and shape.top < max_header_bottom:
                 # Add 0.1" buffer below the barrier
                 shape.top = max_header_bottom + Inches(0.1)
@@ -5762,7 +5981,9 @@ def _populate_slide(
         for para in tf.paragraphs:
             # Fix 7: Enforce minimum 20pt for fallback titles — some templates
             # extract title_font_size_pt as low as 10pt, producing unreadable text.
-            _title_pt = max(20, template_style.title_font_size_pt) if template_style else 28
+            _title_pt = (
+                max(20, template_style.title_font_size_pt) if template_style else 28
+            )
             para.font.size = Pt(_title_pt)
             para.font.bold = True
             if template_style:
@@ -6637,10 +6858,11 @@ def step_plan_images(step_input: StepInput, session_state: Dict) -> StepOutput:
 
     # Lazily load agent: do not use session_state["agents"] to avoid deepcopy failures.
     from agents import get_agents as _get_agents
+
     _provider = session_state.get("llm_provider", "claude")
     _image_planner = _get_agents(_provider).get("image_planner")
     _image_planner_fallback = _get_agents(_provider).get("image_planner_fallback")
-    
+
     try:
         response = _image_planner.run(combined_message, stream=False)
     except Exception as e:
@@ -7673,7 +7895,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
     # Use global slide counts when available (chunked workflow passes these)
     _global_total_asm = session_state.get("global_total_slides", total_slides)
 
-    print("Preserving template slides as visual backdrops. Building final presentation...")
+    print(
+        "Preserving template slides as visual backdrops. Building final presentation..."
+    )
 
     # For each generated slide, create a template-styled slide
     for idx, gen_slide in enumerate(generated_slides):
@@ -7844,7 +8068,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         # ---------------------------------------------------------------
         # Phase E2: Smart Visual Reuse & Template Slide Mapping
         # Unifies template logic: If a reuse index is specified, either
-        # copy its shapes in-place (if idx < template_slide_count) or 
+        # copy its shapes in-place (if idx < template_slide_count) or
         # duplicate it (if appending). Then, run the intelligent smart
         # purge on the resulting slide to clear text but preserve visuals.
         # ---------------------------------------------------------------
@@ -7855,71 +8079,115 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 _reuse_idx = int(_raw_reuse)
             except (ValueError, TypeError):
                 pass
-                
+
         _cloned_for_reuse = False
-        
+
         if idx < _template_slide_count:
             new_slide = _reusable_template_slides[idx]
-            
+
             # If a different template slide was requested, copy its XML contents into the current slide
-            if _reuse_idx is not None and 0 <= _reuse_idx < _template_slide_count and _reuse_idx != idx:
+            if (
+                _reuse_idx is not None
+                and 0 <= _reuse_idx < _template_slide_count
+                and _reuse_idx != idx
+            ):
                 try:
                     import copy as _copy_mod
+
                     _src_slide = template_prs.slides[_reuse_idx]
                     _dst_sp_tree = new_slide.shapes._spTree
-                    
+
                     # Clear current slide shapes
                     for _child in list(_dst_sp_tree):
                         _tag = getattr(_child, "tag", "") or ""
-                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                        if (
+                            _tag.endswith("}sp")
+                            or _tag.endswith("}pic")
+                            or _tag.endswith("}grpSp")
+                            or _tag.endswith("}graphicFrame")
+                            or _tag.endswith("}cxnSp")
+                        ):
                             spTree_remove = getattr(_dst_sp_tree, "remove", None)
-                            if spTree_remove: spTree_remove(_child)
-                            
+                            if spTree_remove:
+                                spTree_remove(_child)
+
                     # Copy from source slide
                     _src_sp_tree = _src_slide.shapes._spTree
                     for _child in list(_src_sp_tree):
                         _tag = getattr(_child, "tag", "") or ""
-                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                        if (
+                            _tag.endswith("}sp")
+                            or _tag.endswith("}pic")
+                            or _tag.endswith("}grpSp")
+                            or _tag.endswith("}graphicFrame")
+                            or _tag.endswith("}cxnSp")
+                        ):
                             _dst_sp_tree.append(_copy_mod.deepcopy(_child))
-                            
+
                     _cloned_for_reuse = True
                     if VERBOSE:
-                        print("[VERBOSE] Slide %d: Overrode visual structure with template slide %d" % (idx + 1, _reuse_idx + 1))
+                        print(
+                            "[VERBOSE] Slide %d: Overrode visual structure with template slide %d"
+                            % (idx + 1, _reuse_idx + 1)
+                        )
                 except Exception as e:
                     if VERBOSE:
-                        print("[VERBOSE] Slide %d: Failed to copy visual structure from slide %d: %s" % (idx + 1, _reuse_idx + 1, str(e)))
+                        print(
+                            "[VERBOSE] Slide %d: Failed to copy visual structure from slide %d: %s"
+                            % (idx + 1, _reuse_idx + 1, str(e))
+                        )
             else:
-                _cloned_for_reuse = (_reuse_idx == idx)
+                _cloned_for_reuse = _reuse_idx == idx
 
         else:
             # Beyond original template count
             if _reuse_idx is not None and 0 <= _reuse_idx < _template_slide_count:
                 try:
                     import copy as _copy_mod
+
                     _src_slide = template_prs.slides[_reuse_idx]
                     new_slide = output_prs.slides.add_slide(_src_slide.slide_layout)
                     _dst_sp_tree = new_slide.shapes._spTree
-                    
+
                     # Clear default layout shapes on destination slide
                     for _child in list(_dst_sp_tree):
                         _tag = getattr(_child, "tag", "") or ""
-                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                        if (
+                            _tag.endswith("}sp")
+                            or _tag.endswith("}pic")
+                            or _tag.endswith("}grpSp")
+                            or _tag.endswith("}graphicFrame")
+                            or _tag.endswith("}cxnSp")
+                        ):
                             spTree_remove = getattr(_dst_sp_tree, "remove", None)
-                            if spTree_remove: spTree_remove(_child)
-                            
+                            if spTree_remove:
+                                spTree_remove(_child)
+
                     # Copy from source slide
                     _src_sp_tree = _src_slide.shapes._spTree
                     for _child in list(_src_sp_tree):
                         _tag = getattr(_child, "tag", "") or ""
-                        if _tag.endswith("}sp") or _tag.endswith("}pic") or _tag.endswith("}grpSp") or _tag.endswith("}graphicFrame") or _tag.endswith("}cxnSp"):
+                        if (
+                            _tag.endswith("}sp")
+                            or _tag.endswith("}pic")
+                            or _tag.endswith("}grpSp")
+                            or _tag.endswith("}graphicFrame")
+                            or _tag.endswith("}cxnSp")
+                        ):
                             _dst_sp_tree.append(_copy_mod.deepcopy(_child))
 
                     _cloned_for_reuse = True
                     if VERBOSE:
-                        print("[VERBOSE] Slide %d: Cloned template slide %d for visual reuse" % (idx + 1, _reuse_idx + 1))
+                        print(
+                            "[VERBOSE] Slide %d: Cloned template slide %d for visual reuse"
+                            % (idx + 1, _reuse_idx + 1)
+                        )
                 except Exception as e:
                     if VERBOSE:
-                        print("[VERBOSE] Slide %d: Failed to clone template slide %d: %s" % (idx + 1, _reuse_idx + 1, str(e)))
+                        print(
+                            "[VERBOSE] Slide %d: Failed to clone template slide %d: %s"
+                            % (idx + 1, _reuse_idx + 1, str(e))
+                        )
                     new_slide = output_prs.slides.add_slide(layout)
             else:
                 new_slide = output_prs.slides.add_slide(layout)
@@ -7957,14 +8225,18 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                         is_footer = False
                         try:
                             ph_type = shape.placeholder_format.type
-                            if ph_type in (PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE):
+                            if ph_type in (
+                                PP_PLACEHOLDER.SLIDE_NUMBER,
+                                PP_PLACEHOLDER.FOOTER,
+                                PP_PLACEHOLDER.DATE,
+                            ):
                                 is_footer = True
                         except Exception:
                             pass
 
                         if ph_idx not in _FOOTER_PH_INDICES and not is_footer:
                             if _shape_has_any_text(shape):
-                                if getattr(shape, 'has_text_frame', False):
+                                if getattr(shape, "has_text_frame", False):
                                     for para in shape.text_frame.paragraphs:
                                         para.clear()
                                 _placeholders_cleared += 1
@@ -7990,9 +8262,9 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                     # a carrier for the generated slide content.
                     _has_shape_text = False
                     try:
-                        if hasattr(shape, 'text_frame'):
+                        if hasattr(shape, "text_frame"):
                             _has_shape_text = bool(shape.text_frame.text.strip())
-                        elif hasattr(shape, 'text'):
+                        elif hasattr(shape, "text"):
                             _has_shape_text = bool(shape.text.strip())
                     except Exception:
                         pass
@@ -8008,8 +8280,10 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 else:
                     # "disposable" — remove the shape
                     _elements_to_remove.append(shape._element)
-                    shape_name = getattr(shape, 'name', '') or ''
-                    if 'group' in shape_name.lower() or 'Group' in str(type(shape).__name__):
+                    shape_name = getattr(shape, "name", "") or ""
+                    if "group" in shape_name.lower() or "Group" in str(
+                        type(shape).__name__
+                    ):
                         _groups_removed += 1
                     else:
                         _shapes_removed += 1
@@ -8028,11 +8302,15 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                 "%d structural kept, %d carrier(s) cleared, "
                 "%d text shape(s) removed, %d group(s) removed, "
                 "%d placeholder(s) cleared"
-                % (idx + 1, _structural_kept, _carriers_cleared,
-                   _shapes_removed, _groups_removed,
-                   _placeholders_cleared)
+                % (
+                    idx + 1,
+                    _structural_kept,
+                    _carriers_cleared,
+                    _shapes_removed,
+                    _groups_removed,
+                    _placeholders_cleared,
+                )
             )
-
 
         # Pass generated image bytes and source dimensions to _populate_slide.
         # src_slide_width/height enable proportional shape rescaling (P1-1).
@@ -8049,7 +8327,7 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
         # Fix 13 Phase 2: Inject content into cleared carrier shapes
         # before _populate_slide so the template's branded card layout
         # is reused instead of creating new text boxes.
-        if idx < _template_slide_count and '_carrier_shapes' in locals():
+        if idx < _template_slide_count and "_carrier_shapes" in locals():
             content = _inject_content_into_carriers(
                 new_slide, content, _carrier_shapes, template_style
             )
@@ -8089,10 +8367,12 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                         new_slide, _logo_info[0], session_state.get("brand_logo_path")
                     )
                     if VERBOSE:
-                        print(f"[VERBOSE] Slide {idx+1}: Swapped template logo with brand logo.")
+                        print(
+                            f"[VERBOSE] Slide {idx + 1}: Swapped template logo with brand logo."
+                        )
             except Exception as e:
                 if VERBOSE:
-                    print(f"[VERBOSE] Logo swap failed for slide {idx+1}: {e}")
+                    print(f"[VERBOSE] Logo swap failed for slide {idx + 1}: {e}")
 
         # ---------------------------------------------------------------
         # Phase D-footer: Template Footer Band Injection (Fix 17)
@@ -8171,7 +8451,10 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                     if template_style and template_style.theme.accent_colors:
                         _fb_color = template_style.theme.accent_colors[0]
                     _apply_accent_pattern_to_slide(
-                        new_slide, _accent_pat, slide_width, slide_height,
+                        new_slide,
+                        _accent_pat,
+                        slide_width,
+                        slide_height,
                         fallback_color_hex=_fb_color,
                     )
                     if VERBOSE:
@@ -8185,7 +8468,6 @@ def step_assemble_template(step_input: StepInput, session_state: Dict) -> StepOu
                         "[VERBOSE] Accent replication failed for slide %d: %s"
                         % (idx + 1, str(e))
                     )
-
 
     # ---------------------------------------------------------------
     # Remove unused template slides (when template has more slides
@@ -8271,7 +8553,9 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
         _count_prs = Presentation(pptx_path)
         expected_slides = len(_count_prs.slides)
         if VERBOSE:
-            print("  [VERBOSE] [RENDER] PPTX has %d slide(s) to render." % expected_slides)
+            print(
+                "  [VERBOSE] [RENDER] PPTX has %d slide(s) to render." % expected_slides
+            )
     except Exception:
         pass
 
@@ -8279,7 +8563,9 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
     pdftoppm_cmd = _shutil.which("pdftoppm")
     if pdftoppm_cmd:
         if VERBOSE:
-            print("  [VERBOSE] [PIPELINE] Using PPTX->PDF->PNG pipeline (pdftoppm available).")
+            print(
+                "  [VERBOSE] [PIPELINE] Using PPTX->PDF->PNG pipeline (pdftoppm available)."
+            )
         # Step 1: Convert PPTX to PDF
         pdf_result = subprocess.run(
             [
@@ -8322,7 +8608,9 @@ def _render_pptx_to_images(pptx_path: str, output_dir: str) -> list:
                     timeout=120,
                 )
                 if VERBOSE:
-                    print("  [VERBOSE] [PIPELINE] PDF -> PNG conversion (pdftoppm) completed.")
+                    print(
+                        "  [VERBOSE] [PIPELINE] PDF -> PNG conversion (pdftoppm) completed."
+                    )
                 if ppm_result.returncode == 0:
                     # pdftoppm names files: slide-01.png, slide-02.png, ...
                     pngs = sorted(glob.glob(os.path.join(output_dir, "slide-*.png")))
@@ -8661,9 +8949,11 @@ def _fix_alignment(slide, slide_width: int) -> bool:
 
 def _download_brand_logo(brand_name: str, cache_dir: str) -> str | None:
     """Download a brand logo securely based on the brand name."""
-    import urllib.request
     import os
-    if not brand_name: return None
+    import urllib.request
+
+    if not brand_name:
+        return None
     try:
         domain = brand_name.lower().replace(" ", "") + ".com"
         url = f"https://logo.clearbit.com/{domain}"
@@ -8672,17 +8962,19 @@ def _download_brand_logo(brand_name: str, cache_dir: str) -> str | None:
             out_path = os.path.join(cache_dir, f"{brand_name}_logo.png")
         else:
             out_path = f"{brand_name}_logo.png"
-        
-        if os.path.exists(out_path): 
+
+        if os.path.exists(out_path):
             return out_path
-            
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         with urllib.request.urlopen(req, timeout=5) as response:
             if response.status == 200:
-                with open(out_path, 'wb') as f:
+                with open(out_path, "wb") as f:
                     f.write(response.read())
                 if VERBOSE:
-                    print(f"[VERBOSE] Downloaded brand logo for {brand_name} to {out_path}")
+                    print(
+                        f"[VERBOSE] Downloaded brand logo for {brand_name} to {out_path}"
+                    )
                 return out_path
     except Exception as e:
         if VERBOSE:
@@ -8721,7 +9013,11 @@ def _detect_logo_shapes(slide, slide_width: int, slide_height: int) -> list:
             h_ratio = s_h / slide_height
 
             # Must be small enough to be a logo
-            if area_ratio > max_area_ratio or w_ratio > max_dim_ratio or h_ratio > max_dim_ratio:
+            if (
+                area_ratio > max_area_ratio
+                or w_ratio > max_dim_ratio
+                or h_ratio > max_dim_ratio
+            ):
                 continue
 
             # Must be a picture or have image fill
@@ -8777,15 +9073,17 @@ def _detect_logo_shapes(slide, slide_width: int, slide_height: int) -> list:
             else:
                 continue  # Logos in the middle of a slide are unlikely
 
-            logos.append({
-                "shape": shape,
-                "region": region,
-                "confidence": confidence,
-                "left": shape.left,
-                "top": shape.top,
-                "width": s_w,
-                "height": s_h,
-            })
+            logos.append(
+                {
+                    "shape": shape,
+                    "region": region,
+                    "confidence": confidence,
+                    "left": shape.left,
+                    "top": shape.top,
+                    "width": s_w,
+                    "height": s_h,
+                }
+            )
 
         except Exception:
             pass  # Logo detection is best-effort
@@ -8814,8 +9112,9 @@ def _replace_logo_with_brand(
         True if replacement was successful, False otherwise.
     """
     import os
-    from pptx.util import Emu, Pt
+
     from pptx.enum.text import PP_ALIGN
+    from pptx.util import Emu, Pt
 
     if not brand_logo_path:
         return False
@@ -9007,9 +9306,11 @@ def _get_visual_style_preset(style_name: str) -> dict:
     """
     if not style_name or style_name == "template_driven":
         return {}
-    return dict(_VISUAL_STYLE_PRESETS.get(
-        style_name, _VISUAL_STYLE_PRESETS["corporate_professional"]
-    ))
+    return dict(
+        _VISUAL_STYLE_PRESETS.get(
+            style_name, _VISUAL_STYLE_PRESETS["corporate_professional"]
+        )
+    )
 
 
 def _apply_default_design_system(
@@ -9094,9 +9395,7 @@ def _apply_default_design_system(
             else:
                 a_left = 0
 
-            accent_shape = slide.shapes.add_shape(
-                1, a_left, a_top, a_width, a_height
-            )
+            accent_shape = slide.shapes.add_shape(1, a_left, a_top, a_width, a_height)
             accent_shape.fill.solid()
             accent_shape.fill.fore_color.rgb = accent_rgb
             accent_shape.line.fill.background()
@@ -9114,9 +9413,7 @@ def _apply_default_design_system(
                 a_top = 0
 
             a_left = 0
-            accent_shape = slide.shapes.add_shape(
-                1, a_left, a_top, a_width, a_height
-            )
+            accent_shape = slide.shapes.add_shape(1, a_left, a_top, a_width, a_height)
             accent_shape.fill.solid()
             accent_shape.fill.fore_color.rgb = accent_rgb
             accent_shape.line.fill.background()
@@ -9129,16 +9426,19 @@ def _apply_default_design_system(
     if brand_logo_path and preset.get("accent_region", "top") in ("top", "bottom"):
         try:
             from pptx.util import Inches
+
             logo_width = int(Inches(1.2))
             logo_height = int(Inches(1.2))
             logo_left = int(Inches(0.5))
-            
+
             if preset.get("accent_region") == "bottom":
                 logo_top = int(Inches(0.3))
             else:
                 logo_top = slide_height - logo_height - int(Inches(0.3))
-            
-            slide.shapes.add_picture(brand_logo_path, logo_left, logo_top, logo_width, logo_height)
+
+            slide.shapes.add_picture(
+                brand_logo_path, logo_left, logo_top, logo_width, logo_height
+            )
             added += 1
         except Exception:
             pass
@@ -9174,6 +9474,7 @@ def _apply_default_design_system(
             # Add slide number text inside the footer bar
             if slide_number > 0:
                 from pptx.util import Inches
+
                 num_width = Inches(1.5)
                 num_left = slide_width - num_width - Inches(0.3)
                 num_top = f_top + int(f_height * 0.15)
@@ -9706,12 +10007,12 @@ def step_visual_quality_review(
 
     This step is non-blocking: any failure (LibreOffice unavailable, API error,
     timeout) silently returns success=True without modifying the output file.
-    
+
     NOTE ON Pydantic Schema Parsing (Duck-Typing):
-    Agent output validation utilizes duck-typing on `SlideQualityReport` rather 
-    than strict `isinstance` checks. This resilient design resolves a Python 
-    namespacing quirk where Pydantic models generated dynamically by the LLM 
-    framework might not mathematically equate to `__main__.SlideQualityReport`, 
+    Agent output validation utilizes duck-typing on `SlideQualityReport` rather
+    than strict `isinstance` checks. This resilient design resolves a Python
+    namespacing quirk where Pydantic models generated dynamically by the LLM
+    framework might not mathematically equate to `__main__.SlideQualityReport`,
     preventing False-Negative review dropouts.
 
     Workflow:
@@ -9862,10 +10163,13 @@ def step_visual_quality_review(
                     format="png",
                 )
                 from agents import get_agents as _get_agents
+
                 _provider = session_state.get("llm_provider", "claude")
                 _slide_reviewer = _get_agents(_provider).get("slide_quality_reviewer")
-                _slide_reviewer_fallback = _get_agents(_provider).get("slide_quality_reviewer_fallback")
-                
+                _slide_reviewer_fallback = _get_agents(_provider).get(
+                    "slide_quality_reviewer_fallback"
+                )
+
                 try:
                     response = _slide_reviewer.run(
                         prompt,
@@ -9883,7 +10187,10 @@ def step_visual_quality_review(
                                 stream=False,
                             )
                         except Exception as fallback_e:
-                            print("[ERROR] Fallback vision agent failed: %s" % str(fallback_e))
+                            print(
+                                "[ERROR] Fallback vision agent failed: %s"
+                                % str(fallback_e)
+                            )
                             response = None
                     else:
                         response = None
@@ -9895,12 +10202,15 @@ def step_visual_quality_review(
                     # the SlideQualityReport from agents/_shared.py (a
                     # different Python class than the local one), so a plain
                     # isinstance() would always fail.
-                    if hasattr(content, "model_dump") and hasattr(content, "design_score"):
+                    if hasattr(content, "model_dump") and hasattr(
+                        content, "design_score"
+                    ):
                         report = SlideQualityReport.model_validate(content.model_dump())
                     elif isinstance(content, dict):
                         report = SlideQualityReport.model_validate(content)
                     elif isinstance(content, str):
                         import json as _json_parse
+
                         try:
                             report = SlideQualityReport.model_validate(
                                 _json_parse.loads(content)
@@ -10180,9 +10490,13 @@ if __name__ == "__main__":
             "(required: Content Generator agent always uses Claude)"
         )
     if args.llm_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY environment variable not set (required for --llm-provider openai)")
+        raise ValueError(
+            "OPENAI_API_KEY environment variable not set (required for --llm-provider openai)"
+        )
     if args.llm_provider == "gemini" and not os.getenv("GOOGLE_API_KEY"):
-        raise ValueError("GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)")
+        raise ValueError(
+            "GOOGLE_API_KEY environment variable not set (required for --llm-provider gemini)"
+        )
 
     # Gemini API key validation guard for --visual-review
     # If the key is missing or blank, auto-disable visual review to avoid burning
@@ -10376,22 +10690,22 @@ def _extract_color_from_solid_fill(solid_fill_elem) -> str | None:
         val = scheme.get("val", "")
         # Standard Office theme defaults (covers most non-custom themes)
         scheme_defaults = {
-            "lt1": "FFFFFF",      # Light 1 (usually white)
-            "dk1": "000000",      # Dark 1 (usually black)
-            "lt2": "E7E6E6",      # Light 2 (usually light gray)
-            "dk2": "44546A",      # Dark 2 (usually dark blue-gray)
-            "bg1": "FFFFFF",      # Background 1 (usually white)
-            "bg2": "E7E6E6",      # Background 2 (usually light gray)
-            "tx1": "000000",      # Text 1 (usually black)
-            "tx2": "44546A",      # Text 2 (usually dark blue-gray)
+            "lt1": "FFFFFF",  # Light 1 (usually white)
+            "dk1": "000000",  # Dark 1 (usually black)
+            "lt2": "E7E6E6",  # Light 2 (usually light gray)
+            "dk2": "44546A",  # Dark 2 (usually dark blue-gray)
+            "bg1": "FFFFFF",  # Background 1 (usually white)
+            "bg2": "E7E6E6",  # Background 2 (usually light gray)
+            "tx1": "000000",  # Text 1 (usually black)
+            "tx2": "44546A",  # Text 2 (usually dark blue-gray)
             "accent1": "4472C4",  # Blue
             "accent2": "ED7D31",  # Orange
             "accent3": "A5A5A5",  # Gray
             "accent4": "FFC000",  # Gold
             "accent5": "5B9BD5",  # Light blue
             "accent6": "70AD47",  # Green
-            "hlink": "0563C1",    # Hyperlink
-            "folHlink": "954F72", # Followed hyperlink
+            "hlink": "0563C1",  # Hyperlink
+            "folHlink": "954F72",  # Followed hyperlink
         }
         if val in scheme_defaults:
             return scheme_defaults[val]
@@ -10422,7 +10736,7 @@ def _get_shape_background_color(shape, slide) -> str:
       1. Shape's own fill (solid, gradient first-stop)
       2. Slide background (solid, gradient, image, theme-ref)
       3. Slide layout background
-      3.5 Slide master shape traversal (crucial for full-background wrapper shapes 
+      3.5 Slide master shape traversal (crucial for full-background wrapper shapes
           often used by templates without explicitly declaring a `<p:bg>` background)
       4. Slide master background
       5. Theme dk1/dk2 heuristic (dark-theme detection)
@@ -10477,9 +10791,12 @@ def _get_shape_background_color(shape, slide) -> str:
                     if scheme is not None:
                         val = scheme.get("val", "")
                         scheme_defaults = {
-                            "dk1": "000000", "dk2": "44546A",
-                            "lt1": "FFFFFF", "lt2": "E7E6E6",
-                            "bg1": "FFFFFF", "bg2": "E7E6E6",
+                            "dk1": "000000",
+                            "dk2": "44546A",
+                            "lt1": "FFFFFF",
+                            "lt2": "E7E6E6",
+                            "bg1": "FFFFFF",
+                            "bg2": "E7E6E6",
                         }
                         if val in scheme_defaults:
                             return scheme_defaults[val]
@@ -10512,9 +10829,12 @@ def _get_shape_background_color(shape, slide) -> str:
             if scheme is not None:
                 val = scheme.get("val", "")
                 scheme_defaults = {
-                    "dk1": "000000", "dk2": "44546A",
-                    "lt1": "FFFFFF", "lt2": "E7E6E6",
-                    "bg1": "FFFFFF", "bg2": "E7E6E6",
+                    "dk1": "000000",
+                    "dk2": "44546A",
+                    "lt1": "FFFFFF",
+                    "lt2": "E7E6E6",
+                    "bg1": "FFFFFF",
+                    "bg2": "E7E6E6",
                 }
                 if val in scheme_defaults:
                     return scheme_defaults[val]
@@ -10578,8 +10898,7 @@ def _get_shape_background_color(shape, slide) -> str:
             if color:
                 if VERBOSE:
                     print(
-                        "  [BG DETECT] Background color from slide layout: #%s"
-                        % color
+                        "  [BG DETECT] Background color from slide layout: #%s" % color
                     )
                 return color
     except Exception:
@@ -10680,8 +10999,7 @@ def _get_shape_background_color(shape, slide) -> str:
             if color:
                 if VERBOSE:
                     print(
-                        "  [BG DETECT] Background color from slide master: #%s"
-                        % color
+                        "  [BG DETECT] Background color from slide master: #%s" % color
                     )
                 return color
     except Exception:
@@ -10865,17 +11183,16 @@ def _get_shape_background_color(shape, slide) -> str:
     return "FFFFFF"  # Default to white
 
 
-
 def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
     """Set text color to black or white for maximum contrast against background.
-    
+
     IMPORTANT OOXML SEQUENCE ENFORCEMENT:
-    Microsoft PowerPoint strictly enforces OpenXML schema sequencing within 
+    Microsoft PowerPoint strictly enforces OpenXML schema sequencing within
     the `<a:rPr>` element. The `<a:solidFill>` tag MUST logically precede structural
-    font styling tags such as `<a:latin>`, `<a:ea>`, `<a:cs>`, or `<a:sym>`. 
+    font styling tags such as `<a:latin>`, `<a:ea>`, `<a:cs>`, or `<a:sym>`.
     If appended to the end of the element group, PowerPoint's engine will silently
     declare the tag invalid and discard the high-contrast color modification.
-    Therefore, this function removes any misordered pre-existing solidFills and 
+    Therefore, this function removes any misordered pre-existing solidFills and
     programmatically calculates the correct schema index to ensure compliant insertion.
     """
     ns_a = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
@@ -10894,7 +11211,16 @@ def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
     srgb_clr.set("val", text_hex)
 
     insert_idx = 0
-    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
+    tags_after_fill = {
+        "latin",
+        "ea",
+        "cs",
+        "sym",
+        "hlinkClick",
+        "hlinkMouseOver",
+        "rtl",
+        "extLst",
+    }
     for i, child in enumerate(rPr):
         tag = child.tag.split("}")[-1]
         if tag in tags_after_fill:
@@ -10907,10 +11233,10 @@ def _make_high_contrast_fill(rPr, bg_hex: str, existing_solidFill=None):
 
 def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
     """Set or replace solidFill color on a chart rPr/defRPr element.
-    
-    Mirrors the strict OOPXML Sequence Enforcement implemented in 
-    `_make_high_contrast_fill()`. Ensures `<a:solidFill>` appears before 
-    `<a:latin>` elements so PowerPoint successfully parses and renders 
+
+    Mirrors the strict OOPXML Sequence Enforcement implemented in
+    `_make_high_contrast_fill()`. Ensures `<a:solidFill>` appears before
+    `<a:latin>` elements so PowerPoint successfully parses and renders
     axis labels, legends, and data labels in high contrast.
     """
     existing = rPr_elem.find(ns_a + "solidFill")
@@ -10922,7 +11248,16 @@ def _set_chart_text_color(rPr_elem, ns_a: str, color_hex: str):
     srgb.set("val", color_hex)
 
     insert_idx = 0
-    tags_after_fill = {"latin", "ea", "cs", "sym", "hlinkClick", "hlinkMouseOver", "rtl", "extLst"}
+    tags_after_fill = {
+        "latin",
+        "ea",
+        "cs",
+        "sym",
+        "hlinkClick",
+        "hlinkMouseOver",
+        "rtl",
+        "extLst",
+    }
     for i, child in enumerate(rPr_elem):
         tag = child.tag.split("}")[-1]
         if tag in tags_after_fill:
@@ -11058,7 +11393,13 @@ def _ensure_chart_fills_area(
                     print(
                         "  [CHART SIZE] Enlarging chart from %.0f%% to ~60%% fill "
                         "(was %dx%d, now %dx%d EMU)"
-                        % (fill_ratio * 100, shape.width, shape.height, target_w, target_h)
+                        % (
+                            fill_ratio * 100,
+                            shape.width,
+                            shape.height,
+                            target_w,
+                            target_h,
+                        )
                     )
 
                 shape.left = new_left
@@ -11093,7 +11434,9 @@ def _remove_duplicate_titles(slide) -> int:
 
     for shape in list(slide.placeholders):
         try:
-            if shape.placeholder_format.idx == 0 and getattr(shape, "has_text_frame", False):
+            if shape.placeholder_format.idx == 0 and getattr(
+                shape, "has_text_frame", False
+            ):
                 title_text = shape.text.strip()
                 title_ph = shape
                 break
@@ -11180,12 +11523,13 @@ def _fix_chart_text_contrast(shape, slide, min_ratio: float = 3.0) -> int:
 
     return corrections
 
+
 def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
     """Post-merge WCAG contrast enforcement — template-independent safety net.
 
     Opens the PPTX, checks every text run against its effective background,
     and fixes any low-contrast text. Works without a template.
-    
+
     Additional QA Enhancements:
     1. Iterates over Chart elements to repair internal sub-element text visibility (defRPr).
     2. Overrides AI compression side-effects by enforcing minimum shape bounds (3.0" x 4.0")
@@ -11226,7 +11570,9 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                     text_rgb = _hex_to_rgb(text_hex)
                                     ratio = _contrast_ratio(text_rgb, bg_rgb)
                                     if ratio < min_ratio:
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                                        _make_high_contrast_fill(
+                                            rPr, bg_hex, existing_solidFill=solidFill
+                                        )
                                         corrections += 1
                                 else:
                                     # Can't determine text color — check default (black) contrast
@@ -11238,7 +11584,9 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                         corrections += 1
                                     else:
                                         # Stripping would cause dark-on-dark — replace
-                                        _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                                        _make_high_contrast_fill(
+                                            rPr, bg_hex, existing_solidFill=solidFill
+                                        )
                                         corrections += 1
                             else:
                                 # No explicit color — check if inherited color (assume black) has contrast
@@ -11270,11 +11618,17 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                         cell_bg_hex = "FFFFFF"
                         try:
                             tc_elem = cell._tc
-                            tc_pr = tc_elem.find(ns_a + "tcPr") if tc_elem is not None else None
+                            tc_pr = (
+                                tc_elem.find(ns_a + "tcPr")
+                                if tc_elem is not None
+                                else None
+                            )
                             if tc_pr is not None:
                                 cell_fill = tc_pr.find(ns_a + "solidFill")
                                 if cell_fill is not None:
-                                    extracted = _extract_color_from_solid_fill(cell_fill)
+                                    extracted = _extract_color_from_solid_fill(
+                                        cell_fill
+                                    )
                                     if extracted:
                                         cell_bg_hex = extracted
                         except Exception:
@@ -11289,22 +11643,36 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                                 if rPr is not None:
                                     solidFill = rPr.find(ns_a + "solidFill")
                                     if solidFill is not None:
-                                        text_hex = _extract_color_from_solid_fill(solidFill)
+                                        text_hex = _extract_color_from_solid_fill(
+                                            solidFill
+                                        )
                                         if text_hex:
                                             text_rgb = _hex_to_rgb(text_hex)
-                                            ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
+                                            ratio = _contrast_ratio(
+                                                text_rgb, cell_bg_rgb
+                                            )
                                             if ratio < min_ratio:
-                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
+                                                _make_high_contrast_fill(
+                                                    rPr,
+                                                    cell_bg_hex,
+                                                    existing_solidFill=solidFill,
+                                                )
                                                 corrections += 1
                                         else:
                                             # Can't determine text color — check default (black) contrast
                                             default_rgb = (0, 0, 0)
-                                            ratio = _contrast_ratio(default_rgb, cell_bg_rgb)
+                                            ratio = _contrast_ratio(
+                                                default_rgb, cell_bg_rgb
+                                            )
                                             if ratio >= 3.0:
                                                 rPr.remove(solidFill)
                                                 corrections += 1
                                             else:
-                                                _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
+                                                _make_high_contrast_fill(
+                                                    rPr,
+                                                    cell_bg_hex,
+                                                    existing_solidFill=solidFill,
+                                                )
                                                 corrections += 1
 
             # Charts — axis labels, data labels, legend text
@@ -11318,6 +11686,7 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
             try:
                 if getattr(shape, "has_chart", False):
                     from pptx.util import Inches as _Inches
+
                     _MIN_W = _Inches(4.0)
                     _MIN_H = _Inches(3.0)
                     if shape.width < _MIN_W:
@@ -11326,10 +11695,12 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
                     if shape.height < _MIN_H:
                         shape.height = _MIN_H
                         corrections += 1
-                    
+
                     # Prevent overlap
                     for pc in resized_charts:
-                        if abs(shape.left - pc.left) < _Inches(2.0) and abs(shape.top - pc.top) < _Inches(2.0):
+                        if abs(shape.left - pc.left) < _Inches(2.0) and abs(
+                            shape.top - pc.top
+                        ) < _Inches(2.0):
                             shape.top = pc.top + pc.height + _Inches(0.2)
                             corrections += 1
                     resized_charts.append(shape)
@@ -11338,7 +11709,10 @@ def enforce_final_contrast(pptx_path: str, min_ratio: float = 3.0) -> int:
 
     if corrections > 0:
         prs.save(pptx_path)
-        print("    [CONTRAST] Fixed %d low-contrast text run(s) in final output" % corrections)
+        print(
+            "    [CONTRAST] Fixed %d low-contrast text run(s) in final output"
+            % corrections
+        )
 
     return corrections
 
@@ -11348,7 +11722,7 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
 
     1. Removes any text shapes containing default MS PowerPoint placeholder ghost text or empty text.
     2. Strips <a:solidFill> from text runs so text inherits the high-contrast
-       theme color from the slide master. 
+       theme color from the slide master.
        Handles OOXML `a:rPr` property omissions gracefully by creating properties dynamically
        to enforce contrast baselines if natively absent.
     3. Extends contrast remediation logic deep into OOXML Chart schemas (axis/titles/labels).
@@ -11367,7 +11741,7 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
     for slide in prs.slides:
         spTree = slide.shapes._spTree
         elements_to_remove = []
-        
+
         for shape in list(slide.shapes):
             # 1. Clean visual noise
             try:
@@ -11375,10 +11749,10 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                     text = shape.text.strip().lower()
                     if text in ghost_texts or text == "":
                         elements_to_remove.append(shape._element)
-                        continue # Removed, don't check for color
+                        continue  # Removed, don't check for color
             except Exception:
                 pass
-            
+
             # 2. Fix Text Contrast (contrast-aware color correction)
             try:
                 if getattr(shape, "has_text_frame", False):
@@ -11396,7 +11770,11 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                         ratio = _contrast_ratio(text_rgb, bg_rgb)
                                         if ratio < 3.0:
                                             # Low contrast — replace with high-contrast color
-                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                                            _make_high_contrast_fill(
+                                                rPr,
+                                                bg_hex,
+                                                existing_solidFill=solidFill,
+                                            )
                                         # else: contrast is adequate, keep original color
                                     else:
                                         # Can't determine text color — check if stripping is safe
@@ -11408,19 +11786,24 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                             rPr.remove(solidFill)
                                         else:
                                             # Stripping would cause dark-on-dark — replace instead
-                                            _make_high_contrast_fill(rPr, bg_hex, existing_solidFill=solidFill)
+                                            _make_high_contrast_fill(
+                                                rPr,
+                                                bg_hex,
+                                                existing_solidFill=solidFill,
+                                            )
                             else:
                                 # No rPr at all — run inherits default (typically black)
                                 default_rgb = (0, 0, 0)
                                 ratio = _contrast_ratio(default_rgb, bg_rgb)
                                 if ratio < 3.0:
                                     from lxml import etree as _etree
+
                                     new_rPr = _etree.Element(ns_a + "rPr")
                                     run._r.insert(0, new_rPr)
                                     _make_high_contrast_fill(new_rPr, bg_hex)
             except Exception:
                 pass
-            
+
             # Table cells — contrast-aware color correction
             try:
                 if getattr(shape, "has_table", False):
@@ -11437,7 +11820,9 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                 if tc_pr is not None:
                                     cell_fill = tc_pr.find(ns_a + "solidFill")
                                     if cell_fill is not None:
-                                        extracted = _extract_color_from_solid_fill(cell_fill)
+                                        extracted = _extract_color_from_solid_fill(
+                                            cell_fill
+                                        )
                                         if extracted:
                                             cell_bg_hex = extracted
                             except Exception:
@@ -11450,21 +11835,35 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                                     if rPr is not None:
                                         solidFill = rPr.find(ns_a + "solidFill")
                                         if solidFill is not None:
-                                            text_hex = _extract_color_from_solid_fill(solidFill)
+                                            text_hex = _extract_color_from_solid_fill(
+                                                solidFill
+                                            )
                                             if text_hex:
                                                 text_rgb = _hex_to_rgb(text_hex)
-                                                ratio = _contrast_ratio(text_rgb, cell_bg_rgb)
+                                                ratio = _contrast_ratio(
+                                                    text_rgb, cell_bg_rgb
+                                                )
                                                 if ratio < 3.0:
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
+                                                    _make_high_contrast_fill(
+                                                        rPr,
+                                                        cell_bg_hex,
+                                                        existing_solidFill=solidFill,
+                                                    )
                                                 # else: keep original
                                             else:
                                                 # Can't determine text color — check if stripping is safe
                                                 default_rgb = (0, 0, 0)
-                                                ratio = _contrast_ratio(default_rgb, cell_bg_rgb)
+                                                ratio = _contrast_ratio(
+                                                    default_rgb, cell_bg_rgb
+                                                )
                                                 if ratio >= 3.0:
                                                     rPr.remove(solidFill)
                                                 else:
-                                                    _make_high_contrast_fill(rPr, cell_bg_hex, existing_solidFill=solidFill)
+                                                    _make_high_contrast_fill(
+                                                        rPr,
+                                                        cell_bg_hex,
+                                                        existing_solidFill=solidFill,
+                                                    )
             except Exception:
                 pass
 
@@ -11473,7 +11872,7 @@ def clean_presentation_visual_noise_and_contrast(prs) -> None:
                 _fix_chart_text_contrast(shape, slide)
             except Exception:
                 pass
-        
+
         for element in elements_to_remove:
             try:
                 spTree.remove(element)
@@ -11531,14 +11930,14 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
            push would go off-slide, both shapes are scaled down to eliminate
            the overlap. After each pass the shape list is re-sorted by
            (top, left) so that cascading overlaps are caught.
-        4. **Overlap orphan removal** (Fix 12B): Removes significant overlaps 
-           (>15% of smaller shape area) by purging the shape with less text 
+        4. **Overlap orphan removal** (Fix 12B): Removes significant overlaps
+           (>15% of smaller shape area) by purging the shape with less text
            content, preventing "doubled" text boxes from multiple layout passes.
-        5. **Orphaned decorative icon removal** (Fix 15A): Detects and removes 
-           shapes containing only a single symbol/emoji character (bell, star, 
+        5. **Orphaned decorative icon removal** (Fix 15A): Detects and removes
+           shapes containing only a single symbol/emoji character (bell, star,
            trophy, etc.) that have no meaningful text context.
-        6. **Column alignment snapping** (Fix 15B): Snaps shapes at similar 
-           horizontal or vertical positions to median grid lines, fixing 
+        6. **Column alignment snapping** (Fix 15B): Snaps shapes at similar
+           horizontal or vertical positions to median grid lines, fixing
            scattered column elements and misaligned rows.
            The loop exits early when a pass produces zero adjustments.
 
@@ -11636,15 +12035,17 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
         if not _is_backdrop(s):
             continue
         try:
-            s_left = getattr(s, 'left', None)
-            s_top = getattr(s, 'top', None)
-            s_w = getattr(s, 'width', 0) or 0
+            s_left = getattr(s, "left", None)
+            s_top = getattr(s, "top", None)
+            s_w = getattr(s, "width", 0) or 0
             if s_left is None or s_top is None:
                 continue
             # Only consider backdrops in the top 25% and left 15%
-            if (s_top < int(slide_height * 0.25)
-                    and s_left < int(slide_width * 0.15)
-                    and s_left + s_w > margin_x):
+            if (
+                s_top < int(slide_height * 0.25)
+                and s_left < int(slide_width * 0.15)
+                and s_left + s_w > margin_x
+            ):
                 backdrop_right_edge = max(
                     backdrop_right_edge, s_left + s_w + int(Inches(0.1))
                 )
@@ -11654,7 +12055,7 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     if backdrop_right_edge > margin_x:
         for shape in shapes:
             try:
-                if not hasattr(shape, 'left') or shape.left is None:
+                if not hasattr(shape, "left") or shape.left is None:
                     continue
                 # Only adjust shapes in the title zone (top 25% of slide)
                 if shape.top < int(slide_height * 0.25):
@@ -11703,7 +12104,7 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     _TINY_ABS_MAX_H = Inches(3.0)
     _TINY_ABS_MIN_CHARS = 40
     _DENSITY_THRESHOLD = 30  # chars per sq inch
-    _PARA_THRESHOLD = 4      # max paragraphs in a small shape
+    _PARA_THRESHOLD = 4  # max paragraphs in a small shape
     _PARA_AREA_THRESHOLD = 6.0  # sq inches
     _EMU_PER_INCH = 914400.0
 
@@ -11741,11 +12142,16 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
             remove_reason = ""
 
             # Heuristic 1: Absolute small box with dense text
-            if (shape.width < _TINY_ABS_MAX_W
-                    and shape.height < _TINY_ABS_MAX_H
-                    and total_chars > _TINY_ABS_MIN_CHARS):
-                remove_reason = "H1:small-box(%d chars in %.1f\"x%.1f\")" % (
-                    total_chars, w_in, h_in)
+            if (
+                shape.width < _TINY_ABS_MAX_W
+                and shape.height < _TINY_ABS_MAX_H
+                and total_chars > _TINY_ABS_MIN_CHARS
+            ):
+                remove_reason = 'H1:small-box(%d chars in %.1f"x%.1f")' % (
+                    total_chars,
+                    w_in,
+                    h_in,
+                )
 
             # Heuristic 2: Text density too high for any readable font
             elif chars_per_sq_in > _DENSITY_THRESHOLD:
@@ -11754,7 +12160,9 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
             # Heuristic 3: Too many paragraphs in a small area
             elif num_paragraphs > _PARA_THRESHOLD and area_sq_in < _PARA_AREA_THRESHOLD:
                 remove_reason = "H3:para-density(%d paras in %.1f sq_in)" % (
-                    num_paragraphs, area_sq_in)
+                    num_paragraphs,
+                    area_sq_in,
+                )
 
             if remove_reason:
                 shapes_to_remove.append(shape)
@@ -11763,7 +12171,7 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                         "  [TINY TEXT PURGE] Removing: %s — '%s...'"
                         % (
                             remove_reason,
-                            shape.text_frame.text[:50].replace('\n', ' '),
+                            shape.text_frame.text[:50].replace("\n", " "),
                         )
                     )
         except Exception:
@@ -11789,34 +12197,30 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     # must be removed. This is 100% deterministic — no threshold escapes.
     _UNREADABLE_FONT_SZ = 600  # 6pt in hundredths-of-a-point
     _UNREADABLE_MIN_CHARS = 30
-    _ns_a_purge = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+    _ns_a_purge = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
     shapes_to_remove_font = []
     for shape in shapes:
         try:
-            if not hasattr(shape, 'width') or shape.width is None:
+            if not hasattr(shape, "width") or shape.width is None:
                 continue
-            if getattr(shape, 'is_placeholder', False):
+            if getattr(shape, "is_placeholder", False):
                 continue
-            if not hasattr(shape, 'text_frame'):
+            if not hasattr(shape, "text_frame"):
                 continue
-            if hasattr(shape, 'has_chart') and shape.has_chart:
+            if hasattr(shape, "has_chart") and shape.has_chart:
                 continue
-            if hasattr(shape, 'has_table') and shape.has_table:
+            if hasattr(shape, "has_table") and shape.has_table:
                 continue
 
             # Compute total chars
-            total_chars = sum(
-                len(p.text) for p in shape.text_frame.paragraphs
-            )
+            total_chars = sum(len(p.text) for p in shape.text_frame.paragraphs)
             if total_chars < _UNREADABLE_MIN_CHARS:
                 continue
 
             # Scan all <a:rPr> elements for font size
             min_font_found = None
-            for rPr in shape._element.findall(
-                './/' + _ns_a_purge + 'rPr'
-            ):
-                sz_val = rPr.get('sz')
+            for rPr in shape._element.findall(".//" + _ns_a_purge + "rPr"):
+                sz_val = rPr.get("sz")
                 if sz_val:
                     try:
                         sz_int = int(sz_val)
@@ -11831,13 +12235,14 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                     w_in = shape.width / _EMU_PER_INCH
                     h_in = shape.height / _EMU_PER_INCH
                     print(
-                        '  [UNREADABLE PURGE] Removing: font=%.1fpt, '
-                        '%d chars in %.1f"x%.1f" — \'%s...\''
+                        "  [UNREADABLE PURGE] Removing: font=%.1fpt, "
+                        "%d chars in %.1f\"x%.1f\" — '%s...'"
                         % (
                             min_font_found / 100.0,
                             total_chars,
-                            w_in, h_in,
-                            shape.text_frame.text[:50].replace('\n', ' '),
+                            w_in,
+                            h_in,
+                            shape.text_frame.text[:50].replace("\n", " "),
                         )
                     )
         except Exception:
@@ -11898,9 +12303,7 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                         overlap_area = (overlap_right - overlap_left) * (
                             overlap_bottom - overlap_top
                         )
-                        smaller_area = min(
-                            a.width * a.height, b.width * b.height
-                        )
+                        smaller_area = min(a.width * a.height, b.width * b.height)
 
                         # Fix 12B: Near-zero threshold (5%) ensures text
                         # shapes never overlap each other visually.
@@ -11978,17 +12381,21 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
                     overlap_area = (overlap_right - overlap_left) * (
                         overlap_bottom - overlap_top
                     )
-                    smaller_area = min(
-                        a.width * a.height, b.width * b.height
-                    )
+                    smaller_area = min(a.width * a.height, b.width * b.height)
                     # Only remove if significant overlap (>15% of smaller shape)
                     if smaller_area > 0 and overlap_area > smaller_area * 0.15:
                         # Fix 13B: Never remove template structural shapes
                         # (preserved by smart purge with templateBackdrop="1").
                         # These are branded visual elements that should survive
                         # overlap detection — the new content should layer on top.
-                        a_is_backdrop = getattr(a, "_element", None) is not None and a._element.get("templateBackdrop") == "1"
-                        b_is_backdrop = getattr(b, "_element", None) is not None and b._element.get("templateBackdrop") == "1"
+                        a_is_backdrop = (
+                            getattr(a, "_element", None) is not None
+                            and a._element.get("templateBackdrop") == "1"
+                        )
+                        b_is_backdrop = (
+                            getattr(b, "_element", None) is not None
+                            and b._element.get("templateBackdrop") == "1"
+                        )
                         if a_is_backdrop or b_is_backdrop:
                             continue
 
@@ -12060,22 +12467,25 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
             # Symbol categories: So (other), Sm (math), Sk (modifier), Sc (currency)
             # Punctuation: Po, Ps, Pe, Pi, Pf, Pd, Pc
             # Also catch arrows and misc technical: So
-            if not (cat.startswith('S') or cat.startswith('P')
-                    or cat.startswith('No')  # number-other (e.g. circled numbers)
-                    or ord(ch) > 0x2000):  # Unicode symbols, arrows, emoji
+            if not (
+                cat.startswith("S")
+                or cat.startswith("P")
+                or cat.startswith("No")  # number-other (e.g. circled numbers)
+                or ord(ch) > 0x2000
+            ):  # Unicode symbols, arrows, emoji
                 return False
         return True
 
     icon_removal = []
     for shape in shapes:
         try:
-            if not hasattr(shape, 'text_frame'):
+            if not hasattr(shape, "text_frame"):
                 continue
-            if getattr(shape, 'is_placeholder', False):
+            if getattr(shape, "is_placeholder", False):
                 continue
-            if hasattr(shape, 'has_chart') and shape.has_chart:
+            if hasattr(shape, "has_chart") and shape.has_chart:
                 continue
-            if hasattr(shape, 'has_table') and shape.has_table:
+            if hasattr(shape, "has_table") and shape.has_table:
                 continue
             full_text = shape.text_frame.text.strip()
             if _is_pure_symbol(full_text):
@@ -12104,16 +12514,16 @@ def sanitize_slide_layout(slide, slide_width: int, slide_height: int) -> int:
     # Shapes at nearly-the-same horizontal position (within tolerance) are
     # likely intended to be in the same column — snap them to the cluster's
     # median left value. Similarly for vertical alignment within rows.
-    _SNAP_H_TOLERANCE = Inches(0.5)   # horizontal tolerance: ~0.5 inch
-    _SNAP_V_TOLERANCE = Inches(0.3)   # vertical tolerance: ~0.3 inch
+    _SNAP_H_TOLERANCE = Inches(0.5)  # horizontal tolerance: ~0.5 inch
+    _SNAP_V_TOLERANCE = Inches(0.3)  # vertical tolerance: ~0.3 inch
 
     # Collect snappable shapes (non-placeholder, non-backdrop, has position)
     snappable = []
     for s in shapes:
         try:
-            if not hasattr(s, 'left') or s.left is None:
+            if not hasattr(s, "left") or s.left is None:
                 continue
-            if getattr(s, 'is_placeholder', False):
+            if getattr(s, "is_placeholder", False):
                 continue
             if _is_backdrop(s):
                 continue
@@ -12283,10 +12693,7 @@ def sanitize_llm_shapes(prs) -> int:
                     elements_to_remove.append(shape._element)
                     if VERBOSE:
                         name = getattr(shape, "name", "")
-                        print(
-                            "  [SHAPE SANITIZE] Removing FREEFORM shape: '%s'"
-                            % name
-                        )
+                        print("  [SHAPE SANITIZE] Removing FREEFORM shape: '%s'" % name)
                     continue
 
                 # --- Criterion 3: Diagonal decorative shape ---

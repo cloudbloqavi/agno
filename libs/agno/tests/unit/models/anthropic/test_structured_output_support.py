@@ -20,28 +20,28 @@ from agno.models.anthropic.claude import Claude
 
 # --- Models that SHOULD support structured outputs ---
 
+
 @pytest.mark.parametrize(
     "model_id",
     [
         "claude-sonnet-4-5-20250929",  # Default model
-        "claude-sonnet-4-5",           # Alias
-        "claude-sonnet-4-6",           # Newer sub-version (regression case)
-        "claude-sonnet-4-7",           # Future sub-version
-        "claude-opus-4-1",             # Opus 4.1
-        "claude-opus-4-5",             # Opus 4.5
-        "claude-opus-4-6",             # Newer Opus sub-version
-        "claude-opus-4-1-20250929",    # Dated Opus 4.1
+        "claude-sonnet-4-5",  # Alias
+        "claude-sonnet-4-6",  # Newer sub-version (regression case)
+        "claude-sonnet-4-7",  # Future sub-version
+        "claude-opus-4-1",  # Opus 4.1
+        "claude-opus-4-5",  # Opus 4.5
+        "claude-opus-4-6",  # Newer Opus sub-version
+        "claude-opus-4-1-20250929",  # Dated Opus 4.1
     ],
 )
 def test_supports_structured_outputs_true(model_id: str):
     """Models that support structured outputs should return True."""
     claude = Claude(id=model_id)
-    assert claude._supports_structured_outputs() is True, (
-        f"Model '{model_id}' should support structured outputs"
-    )
+    assert claude._supports_structured_outputs() is True, f"Model '{model_id}' should support structured outputs"
 
 
 # --- Models that should NOT support structured outputs ---
+
 
 @pytest.mark.parametrize(
     "model_id",
@@ -68,12 +68,11 @@ def test_supports_structured_outputs_true(model_id: str):
 def test_does_not_support_structured_outputs(model_id: str):
     """Models without structured output support should return False."""
     claude = Claude(id=model_id)
-    assert claude._supports_structured_outputs() is False, (
-        f"Model '{model_id}' should NOT support structured outputs"
-    )
+    assert claude._supports_structured_outputs() is False, f"Model '{model_id}' should NOT support structured outputs"
 
 
 # --- Dated version detection ---
+
 
 def test_dated_sonnet_4_excluded():
     """Dated versions of claude-sonnet-4 (YYYYMMDD suffix) should be excluded."""
@@ -94,6 +93,7 @@ def test_dated_opus_4_excluded():
 
 
 # --- Regression: claude-sonnet-4-6 ---
+
 
 def test_sonnet_4_6_supports_structured_outputs():
     """Regression test: claude-sonnet-4-6 MUST support structured outputs.

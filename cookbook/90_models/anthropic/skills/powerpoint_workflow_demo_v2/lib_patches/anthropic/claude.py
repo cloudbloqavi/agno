@@ -5,8 +5,6 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
 
 import httpx
-from pydantic import BaseModel, ValidationError
-
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
@@ -16,8 +14,13 @@ from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.claude import MCPServerConfiguration, format_messages, format_tools_for_model
+from agno.utils.models.claude import (
+    MCPServerConfiguration,
+    format_messages,
+    format_tools_for_model,
+)
 from agno.utils.tokens import count_schema_tokens
+from pydantic import BaseModel, ValidationError
 
 try:
     from anthropic import Anthropic as AnthropicClient
@@ -50,7 +53,9 @@ try:
     )
 
 except ImportError as e:
-    raise ImportError("`anthropic` not installed. Please install it with `pip install anthropic`") from e
+    raise ImportError(
+        "`anthropic` not installed. Please install it with `pip install anthropic`"
+    ) from e
 
 # Import Beta types
 try:
@@ -122,7 +127,9 @@ class Claude(Model):
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
-    betas: Optional[List[str]] = None  # Enables specific experimental or newly released features.
+    betas: Optional[List[str]] = (
+        None  # Enables specific experimental or newly released features.
+    )
     context_management: Optional[Dict[str, Any]] = None
     mcp_servers: Optional[List[MCPServerConfiguration]] = None
     skills: Optional[List[Dict[str, str]]] = (
@@ -206,9 +213,14 @@ class Claude(Model):
         # Sub-versions like claude-sonnet-4-5, claude-sonnet-4-6 DO support structured outputs.
         for prefix in ("claude-sonnet-4-", "claude-opus-4-"):
             if self.id.startswith(prefix):
-                suffix = self.id[len(prefix):]
+                suffix = self.id[len(prefix) :]
                 # Dated versions have 8-digit YYYYMMDD suffixes (e.g., "20250514")
-                if suffix and len(suffix) >= 8 and suffix[:8].isdigit() and suffix[:2] == "20":
+                if (
+                    suffix
+                    and len(suffix) >= 8
+                    and suffix[:8].isdigit()
+                    and suffix[:2] == "20"
+                ):
                     return False
 
         return True
@@ -306,7 +318,9 @@ class Claude(Model):
                             if isinstance(item, dict):
                                 self._ensure_additional_properties_false(item)
 
-    def _build_output_format(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
+    def _build_output_format(
+        self, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> Optional[Dict[str, Any]]:
         """
         Build Anthropic output_format parameter from response_format.
 
@@ -370,7 +384,9 @@ class Claude(Model):
             # Trust explicit beta opt-in from user
             if self.betas and "structured-outputs-2025-11-13" in self.betas:
                 return
-            raise ValueError(f"Model '{self.id}' does not support structured outputs.\n\n")
+            raise ValueError(
+                f"Model '{self.id}' does not support structured outputs.\n\n"
+            )
 
     def _has_beta_features(
         self,
@@ -398,7 +414,9 @@ class Claude(Model):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
+                log_warning(
+                    "http_client is not an instance of httpx.Client. Using default global httpx.Client."
+                )
                 # Use global sync client when user http_client is invalid
                 _client_params["http_client"] = get_default_sync_client()
         else:
@@ -460,7 +478,9 @@ class Claude(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = format_messages(
+            messages, compress_tool_results=True
+        )
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -481,7 +501,9 @@ class Claude(Model):
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        anthropic_messages, system_prompt = format_messages(messages, compress_tool_results=True)
+        anthropic_messages, system_prompt = format_messages(
+            messages, compress_tool_results=True
+        )
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -539,7 +561,8 @@ class Claude(Model):
             _request_params["context_management"] = self.context_management
         if self.mcp_servers:
             _request_params["mcp_servers"] = [
-                {k: v for k, v in asdict(server).items() if v is not None} for server in self.mcp_servers
+                {k: v for k, v in asdict(server).items() if v is not None}
+                for server in self.mcp_servers
             ]
         if self.skills:
             _request_params["container"] = {"skills": self.skills}
@@ -569,21 +592,33 @@ class Claude(Model):
         self._validate_structured_outputs_usage(response_format, tools)
 
         # Pass response_format and tools to get_request_params for beta header handling
-        request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
+        request_kwargs = self.get_request_params(
+            response_format=response_format, tools=tools
+        ).copy()
         if system_message:
             if self.cache_system_prompt:
                 cache_control = (
                     {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
+                    if self.extended_cache_time is not None
+                    and self.extended_cache_time is True
                     else {"type": "ephemeral"}
                 )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
+                request_kwargs["system"] = [
+                    {
+                        "text": system_message,
+                        "type": "text",
+                        "cache_control": cache_control,
+                    }
+                ]
             else:
                 request_kwargs["system"] = [{"text": system_message, "type": "text"}]
 
         # Add code execution tool if skills are enabled
         if self.skills:
-            code_execution_tool = {"type": "code_execution_20250825", "name": "code_execution"}
+            code_execution_tool = {
+                "type": "code_execution_20250825",
+                "name": "code_execution",
+            }
             if tools:
                 # Add code_execution to existing tools, code execution is needed for generating and processing files
                 tools = tools + [code_execution_tool]
@@ -600,7 +635,10 @@ class Claude(Model):
             request_kwargs["output_format"] = output_format
 
         if request_kwargs:
-            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
+            log_debug(
+                f"Calling {self.provider} with request parameters: {request_kwargs}",
+                log_level=2,
+            )
         return request_kwargs
 
     def invoke(
@@ -617,8 +655,12 @@ class Claude(Model):
         Send a request to the Anthropic API to generate a response.
         """
         try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            chat_messages, system_message = format_messages(
+                messages, compress_tool_results=compress_tool_results
+            )
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format
+            )
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -638,24 +680,35 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format
+            )  # type: ignore
 
             return model_response
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     def invoke_stream(
         self,
@@ -681,8 +734,12 @@ class Claude(Model):
             RateLimitError: If the API rate limit is exceeded
             APIStatusError: For other API-related errors
         """
-        chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-        request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+        chat_messages, system_message = format_messages(
+            messages, compress_tool_results=compress_tool_results
+        )
+        request_kwargs = self._prepare_request_kwargs(
+            system_message, tools=tools, response_format=response_format
+        )
 
         try:
             # Beta features
@@ -694,7 +751,9 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     for chunk in stream:
-                        yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+                        yield self._parse_provider_response_delta(
+                            chunk, response_format=response_format
+                        )  # type: ignore
             else:
                 assistant_message.metrics.start_timer()
                 with self.get_client().messages.stream(
@@ -703,24 +762,35 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     for chunk in stream:  # type: ignore
-                        yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+                        yield self._parse_provider_response_delta(
+                            chunk, response_format=response_format
+                        )  # type: ignore
 
             assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke(
         self,
@@ -736,8 +806,12 @@ class Claude(Model):
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            chat_messages, system_message = format_messages(
+                messages, compress_tool_results=compress_tool_results
+            )
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format
+            )
 
             # Beta features
             if self._has_beta_features(response_format=response_format, tools=tools):
@@ -758,24 +832,35 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
+            model_response = self._parse_provider_response(
+                provider_response, response_format=response_format
+            )  # type: ignore
 
             return model_response
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
     async def ainvoke_stream(
         self,
@@ -799,8 +884,12 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
-            chat_messages, system_message = format_messages(messages, compress_tool_results=compress_tool_results)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools=tools, response_format=response_format)
+            chat_messages, system_message = format_messages(
+                messages, compress_tool_results=compress_tool_results
+            )
+            request_kwargs = self._prepare_request_kwargs(
+                system_message, tools=tools, response_format=response_format
+            )
 
             if self._has_beta_features(response_format=response_format, tools=tools):
                 assistant_message.metrics.start_timer()
@@ -810,7 +899,9 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:
-                        yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+                        yield self._parse_provider_response_delta(
+                            chunk, response_format=response_format
+                        )  # type: ignore
             else:
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().messages.stream(
@@ -819,26 +910,39 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:  # type: ignore
-                        yield self._parse_provider_response_delta(chunk, response_format=response_format)  # type: ignore
+                        yield self._parse_provider_response_delta(
+                            chunk, response_format=response_format
+                        )  # type: ignore
 
             assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except RateLimitError as e:
             log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
+            raise ModelRateLimitError(
+                message=e.message, model_name=self.name, model_id=self.id
+            ) from e
         except APIStatusError as e:
             log_error(f"Claude API error (status {e.status_code}): {str(e)}")
             raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
+                message=e.message,
+                status_code=e.status_code,
+                model_name=self.name,
+                model_id=self.id,
             ) from e
         except Exception as e:
             log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            raise ModelProviderError(
+                message=str(e), model_name=self.name, model_id=self.id
+            ) from e
 
-    def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
+    def get_system_message_for_model(
+        self, tools: Optional[List[Any]] = None
+    ) -> Optional[str]:
         if tools is not None and len(tools) > 0:
             tool_call_prompt = "Do not reflect on the quality of the returned search results in your response\n\n"
             return tool_call_prompt
@@ -886,25 +990,39 @@ class Claude(Model):
                                 # Parse JSON from text content
                                 parsed_data = json.loads(text_content)
                                 # Validate against Pydantic model
-                                model_response.parsed = response_format.model_validate(parsed_data)
-                                log_debug(f"Successfully parsed structured output: {model_response.parsed}")
+                                model_response.parsed = response_format.model_validate(
+                                    parsed_data
+                                )
+                                log_debug(
+                                    f"Successfully parsed structured output: {model_response.parsed}"
+                                )
                             except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
+                                log_warning(
+                                    f"Failed to parse JSON from structured output: {e}"
+                                )
                             except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
+                                log_warning(
+                                    f"Failed to validate structured output against schema: {e}"
+                                )
                             except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                                log_warning(
+                                    f"Unexpected error parsing structured output: {e}"
+                                )
 
                     # Capture citations from the response
                     if block.citations is not None:
                         if model_response.citations is None:
-                            model_response.citations = Citations(raw=[], urls=[], documents=[])
+                            model_response.citations = Citations(
+                                raw=[], urls=[], documents=[]
+                            )
                         for citation in block.citations:
                             model_response.citations.raw.append(citation.model_dump())  # type: ignore
                             # Web search citations
                             if isinstance(citation, CitationsWebSearchResultLocation):
                                 model_response.citations.urls.append(  # type: ignore
-                                    UrlCitation(url=citation.url, title=citation.cited_text)
+                                    UrlCitation(
+                                        url=citation.url, title=citation.cited_text
+                                    )
                                 )
                             # Document citations
                             elif isinstance(citation, CitationPageLocation):
@@ -948,13 +1066,19 @@ class Claude(Model):
             model_response.response_usage = self._get_metrics(response.usage)
 
         # Capture context management information if present
-        if self.context_management is not None and hasattr(response, "context_management"):
+        if self.context_management is not None and hasattr(
+            response, "context_management"
+        ):
             if response.context_management is not None:  # type: ignore
                 model_response.provider_data = model_response.provider_data or {}
                 if hasattr(response.context_management, "model_dump"):
-                    model_response.provider_data["context_management"] = response.context_management.model_dump()  # type: ignore
+                    model_response.provider_data["context_management"] = (
+                        response.context_management.model_dump()
+                    )  # type: ignore
                 else:
-                    model_response.provider_data["context_management"] = response.context_management  # type: ignore
+                    model_response.provider_data["context_management"] = (
+                        response.context_management
+                    )  # type: ignore
         # Extract file IDs if skills are enabled
         if self.skills and response.content:
             file_ids: List[str] = []
@@ -999,11 +1123,15 @@ class Claude(Model):
         """
         model_response = ModelResponse()
 
-        if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
+        if isinstance(
+            response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)
+        ):
             if response.content_block.type == "redacted_reasoning_content":
                 model_response.redacted_reasoning_content = response.content_block.data
 
-        if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
+        if isinstance(
+            response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)
+        ):
             # Handle text content
             if response.delta.type == "text_delta":
                 model_response.content = response.delta.text
@@ -1015,7 +1143,9 @@ class Claude(Model):
                     "signature": response.delta.signature,
                 }
 
-        elif isinstance(response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)):
+        elif isinstance(
+            response, (ContentBlockStopEvent, ParsedBetaContentBlockStopEvent)
+        ):
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name  # type: ignore
@@ -1060,11 +1190,16 @@ class Claude(Model):
                     model_response.citations.raw.append(citation.model_dump())  # type: ignore
                     # Web search citations
                     if isinstance(citation, CitationsWebSearchResultLocation):
-                        model_response.citations.urls.append(UrlCitation(url=citation.url, title=citation.cited_text))  # type: ignore
+                        model_response.citations.urls.append(
+                            UrlCitation(url=citation.url, title=citation.cited_text)
+                        )  # type: ignore
                     # Document citations
                     elif isinstance(citation, CitationPageLocation):
                         model_response.citations.documents.append(  # type: ignore
-                            DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
+                            DocumentCitation(
+                                document_title=citation.document_title,
+                                cited_text=citation.cited_text,
+                            )
                         )
 
             # Handle structured outputs (JSON outputs) from accumulated text
@@ -1080,31 +1215,53 @@ class Claude(Model):
                         # Parse JSON from accumulated text content
                         parsed_data = json.loads(accumulated_text)
                         # Validate against Pydantic model
-                        model_response.parsed = response_format.model_validate(parsed_data)
-                        log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
+                        model_response.parsed = response_format.model_validate(
+                            parsed_data
+                        )
+                        log_debug(
+                            f"Successfully parsed structured output from stream: {model_response.parsed}"
+                        )
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
+                        log_warning(
+                            f"Failed to parse JSON from structured output in stream: {e}"
+                        )
                     except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
+                        log_warning(
+                            f"Failed to validate structured output against schema in stream: {e}"
+                        )
                     except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                        log_warning(
+                            f"Unexpected error parsing structured output in stream: {e}"
+                        )
 
             # Capture context management information if present
-            if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
+            if self.context_management is not None and hasattr(
+                response.message, "context_management"
+            ):  # type: ignore
                 context_mgmt = response.message.context_management  # type: ignore
                 if context_mgmt is not None:
                     model_response.provider_data = model_response.provider_data or {}
                     if hasattr(context_mgmt, "model_dump"):
-                        model_response.provider_data["context_management"] = context_mgmt.model_dump()
+                        model_response.provider_data["context_management"] = (
+                            context_mgmt.model_dump()
+                        )
                     else:
-                        model_response.provider_data["context_management"] = context_mgmt
+                        model_response.provider_data["context_management"] = (
+                            context_mgmt
+                        )
 
             # Extract file IDs if skills are enabled (streaming parity with _parse_provider_response)
-            if self.skills and hasattr(response, "message") and response.message.content:
+            if (
+                self.skills
+                and hasattr(response, "message")
+                and response.message.content
+            ):
                 file_ids: List[str] = []
                 for block in response.message.content:
                     if block.type == "bash_code_execution_tool_result":
-                        if hasattr(block, "content") and hasattr(block.content, "content"):
+                        if hasattr(block, "content") and hasattr(
+                            block.content, "content"
+                        ):
                             if isinstance(block.content.content, list):
                                 for output_block in block.content.content:
                                     if hasattr(output_block, "file_id"):
@@ -1135,7 +1292,9 @@ class Claude(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]) -> MessageMetrics:
+    def _get_metrics(
+        self, response_usage: Union[Usage, MessageDeltaUsage, BetaUsage]
+    ) -> MessageMetrics:
         """
         Parse the given Anthropic-specific usage into an Agno MessageMetrics object.
 
@@ -1155,7 +1314,9 @@ class Claude(Model):
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
-            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use.model_dump()}
+            metrics.provider_metrics = {
+                "server_tool_use": response_usage.server_tool_use.model_dump()
+            }
         if isinstance(response_usage, Usage):
             if response_usage.service_tier:
                 metrics.provider_metrics = metrics.provider_metrics or {}

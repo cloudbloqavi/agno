@@ -10,7 +10,7 @@ Models used:
     image_planner           -> gemini-3-flash-preview  (fast, structured output)
     slide_quality_reviewer  -> gemini-2.5-flash        (vision analysis, proven stable)
 
-Web search: 
+Web search:
     - brand_style_analyzer uses Gemini's built-in Google Search (search=True).
     - query_optimizer uses Gemini's built-in Google Search (search=True).
 """

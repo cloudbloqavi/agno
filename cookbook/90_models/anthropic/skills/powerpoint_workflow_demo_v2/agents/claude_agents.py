@@ -28,8 +28,8 @@ from typing import Dict
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
-from agno.tools.python import PythonTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.python import PythonTools
 
 # Import Claude from local patch (same as main workflow files)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -98,12 +98,14 @@ def create_agents() -> Dict[str, Agent]:
     )
 
     # Downgraded from claude-sonnet-4-6 → claude-haiku-4-5 for faster execution
-    # and to preserve the main token pool. 
+    # and to preserve the main token pool.
     # Haiku has a separate 50K input-token/min budget.
     # max_tokens capped at 16384: python-pptx scripts for 2 slides are ~500-1000 lines.
     fallback_code_agent = Agent(
         name="PPTX Code Generator",
-        model=Claude(id="claude-haiku-4-5", max_tokens=16384, betas=["context-1m-2025-08-07"]),
+        model=Claude(
+            id="claude-haiku-4-5", max_tokens=16384, betas=["context-1m-2025-08-07"]
+        ),
         instructions=PPTX_CODE_GEN_INSTRUCTIONS,
         tools=[
             PythonTools(
