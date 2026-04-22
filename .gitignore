@@ -98,3 +98,7 @@ output/
 
 output_chunked/
 pptx/
+
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/cost.json
